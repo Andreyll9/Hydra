@@ -32,7 +32,21 @@
     export let addContactName = '';
     export let addContactAddress = '';
 
-    const handleAddContact = () => {
+    const handleAddContact = async () => {
+        const rawAddr = (addContactAddress || '').trim();
+        if (rawAddr.startsWith('@') || (rawAddr.length >= 3 && rawAddr.length <= 24 && !rawAddr.includes('/'))) {
+            const cleanNick = rawAddr.replace(/^@/, '').toLowerCase();
+            if (!addContactName.trim()) addContactName = '@' + cleanNick;
+            try {
+                const r = await fetch('http://191.223.137.164:8085/nick/resolve?nick=' + encodeURIComponent(cleanNick));
+                if (r.ok) {
+                    const d = await r.json();
+                    if (d && d.pub_key) addContactAddress = d.pub_key;
+                }
+            } catch (e) {}
+        } else if (!addContactName.trim() || addContactName.trim().length > 22) {
+            addContactName = 'Контакт ' + rawAddr.slice(0, 6);
+        }
         onAddContact();
     };
 
@@ -298,45 +312,51 @@
 
 <!-- Add Contact Modal -->
 {#if showAddContact}
-<div 
-    class="modal-backdrop animate-fade-in" 
-    role="button"
-    tabindex="0"
-    on:click|self={onCancelAddContact}
-    on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && onCancelAddContact()}
->
-    <div class="modal-content animate-slide-down" style="max-width: 450px;">
+<div class="modal-backdrop animate-fade-in" role="button" tabindex="0" on:click|self={() => { stopLiveQRScanner(); onCancelAddContact(); }} on:keydown={(e) => e.key === 'Escape' && onCancelAddContact()}>
+    <div class="modal-content animate-slide-down" style="max-width: 440px;">
         <div class="modal-header">
             <h3>Добавить контакт</h3>
-            <button class="btn-icon" on:click={onCancelAddContact}><div class="icon-svg">{@html Icons.X}</div></button>
+            <button class="btn-icon" on:click={() => { stopLiveQRScanner(); onCancelAddContact(); }}><div class="icon-svg">{@html Icons.X}</div></button>
         </div>
         <div class="modal-body">
             <div class="form-group">
-                <label class="form-label">Никнейм
-                    <input type="text" bind:value={addContactName} class="input-field" placeholder="Напр: Иван" />
+                <label class="form-label">Имя или @никнейм друга
+                    <input type="text" bind:value={addContactName} class="input-field" placeholder="Напр: @fity или Андрей" />
                 </label>
             </div>
-            <div class="form-group" style="margin-top: 16px;">
+            <div class="form-group" style="margin-top: 14px;">
                 <label class="form-label">ID ключ Hydra или @никнейм
-                    <textarea bind:value={addContactAddress} class="input-field" rows="3" placeholder="Введите @никнейм друга или его ID ключ..."></textarea>
-        <div style="margin-top: 12px;">
-            <label style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 12px; border-radius: 100px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.4); font-weight: 700; font-size: 13px; cursor: pointer;">
-                📷 Сканировать QR-код друга
-                <input type="file" accept="image/*" capture="environment" style="display: none;" on:change={handleScanQRFile} />
-            </label>
-        </div>
-    
+                    <textarea bind:value={addContactAddress} class="input-field" rows="2" placeholder="Вставьте @никнейм или отсканируйте QR-код..."></textarea>
                 </label>
+            </div>
+            <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;">
+                <div style="display: flex; gap: 8px;">
+                    <button type="button" on:click={startLiveQRScanner} style="flex: 1; padding: 12px; border-radius: 100px; background: {isLiveScanningQR ? '#ff4757' : '#8AB4F8'}; color: {isLiveScanningQR ? '#fff' : '#062E6F'}; border: none; font-weight: 800; font-size: 12px; cursor: pointer;">
+                        {isLiveScanningQR ? '⏹ Выключить камеру' : '📷 Сканировать QR камерой'}
+                    </button>
+                    <label style="padding: 12px 14px; border-radius: 100px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.35); font-weight: 700; font-size: 12px; cursor: pointer; display: flex; align-items: center;">
+                        🖼 Галерея
+                        <input type="file" accept="image/*" style="display: none;" on:change={handleScanQRFile} />
+                    </label>
+                </div>
+                {#if qrStatusMsg}
+                    <div style="font-size: 12px; color: #8AB4F8; text-align: center; font-weight: 600;">{qrStatusMsg}</div>
+                {/if}
+                {#if isLiveScanningQR}
+                    <div style="position: relative; width: 230px; height: 230px; margin: 6px auto; border-radius: 22px; overflow: hidden; border: 3px solid #8AB4F8; background: #000;">
+                        <video bind:this={qrVideoEl} autoplay playsinline muted style="width: 100%; height: 100%; object-fit: cover;"></video>
+                        <div style="position: absolute; inset: 30px; border: 2px dashed #8AB4F8; border-radius: 16px; pointer-events: none;"></div>
+                    </div>
+                {/if}
             </div>
         </div>
         <div class="modal-footer">
-            <button class="btn-small btn-glass" on:click={onCancelAddContact}>Отмена</button>
-            <button class="btn-small btn-primary clickable-btn" on:click={handleAddContact}>Добавить</button>
+            <button class="btn-small btn-glass" on:click={() => { stopLiveQRScanner(); onCancelAddContact(); }}>Отмена</button>
+            <button class="btn-small btn-primary clickable-btn" on:click={() => { stopLiveQRScanner(); handleAddContact(); }}>Добавить</button>
         </div>
     </div>
 </div>
 {/if}
-
 <!-- Show Seed Modal -->
 {#if showSeedModal}
 <div 

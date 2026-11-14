@@ -47,6 +47,9 @@ func (a *AppCore) SendText(contactID, text, replyToID string) error {
 	log.Printf("[AppCore] Sending message to %s (ChatID: %s)", contact.Nickname, contact.ChatID)
 
 	// Handshake если нет публичного ключа
+	if contact.PublicKey == "" && contact.I2PAddress != "" {
+		contact.PublicKey = contact.I2PAddress
+	}
 	if contact.PublicKey == "" {
 		log.Printf("[AppCore] No public key for %s, sending handshake first...", contact.Nickname)
 		if err := a.Messenger.SendHandshake(contact.I2PAddress); err != nil {
@@ -65,6 +68,9 @@ func (a *AppCore) SendText(contactID, text, replyToID string) error {
 			}
 		}
 
+		if contact.PublicKey == "" && contact.I2PAddress != "" {
+			contact.PublicKey = contact.I2PAddress
+		}
 		if contact.PublicKey == "" {
 			return fmt.Errorf("handshake timeout: recipient did not respond with public key")
 		}

@@ -24,6 +24,7 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
 
     private lateinit var webView: WebView
     private var webViewFileCallback: ValueCallback<Array<Uri>>? = null
+    private var isOpeningSystemPicker = false
 
     companion object {
         private const val TAG = "Hydra"
@@ -47,6 +48,38 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
     }
 
     inner class HydraNativeBridge {
+
+        @JavascriptInterface
+        fun saveLogsToDownloads(logText: String): String {
+            return try {
+                val filename = "hydra_log_${System.currentTimeMillis()}.txt"
+                val resolver = applicationContext.contentResolver
+                val cv = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                    }
+                }
+                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
+                } else {
+                    resolver.insert(android.provider.MediaStore.Files.getContentUri("external"), cv)
+                }
+                if (uri != null) {
+                    resolver.openOutputStream(uri)?.use { it.write(logText.toByteArray(Charsets.UTF_8)) }
+                    runOnUiThread {
+                        android.widget.Toast.makeText(this@MainActivity, "✅ Лог сохранён в Загрузки: $filename", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                    pushNativeLog("LOG-FILE", "Сохранено в Downloads/$filename")
+                    filename
+                } else "error"
+            } catch (e: Exception) {
+                pushNativeLog("LOG-ERR", "Ошибка записи файла: ${e.message}")
+                "error"
+            }
+        }
+    
 
         @JavascriptInterface
         fun checkSystemStatus(profileId: String): String {
@@ -303,6 +336,7 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
                     addCategory(Intent.CATEGORY_OPENABLE)
                     putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*", "application/pdf", "text/*", "application/zip"))
                 }
+                isOpeningSystemPicker = true
                 filePickerLauncher.launch(intent)
             } catch (e: Exception) {
                 pushNativeLog("GO-PICK-ERR", "Ошибка запуска пикера: ${e.message}")
@@ -492,7 +526,8 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
                         addCategory(Intent.CATEGORY_OPENABLE)
                         type = "image/*"
                     }
-                    webViewFileChooserLauncher.launch(Intent.createChooser(intent, "Выберите изображение или QR-код"))
+                    isOpeningSystemPicker = true
+                        webViewFileChooserLauncher.launch(Intent.createChooser(intent, "Выберите изображение или QR-код"))
                     true
                 } catch (e: Exception) {
                     pushNativeLog("WEB-CHOOSER-ERR", "Ошибка открытия галереи: ${e.message}")
@@ -570,13 +605,20 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
         super.onResume()
         webView.onResume()
         mobile.Mobile.setPlatformBridge(this)
-        pushNativeLog("LIFECYCLE", "Приложение развёрнуто (onResume) — проверка безопасности и биометрии")
+        if (isOpeningSystemPicker) {
+            isOpeningSystemPicker = false
+            pushNativeLog("LIFECYCLE", "Возврат из Галереи (без блокировки)")
+            return
+        }
+        pushNativeLog("LIFECYCLE", "Приложение развёрнуто (onResume)")
         webView.evaluateJavascript("if(window.__onHydraAppResume) window.__onHydraAppResume();", null)
     }
 
     override fun onPause() {
-        pushNativeLog("LIFECYCLE", "Приложение свёрнуто (onPause) — мгновенная блокировка сессии!")
-        webView.evaluateJavascript("if(window.__lockHydraNow) window.__lockHydraNow();", null)
+        if (!isOpeningSystemPicker) {
+            pushNativeLog("LIFECYCLE", "Приложение свёрнуто (onPause) — блокировка!")
+            webView.evaluateJavascript("if(window.__lockHydraNow) window.__lockHydraNow();", null)
+        }
         webView.onPause()
         super.onPause()
     }

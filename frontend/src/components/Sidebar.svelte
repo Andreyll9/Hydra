@@ -260,6 +260,14 @@
         localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
         activeStoryModal = st;
     }
+
+    function formatContactDisplayName(name) {
+        if (!name) return 'Неизвестный';
+        const s = String(name).trim();
+        if (s.length > 22 && !s.includes(' ')) return '👤 Контакт (' + s.slice(0, 6) + '…' + s.slice(-4) + ')';
+        return s;
+    }
+    
 </script>
 
 {#if !isMobile}
@@ -393,7 +401,7 @@
                     <div class="contact-info">
                         <div class="contact-header">
                             <div class="contact-name">
-                                {contact.Nickname}
+                                {formatContactDisplayName(contact.Nickname)}
                                 {#if pinnedChats.includes(contact.ID)}
                                     <span class="pin-icon">{@html Icons.Pin}</span>
                                 {/if}
@@ -531,7 +539,7 @@
                         {/if}
                     </div>
                     <div class="contact-info">
-                        <div class="contact-name">{contact.Nickname}</div>
+                        <div class="contact-name">{formatContactDisplayName(contact.Nickname)}</div>
                         <div class="contact-last">{contact.LastMessage || 'Нет сообщений'}</div>
                     </div>
                     {#if contact.UnreadCount > 0}
@@ -977,4 +985,9 @@
     .pin-icon { width: 12px; height: 12px; margin-left: 4px; color: var(--accent); transform: rotate(45deg); display: inline-block; vertical-align: middle; }
     .pin-icon :global(svg) { width: 100%; height: 100%; }
     .contact-time { font-size: 11px; color: var(--text-secondary); opacity: 0.7; }
+
+    .mobile-sidebar, .contacts-list, .mobile-contacts { max-width: 100vw !important; overflow-x: hidden !important; box-sizing: border-box !important; }
+    .contact-item { max-width: calc(100% - 16px) !important; overflow: hidden !important; box-sizing: border-box !important; }
+    .contact-name { white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; max-width: 210px !important; }
+    
 </style>

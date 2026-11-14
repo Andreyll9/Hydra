@@ -121,8 +121,8 @@
     
     if (typeof window !== 'undefined') {
         window.__lockHydraNow = () => {
-            if (isAuthenticated) {
-                isAuthenticated = false;
+            if (typeof isLoggedIn !== 'undefined' && isLoggedIn) {
+                isLoggedIn = false;
                 showSettings = false;
                 if (window.__addHydraLog) window.__addHydraLog('SECURITY-LOCK', '🔒 Приложение свёрнуто — сессия мгновенно заблокирована!');
             }

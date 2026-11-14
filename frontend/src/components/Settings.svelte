@@ -164,6 +164,15 @@
         if (typeof window !== 'undefined') window.__hydraLogList = [];
         settingsLogLines = [];
     }
+    
+    function saveSettingsLogsToFile() {
+        const text = (settingsLogLines || []).join('\n');
+        if (!text) return alert('Журнал пуст');
+        if (window.HydraNative && typeof window.HydraNative.saveLogsToDownloads === 'function') {
+            window.HydraNative.saveLogsToDownloads(text);
+        }
+    }
+    
     function copySettingsLogs() {
         const text = (settingsLogLines || []).join('\n');
         AppActions.ClipboardSet(text);
@@ -352,7 +361,8 @@
                                         <span style="font-size: 12px; font-weight: 800; color: #8AB4F8;">🐞 Живой системный журнал ({settingsLogLines.length})</span>
                                         <div style="display: flex; gap: 6px;">
                                             <button type="button" on:click={refreshSettingsLogs} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 10px; font-size: 11px;">🔄 Обновить</button>
-                                            <button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700;">📋 Копировать всё</button>
+                                            <button type="button" on:click={saveSettingsLogsToFile} style="background: #4CAF50; color: #fff; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">💾 В файл (.txt)</button>
+                                            <button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">📋 Копировать</button>
                                             <button type="button" on:click={clearSettingsLogs} style="background: rgba(255,71,87,0.2); color: #ff6b6b; border: none; border-radius: 100px; padding: 5px 10px; font-size: 11px;">Очистить</button>
                                         </div>
                                     </div>
@@ -478,7 +488,7 @@
     .settings-menu-item .arrow { opacity: 0.3; }
 
     .settings-view-details { width: 100%; height: 100%; display: flex; flex-direction: column; }
-    .settings-content-area { flex: 1; padding: 40px; overflow-y: auto; max-width: 800px; margin: 0 auto; width: 100%; }
+    .settings-content-area { flex: 1; padding: 24px 16px 90px; overflow-y: auto; max-width: 800px; margin: 0 auto; width: 100%; box-sizing: border-box; }
 
     .profile-avatar-large { width: 120px; height: 120px; position: relative; margin: 0 auto 32px; }
     .profile-avatar-large img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }

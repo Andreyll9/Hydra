@@ -582,9 +582,11 @@
                         <audio controls src={msg.Content.slice('[HYDRA_VOICE]:'.length)} style="height: 36px; max-width: 220px;"></audio>
                     </div>
                 {:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
-                    <div style="padding: 4px 0; display: flex; flex-direction: column; align-items: center;">
-                        <video controls playsinline src={msg.Content.slice('[HYDRA_CIRCLE]:'.length)} style="width: 200px; height: 200px; border-radius: 50%; object-fit: cover; border: 3px solid #8AB4F8; background: #000;"></video>
-                        <span style="font-size: 11px; opacity: 0.75; margin-top: 4px;">📹 Видео-кружок E2EE</span>
+                    <div style="padding: 4px; display: flex; flex-direction: column; align-items: center;">
+                        <div style="width: 210px; height: 210px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #8AB4F8; background: #000; position: relative; display: flex; align-items: center; justify-content: center;">
+                            <video playsinline loop src={msg.Content.slice('[HYDRA_CIRCLE]:'.length)} on:click|stopPropagation={(e) => { const v = e.currentTarget; if (v.paused) v.play(); else v.pause(); }} style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; cursor: pointer;"></video>
+                        </div>
+                        <span style="font-size: 11px; opacity: 0.85; margin-top: 6px;">📹 Видео-кружок (нажмите для пуска/паузы)</span>
                     </div>
                 {:else}
                     <div class="message-content">{@html parseMarkdown(msg.Content)}</div>
