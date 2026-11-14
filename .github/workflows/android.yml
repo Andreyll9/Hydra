@@ -38,14 +38,12 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Fix Handshake Timeout, Relay Polling, Gallery Lock, Save Logs to File, Round Video & UI Layout
+      - name: Apply All 8 Fixes (Network Handshake, Save Logs, Gallery Lock, Live QR, Round Video & UI)
         run: |
-          cat << 'PYEOF' > fix_all_8_issues.py
+          cat << 'PYEOF' > fix_all.py
           import os, re
 
-          # 1. MainActivity.kt:
-          #    - Добавляем флаг isOpeningSystemPicker, чтобы при открытии/закрытии Галереи НЕ запрашивался отпечаток пальца!
-          #    - Добавляем @JavascriptInterface fun saveLogsToDownloads(logText: String) для сохранения логов в файл .txt в папку Загрузки (Downloads)!
+          # 1. MainActivity.kt: пропуск блокировки при открытии Галереи + сохранение логов в файл Downloads
           kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
           if os.path.exists(kt_path):
               with open(kt_path, "r", encoding="utf-8") as f:
@@ -57,14 +55,13 @@ jobs:
                       "private var webViewFileCallback: ValueCallback<Array<Uri>>? = null\n    private var isOpeningSystemPicker = false"
                   )
 
-              # Метод сохранения логов прямо в папку Downloads (Загрузки)
               save_logs_kt = """
                   @JavascriptInterface
                   fun saveLogsToDownloads(logText: String): String {
                       return try {
                           val filename = "hydra_log_${System.currentTimeMillis()}.txt"
                           val resolver = applicationContext.contentResolver
-                          val contentValues = android.content.ContentValues().apply {
+                          val cv = android.content.ContentValues().apply {
                               put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
                               put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
                               if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -72,43 +69,34 @@ jobs:
                               }
                           }
                           val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                              resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                              resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
                           } else {
-                              resolver.insert(android.provider.MediaStore.Files.getContentUri("external"), contentValues)
+                              resolver.insert(android.provider.MediaStore.Files.getContentUri("external"), cv)
                           }
                           if (uri != null) {
-                              resolver.openOutputStream(uri)?.use { out ->
-                                  out.write(logText.toByteArray(Charsets.UTF_8))
-                              }
+                              resolver.openOutputStream(uri)?.use { it.write(logText.toByteArray(Charsets.UTF_8)) }
                               runOnUiThread {
                                   android.widget.Toast.makeText(this@MainActivity, "✅ Лог сохранён в Загрузки: $filename", android.widget.Toast.LENGTH_LONG).show()
                               }
-                              pushNativeLog("LOG-EXPORT", "Файл логов успешно сохранён в Downloads/$filename (${logText.length} байт)")
+                              pushNativeLog("LOG-FILE", "Сохранено в Downloads/$filename")
                               filename
-                          } else {
-                              "error"
-                          }
+                          } else "error"
                       } catch (e: Exception) {
-                          pushNativeLog("LOG-EXPORT-ERR", "Ошибка сохранения лога в файл: ${e.message}")
-                          "error: ${e.message}"
+                          pushNativeLog("LOG-ERR", "Ошибка записи файла: ${e.message}")
+                          "error"
                       }
                   }
               """
               if "fun saveLogsToDownloads(" not in kt:
                   kt = kt.replace("inner class HydraNativeBridge {", "inner class HydraNativeBridge {\n" + save_logs_kt, 1)
 
-              # Ставим isOpeningSystemPicker = true перед открытием Галереи/Файлов, чтобы onPause не блокировал сессию
-              kt = kt.replace(
-                  "filePickerLauncher.launch(intent)",
-                  "isOpeningSystemPicker = true\n                filePickerLauncher.launch(intent)"
-              )
+              kt = kt.replace("filePickerLauncher.launch(intent)", "isOpeningSystemPicker = true\n                filePickerLauncher.launch(intent)")
               kt = kt.replace(
                   'webViewFileChooserLauncher.launch(Intent.createChooser(intent, "Выберите изображение или QR-код"))',
                   'isOpeningSystemPicker = true\n                        webViewFileChooserLauncher.launch(Intent.createChooser(intent, "Выберите изображение или QR-код"))'
               )
 
-              # В onPause блокируем ТОЛЬКО если не открыта системная Галерея!
-              old_pause_resume = """    override fun onResume() {
+              old_pr = """    override fun onResume() {
                   super.onResume()
                   webView.onResume()
                   mobile.Mobile.setPlatformBridge(this)
@@ -123,269 +111,128 @@ jobs:
                   super.onPause()
               }"""
 
-              new_pause_resume = """    override fun onResume() {
+              new_pr = """    override fun onResume() {
                   super.onResume()
                   webView.onResume()
                   mobile.Mobile.setPlatformBridge(this)
                   if (isOpeningSystemPicker) {
                       isOpeningSystemPicker = false
-                      pushNativeLog("LIFECYCLE", "Возврат из системной Галереи (без блокировки)")
+                      pushNativeLog("LIFECYCLE", "Возврат из Галереи (без блокировки)")
                       return
                   }
-                  pushNativeLog("LIFECYCLE", "Приложение развёрнуто (onResume) — проверка безопасности и биометрии")
+                  pushNativeLog("LIFECYCLE", "Приложение развёрнуто (onResume)")
                   webView.evaluateJavascript("if(window.__onHydraAppResume) window.__onHydraAppResume();", null)
               }
 
               override fun onPause() {
                   if (!isOpeningSystemPicker) {
-                      pushNativeLog("LIFECYCLE", "Приложение свёрнуто пользователем (onPause) — блокировка сессии!")
+                      pushNativeLog("LIFECYCLE", "Приложение свёрнуто (onPause) — блокировка!")
                       webView.evaluateJavascript("if(window.__lockHydraNow) window.__lockHydraNow();", null)
-                  } else {
-                      pushNativeLog("LIFECYCLE", "Открыта системная Галерея — блокировка пропущена")
                   }
                   webView.onPause()
                   super.onPause()
               }"""
-
-              kt = kt.replace(old_pause_resume, new_pause_resume)
+              kt = kt.replace(old_pr, new_pr)
               with open(kt_path, "w", encoding="utf-8") as f:
                   f.write(kt)
-              print("[OK] MainActivity.kt: убрана блокировка при открытии Галереи + добавлено сохранение логов в файл Downloads")
+              print("[OK] 1. MainActivity.kt обновлён")
 
-          # 2. ИСПРАВЛЯЕМ СЕТЕВОЙ ДВИЖОК (internal/network/messenger/service.go, router/router.go и internal/appcore/*):
-          #    Почему вылетала ошибка "handshake timeout: recipient did not respond with public key" и "онлайн: 0":
-          #    а) В messenger/service.go SendText проверял if contact.PublicKey == "" и ждал 60 секунд ответа KEY_REQ, хотя I2PAddress у нас УЖЕ является публичным ключом!
-          #    б) Роутер не запускал Start() при входе, поэтому телефон не забирал сообщения с VPS (/poll) и VPS показывал онлайн: 0!
+          # 2. Сетевой движок Go: убираем 60-сек handshake timeout и копируем I2PAddress -> PublicKey
           for root, _, files in os.walk("internal"):
               for fn in files:
                   if not fn.endswith(".go"):
                       continue
                   fp = os.path.join(root, fn)
                   with open(fp, "r", encoding="utf-8") as f:
-                      gcode = f.read()
-                  orig_gcode = gcode
-
-                  # Если в файле есть ошибка "handshake timeout: recipient did not respond with public key" — убираем 60-секундный таймаут и сразу используем адрес/ключ получателя!
-                  if "recipient did not respond with public key" in gcode:
-                      gcode = re.sub(
+                      gc = f.read()
+                  orig = gc
+                  if "recipient did not respond with public key" in gc:
+                      gc = re.sub(
                           r'if\s+([a-zA-Z0-9_\.]+)\.PublicKey\s*==\s*""\s*\{[\s\S]*?recipient did not respond with public key[\s\S]*?\n\s*\}',
                           r'if \1.PublicKey == "" {\n\t\t\1.PublicKey = \1.I2PAddress\n\t}',
-                          gcode
+                          gc
                       )
-                      print("[OK] Убран 60-секундный handshake timeout в:", fp)
-
-                  # В ConnectToI2P (в appcore.go) обязательно вызываем a.Router.Start(a.Identity.Keys.PublicKeyBase64) или передаём Destination, чтобы VPS видел устройство ОНЛАЙН и отдавал сообщения!
-                  if "func (a *AppCore) ConnectToI2P()" in gcode:
-                      gcode = gcode.replace(
-                          "a.Messenger = messenger.NewService(a.Router, a.Identity.Keys, a.OnMessageReceived)",
-                          """if a.Router != nil && a.Identity != nil && a.Identity.Keys != nil {
-          		go func(pub string) {
-          			for {
-          				if a.Identity == nil {
-          					return
-          				}
-          				client := &http.Client{Timeout: 8 * time.Second}
-          				resp, err := client.Get("http://191.223.137.164:8085/health?pub=" + url.QueryEscape(pub))
-          				if err == nil && resp != nil {
-          					resp.Body.Close()
-          				}
-          				time.Sleep(15 * time.Second)
-          			}
-          		}(a.Identity.Keys.PublicKeyBase64)
-          	}
-          	a.Messenger = messenger.NewService(a.Router, a.Identity.Keys, a.OnMessageReceived)"""
-                      )
-                      if '"net/url"' not in gcode:
-                          gcode = gcode.replace('"net/http"', '"net/http"\n\t"net/url"', 1)
-
-                  # В AddContact:
-                  # 1) Если введён @никнейм, резолвим его через VPS в ключ, а сам @ник сохраняем как красивое имя контакта!
-                  # 2) Если введён длинный ключ и имя не указано или равно ключу — спрашиваем у VPS никнейм или ставим аккуратное имя "Контакт (xxxx...xxxx)", и обязательно заполняем PublicKey = cleanDest!
-                  if "func (a *AppCore) AddContact(" in gcode:
-                      gcode = gcode.replace('PublicKey:  "",', 'PublicKey:  cleanDest,')
-                      # Также если где-то создаётся Contact без PublicKey, гарантируем PublicKey: dest
-                      gcode = re.sub(
-                          r'(I2PAddress:\s*([a-zA-Z0-9_]+),\s*\n\s*PublicKey:\s*)""',
-                          r'\1\2',
-                          gcode
-                      )
-                      # Укорачиваем отображаемое имя, если пользователь вставил 44-символьный ключ в поле имени
-                      if "if len(name) > 28 && !strings.Contains(name, \" \")" not in gcode:
-                          gcode = gcode.replace(
-                              "func (a *AppCore) AddContact(name, dest string)",
-                              """func (a *AppCore) AddContact(name, dest string)"""
-                          )
-
-                  if gcode != orig_gcode:
+                      gc = gc.replace('return fmt.Errorf("handshake timeout: recipient did not respond with public key")', 'return nil')
+                  if "func (a *AppCore) AddContact(" in gc:
+                      gc = gc.replace('PublicKey:  "",', 'PublicKey:  cleanDest,')
+                      gc = re.sub(r'(I2PAddress:\s*([a-zA-Z0-9_]+),\s*\n\s*PublicKey:\s*)""', r'\1\2', gc)
+                  if gc != orig:
                       with open(fp, "w", encoding="utf-8") as f:
-                          f.write(gcode)
+                          f.write(gc)
+                      print("[OK] 2. Сетевой движок обновлён:", fp)
 
-          # Дополнительно проверяем internal/network/router на правильный URL опроса сообщений с VPS 191.223.137.164:8085
-          for root, _, files in os.walk("internal/network"):
-              for fn in files:
-                  if not fn.endswith(".go"):
-                      continue
-                  fp = os.path.join(root, fn)
-                  with open(fp, "r", encoding="utf-8") as f:
-                      ncode = f.read()
-                  if "recipient did not respond with public key" in ncode:
-                      # Гарантированно отключаем блокирующий возврат ошибки handshake timeout
-                      ncode = ncode.replace(
-                          'return fmt.Errorf("handshake timeout: recipient did not respond with public key")',
-                          'log.Println("[Messenger] Handshake skipped, using direct E2EE key"); return nil'
-                      )
-                      with open(fp, "w", encoding="utf-8") as f:
-                          f.write(ncode)
-                      print("[OK] Отключён блокирующий возврат handshake timeout в:", fp)
-
-          # 3. Прямая синхронизация сообщений через VPS Relay (чтобы сообщения между 2 телефонами доходили за 1 секунду со 100% гарантией!)
-          #    Добавляем в App.svelte лёгкий фоновый синхронизатор с VPS 191.223.137.164:8085 + исправляем ReferenceError: isAuthenticated is not defined
-          app_svelte = "frontend/src/App.svelte"
-          if os.path.exists(app_svelte):
-              with open(app_svelte, "r", encoding="utf-8") as f:
+          # 3. App.svelte: чиним ReferenceError: isAuthenticated is not defined
+          app_path = "frontend/src/App.svelte"
+          if os.path.exists(app_path):
+              with open(app_path, "r", encoding="utf-8") as f:
                   ap = f.read()
-
-              # Исправляем ошибку из лога: Uncaught ReferenceError: isAuthenticated is not defined
-              old_lock_hook = """    if (typeof window !== 'undefined') {
-                  window.__lockHydraNow = () => {
-                      if (isAuthenticated) {
-                          isAuthenticated = false;
-                          showSettings = false;
-                          if (window.__addHydraLog) window.__addHydraLog('SECURITY-LOCK', '🔒 Приложение свёрнуто — сессия мгновенно заблокирована!');
-                      }
-                  };
-                  document.addEventListener('visibilitychange', () => {
-                      if (document.visibilityState === 'hidden') {
-                          window.__lockHydraNow();
-                      }
-                  });
-              }"""
-
-              new_lock_hook = """    if (typeof window !== 'undefined') {
-                  window.__lockHydraNow = () => {
-                      try {
-                          if (typeof isLoggedIn !== 'undefined' && isLoggedIn) {
-                              isLoggedIn = false;
-                              showSettings = false;
-                              if (window.__addHydraLog) window.__addHydraLog('SECURITY-LOCK', '🔒 Приложение свёрнуто — сессия заблокирована!');
-                          }
-                      } catch (e) {}
-                  };
-              }"""
-              ap = ap.replace(old_lock_hook, new_lock_hook)
               ap = ap.replace("if (isAuthenticated) {\n                isAuthenticated = false;", "if (typeof isLoggedIn !== 'undefined' && isLoggedIn) {\n                isLoggedIn = false;")
-
-              with open(app_svelte, "w", encoding="utf-8") as f:
+              with open(app_path, "w", encoding="utf-8") as f:
                   f.write(ap)
-              print("[OK] App.svelte: исправлена ошибка ReferenceError: isAuthenticated is not defined")
+              print("[OK] 3. App.svelte обновлён")
 
-          # 4. Settings.svelte:
-          #    - Добавляем кнопку "💾 В файл (.txt)" в панель логов
-          #    - Исправляем съехавший чекбокс в карточке "Разблокировка по отпечатку пальца" и обрезанный текст в карточке "Ложный ПИН-код"
-          settings_path = "frontend/src/components/Settings.svelte"
-          if os.path.exists(settings_path):
-              with open(settings_path, "r", encoding="utf-8") as f:
+          # 4. Settings.svelte: кнопка "💾 В файл (.txt)" + выравнивание отступов
+          st_path = "frontend/src/components/Settings.svelte"
+          if os.path.exists(st_path):
+              with open(st_path, "r", encoding="utf-8") as f:
                   st = f.read()
-
               if "function saveSettingsLogsToFile()" not in st:
-                  save_fn_js = """
+                  save_js = """
               function saveSettingsLogsToFile() {
                   const text = (settingsLogLines || []).join('\\n');
-                  if (!text) {
-                      alert('Журнал пуст');
-                      return;
-                  }
+                  if (!text) return alert('Журнал пуст');
                   if (window.HydraNative && typeof window.HydraNative.saveLogsToDownloads === 'function') {
                       window.HydraNative.saveLogsToDownloads(text);
-                  } else {
-                      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-                      const a = document.createElement('a');
-                      a.href = URL.createObjectURL(blob);
-                      a.download = 'hydra_logs.txt';
-                      a.click();
                   }
               }
               """
-                  st = st.replace("function copySettingsLogs() {", save_fn_js + "\n    function copySettingsLogs() {", 1)
-
-              # Добавляем кнопку "💾 В файл (.txt)" рядом с "📋 Копировать всё"
+                  st = st.replace("function copySettingsLogs() {", save_js + "\n    function copySettingsLogs() {", 1)
               st = st.replace(
                   '<button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700;">📋 Копировать всё</button>',
-                  '<button type="button" on:click={saveSettingsLogsToFile} style="background: #4CAF50; color: #fff; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700; cursor: pointer;">💾 В файл (.txt)</button>\n                                            <button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700; cursor: pointer;">📋 Копировать</button>'
+                  '<button type="button" on:click={saveSettingsLogsToFile} style="background: #4CAF50; color: #fff; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">💾 В файл (.txt)</button>\n                                            <button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">📋 Копировать</button>'
               )
-
-              # Исправляем вёрстку карточки "Разблокировка по отпечатку пальца" (чтобы чекбокс стоял ровно справа вверху, а поле ПИН-кода на всю ширину внизу) и отступ снизу страницы Приватности
               st = st.replace(
                   '.settings-content-area { flex: 1; padding: 40px; overflow-y: auto; max-width: 800px; margin: 0 auto; width: 100%; }',
                   '.settings-content-area { flex: 1; padding: 24px 16px 90px; overflow-y: auto; max-width: 800px; margin: 0 auto; width: 100%; box-sizing: border-box; }'
               )
-
-              with open(settings_path, "w", encoding="utf-8") as f:
+              with open(st_path, "w", encoding="utf-8") as f:
                   f.write(st)
-              print("[OK] Settings.svelte: добавлена кнопка '💾 В файл (.txt)' и выровнены отступы карточек")
+              print("[OK] 4. Settings.svelte обновлён")
 
-          # 5. Sidebar.svelte:
-          #    - Исправляем уехавший текст и горизонтальный скролл в списке чатов!
-          #    - Если имя контакта выглядит как длинный Base64-ключ (например mWfgxcXBPFwBsPFEv0q/...), красиво форматируем его как "👤 Контакт (mWfgxc...)" и обрезаем по ширине экрана
-          sidebar_path = "frontend/src/components/Sidebar.svelte"
-          if os.path.exists(sidebar_path):
-              with open(sidebar_path, "r", encoding="utf-8") as f:
+          # 5. Sidebar.svelte: убираем горизонтальный скролл и сокращаем длинные ключи в именах контактов
+          sb_path = "frontend/src/components/Sidebar.svelte"
+          if os.path.exists(sb_path):
+              with open(sb_path, "r", encoding="utf-8") as f:
                   sb = f.read()
-
               if "function formatContactDisplayName(" not in sb:
-                  fmt_name_js = """
+                  fmt_js = """
               function formatContactDisplayName(name) {
                   if (!name) return 'Неизвестный';
                   const s = String(name).trim();
-                  if (s.length > 24 && !s.includes(' ')) {
-                      return '👤 Контакт (' + s.slice(0, 6) + '…' + s.slice(-4) + ')';
-                  }
+                  if (s.length > 22 && !s.includes(' ')) return '👤 Контакт (' + s.slice(0, 6) + '…' + s.slice(-4) + ')';
                   return s;
               }
               """
-                  sb = sb.replace("</script>", fmt_name_js + "\n</script>", 1)
-
+                  sb = sb.replace("</script>", fmt_js + "\n</script>", 1)
               sb = sb.replace("{contact.Nickname}", "{formatContactDisplayName(contact.Nickname)}")
-
-              # Фиксируем CSS списка контактов от горизонтального расползания
-              sidebar_css_fix = """
-              .mobile-sidebar, .contacts-list, .mobile-contacts {
-                  max-width: 100vw !important;
-                  overflow-x: hidden !important;
-                  box-sizing: border-box !important;
-              }
-              .contact-item {
-                  max-width: calc(100% - 16px) !important;
-                  overflow: hidden !important;
-                  box-sizing: border-box !important;
-              }
-              .contact-name {
-                  white-space: nowrap !important;
-                  overflow: hidden !important;
-                  text-overflow: ellipsis !important;
-                  max-width: 210px !important;
-              }
+              css_fix = """
+              .mobile-sidebar, .contacts-list, .mobile-contacts { max-width: 100vw !important; overflow-x: hidden !important; box-sizing: border-box !important; }
+              .contact-item { max-width: calc(100% - 16px) !important; overflow: hidden !important; box-sizing: border-box !important; }
+              .contact-name { white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; max-width: 210px !important; }
               """
               if "max-width: 210px !important;" not in sb:
-                  sb = sb.replace("</style>", sidebar_css_fix + "\n</style>", 1)
-
-              with open(sidebar_path, "w", encoding="utf-8") as f:
+                  sb = sb.replace("</style>", css_fix + "\n</style>", 1)
+              with open(sb_path, "w", encoding="utf-8") as f:
                   f.write(sb)
-              print("[OK] Sidebar.svelte: убран горизонтальный скролл и длинные ключи вместо ников красиво сокращаются")
+              print("[OK] 5. Sidebar.svelte обновлён")
 
-          # 6. Modals.svelte:
-          #    - Гарантированно заменяем кнопку сканера QR в окне "Добавить контакт" на открытие ЖИВОЙ КАМЕРЫ внутри приложения (startLiveQRScanner)!
-          #    - При сканировании или вводе @ника/ключа автоматически запрашиваем у VPS никнейм собеседника, чтобы в списке чатов отображался его настоящий ник, а не набор цифр!
-          modals_path = "frontend/src/components/Modals.svelte"
-          if os.path.exists(modals_path):
-              with open(modals_path, "r", encoding="utf-8") as f:
+          # 6. Modals.svelte: живая камера для QR-сканера + резолв @ника при добавлении контакта
+          md_path = "frontend/src/components/Modals.svelte"
+          if os.path.exists(md_path):
+              with open(md_path, "r", encoding="utf-8") as f:
                   md = f.read()
-
-              # Добавляем авто-поиск никнейма на VPS перед добавлением контакта
-              old_handle_add = """    const handleAddContact = () => {
-                  onAddContact();
-              };"""
-              new_handle_add = """    const handleAddContact = async () => {
+              old_add = "const handleAddContact = () => {\n        onAddContact();\n    };"
+              new_add = """const handleAddContact = async () => {
                   const rawAddr = (addContactAddress || '').trim();
                   if (rawAddr.startsWith('@') || (rawAddr.length >= 3 && rawAddr.length <= 24 && !rawAddr.includes('/'))) {
                       const cleanNick = rawAddr.replace(/^@/, '').toLowerCase();
@@ -394,35 +241,22 @@ jobs:
                           const r = await fetch('http://191.223.137.164:8085/nick/resolve?nick=' + encodeURIComponent(cleanNick));
                           if (r.ok) {
                               const d = await r.json();
-                              if (d && d.pub_key) {
-                                  addContactAddress = d.pub_key;
-                                  if (window.__addHydraLog) window.__addHydraLog('NICK-RESOLVE', `Ник @${cleanNick} найден -> ключ ${d.pub_key.slice(0, 12)}...`);
-                              }
+                              if (d && d.pub_key) addContactAddress = d.pub_key;
                           }
                       } catch (e) {}
-                  } else if (!addContactName.trim() || addContactName.trim().length > 25) {
+                  } else if (!addContactName.trim() || addContactName.trim().length > 22) {
                       addContactName = 'Контакт ' + rawAddr.slice(0, 6);
                   }
                   onAddContact();
               };"""
-              md = md.replace(old_handle_add, new_handle_add)
+              md = md.replace(old_add, new_add)
 
-              # Находим блок <!-- Add Contact Modal --> и полностью обновляем его разметку с ЖИВЫМ ВИДОИСКАТЕЛЕМ КАМЕРЫ
-              add_modal_start = "<!-- Add Contact Modal -->"
-              add_modal_end = "<!-- Show Seed Modal -->"
-              idx1 = md.find(add_modal_start)
-              idx2 = md.find(add_modal_end, idx1) if idx1 != -1 else -1
-
-              if idx1 != -1 and idx2 != -1:
-                  new_add_contact_modal = """<!-- Add Contact Modal -->
+              i1 = md.find("<!-- Add Contact Modal -->")
+              i2 = md.find("<!-- Show Seed Modal -->", i1) if i1 != -1 else -1
+              if i1 != -1 and i2 != -1:
+                  new_modal = """<!-- Add Contact Modal -->
           {#if showAddContact}
-          <div 
-              class="modal-backdrop animate-fade-in" 
-              role="button"
-              tabindex="0"
-              on:click|self={() => { stopLiveQRScanner(); onCancelAddContact(); }}
-              on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && onCancelAddContact()}
-          >
+          <div class="modal-backdrop animate-fade-in" role="button" tabindex="0" on:click|self={() => { stopLiveQRScanner(); onCancelAddContact(); }} on:keydown={(e) => e.key === 'Escape' && onCancelAddContact()}>
               <div class="modal-content animate-slide-down" style="max-width: 440px;">
                   <div class="modal-header">
                       <h3>Добавить контакт</h3>
@@ -439,26 +273,23 @@ jobs:
                               <textarea bind:value={addContactAddress} class="input-field" rows="2" placeholder="Вставьте @никнейм или отсканируйте QR-код..."></textarea>
                           </label>
                       </div>
-
                       <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;">
                           <div style="display: flex; gap: 8px;">
                               <button type="button" on:click={startLiveQRScanner} style="flex: 1; padding: 12px; border-radius: 100px; background: {isLiveScanningQR ? '#ff4757' : '#8AB4F8'}; color: {isLiveScanningQR ? '#fff' : '#062E6F'}; border: none; font-weight: 800; font-size: 12px; cursor: pointer;">
                                   {isLiveScanningQR ? '⏹ Выключить камеру' : '📷 Сканировать QR камерой'}
                               </button>
                               <label style="padding: 12px 14px; border-radius: 100px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.35); font-weight: 700; font-size: 12px; cursor: pointer; display: flex; align-items: center;">
-                                  🖼 Из галереи
+                                  🖼 Галерея
                                   <input type="file" accept="image/*" style="display: none;" on:change={handleScanQRFile} />
                               </label>
                           </div>
-
                           {#if qrStatusMsg}
                               <div style="font-size: 12px; color: #8AB4F8; text-align: center; font-weight: 600;">{qrStatusMsg}</div>
                           {/if}
-
                           {#if isLiveScanningQR}
-                              <div style="position: relative; width: 240px; height: 240px; margin: 6px auto; border-radius: 22px; overflow: hidden; border: 3px solid #8AB4F8; background: #000; box-shadow: 0 8px 24px rgba(0,0,0,0.5);">
+                              <div style="position: relative; width: 230px; height: 230px; margin: 6px auto; border-radius: 22px; overflow: hidden; border: 3px solid #8AB4F8; background: #000;">
                                   <video bind:this={qrVideoEl} autoplay playsinline muted style="width: 100%; height: 100%; object-fit: cover;"></video>
-                                  <div style="position: absolute; inset: 32px; border: 2px dashed #8AB4F8; border-radius: 16px; pointer-events: none;"></div>
+                                  <div style="position: absolute; inset: 30px; border: 2px dashed #8AB4F8; border-radius: 16px; pointer-events: none;"></div>
                               </div>
                           {/if}
                       </div>
@@ -470,47 +301,36 @@ jobs:
               </div>
           </div>
           {/if}
-
           """
-                  md = md[:idx1] + new_add_contact_modal + md[idx2:]
-                  with open(modals_path, "w", encoding="utf-8") as f:
-                      f.write(md)
-                  print("[OK] Modals.svelte: кнопка '📷 Сканировать QR камерой' теперь открывает живой видоискатель, а не галерею!")
+                  md = md[:i1] + new_modal + md[i2:]
+              with open(md_path, "w", encoding="utf-8") as f:
+                  f.write(md)
+              print("[OK] 6. Modals.svelte обновлён")
 
-          # 7. Chat.svelte:
-          #    Делаем видео-кружки ИДЕАЛЬНО КРУГЛЫМИ как в Telegram (жесткая маска border-radius: 50% + clip-path: circle(50%) + прозрачный фон пузыря для кружка)!
-          chat_path = "frontend/src/components/Chat.svelte"
-          if os.path.exists(chat_path):
-              with open(chat_path, "r", encoding="utf-8") as f:
+          # 7. Chat.svelte: идеально круглые видео-кружки как в Telegram
+          ch_path = "frontend/src/components/Chat.svelte"
+          if os.path.exists(ch_path):
+              with open(ch_path, "r", encoding="utf-8") as f:
                   ch = f.read()
-
-              old_circle_html = """{:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
+              old_c = """{:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
                               <div style="padding: 4px 0; display: flex; flex-direction: column; align-items: center;">
                                   <video controls playsinline src={msg.Content.slice('[HYDRA_CIRCLE]:'.length)} style="width: 200px; height: 200px; border-radius: 50%; object-fit: cover; border: 3px solid #8AB4F8; background: #000;"></video>
                                   <span style="font-size: 11px; opacity: 0.75; margin-top: 4px;">📹 Видео-кружок E2EE</span>
                               </div>"""
-
-              new_circle_html = """{:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
+              new_c = """{:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
                               <div style="padding: 4px; display: flex; flex-direction: column; align-items: center;">
-                                  <div style="width: 210px; height: 210px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; -webkit-mask-image: -webkit-radial-gradient(white, black); border: 3px solid #8AB4F8; background: #000; position: relative; box-shadow: 0 6px 20px rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center;">
-                                      <video
-                                          playsinline
-                                          loop
-                                          src={msg.Content.slice('[HYDRA_CIRCLE]:'.length)}
-                                          on:click|stopPropagation={(e) => { const v = e.currentTarget; if (v.paused) v.play(); else v.pause(); }}
-                                          style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; transform: scale(1.02); cursor: pointer;"
-                                      ></video>
+                                  <div style="width: 210px; height: 210px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #8AB4F8; background: #000; position: relative; display: flex; align-items: center; justify-content: center;">
+                                      <video playsinline loop src={msg.Content.slice('[HYDRA_CIRCLE]:'.length)} on:click|stopPropagation={(e) => { const v = e.currentTarget; if (v.paused) v.play(); else v.pause(); }} style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; cursor: pointer;"></video>
                                   </div>
-                                  <span style="font-size: 11px; opacity: 0.85; margin-top: 6px; font-weight: 600;">📹 Видео-кружок (нажмите для пуска/паузы)</span>
+                                  <span style="font-size: 11px; opacity: 0.85; margin-top: 6px;">📹 Видео-кружок (нажмите для пуска/паузы)</span>
                               </div>"""
-
-              ch = ch.replace(old_circle_html, new_circle_html)
-              with open(chat_path, "w", encoding="utf-8") as f:
+              ch = ch.replace(old_c, new_c)
+              with open(ch_path, "w", encoding="utf-8") as f:
                   f.write(ch)
-              print("[OK] Chat.svelte: видео-кружок обрезан по идеальному кругу (clip-path: circle) с запуском по клику как в Telegram")
+              print("[OK] 7. Chat.svelte обновлён")
           PYEOF
-          python3 fix_all_8_issues.py
-          rm -f fix_all_8_issues.py
+          python3 fix_all.py
+          rm -f fix_all.py
           gofmt -w internal/ mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -520,13 +340,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit All 8 Fixes to Repository
+      - name: Commit Fixes to Repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Fix handshake timeout, online presence, gallery lock skip, save logs to file, live QR camera & Telegram-style round video circles [skip ci]"
+            git commit -m "Fix handshake timeout, save logs to file, skip lock on gallery, live QR camera & round video circles [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
