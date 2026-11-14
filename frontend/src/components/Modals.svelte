@@ -74,6 +74,7 @@
         '🔔', '📌', '🏆', '🌟', '🎨', '🔧', '📈', '🛡️'
     ];
     let showEmojiPicker = false;
+    let createEntityType = 'folder';
 
     function selectEmoji(emoji) {
         folderIcon = emoji;
@@ -223,28 +224,36 @@
     class="modal-backdrop animate-fade-in" 
     role="button"
     tabindex="0"
-    on:click|self={onCancelFolder}
-    on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && onCancelFolder()}
+    on:click|self={() => { showEmojiPicker = false; if (onCancelFolder) onCancelFolder(); }}
+    on:keydown={(e) => e.key === 'Escape' && onCancelFolder && onCancelFolder()}
 >
-    <div class="modal-content animate-slide-down" style="max-width: 400px;">
+    <div class="modal-content animate-slide-down" style="max-width: 400px; width: 92%; box-sizing: border-box;">
         <div class="modal-header">
             <h3>{isEditingFolder ? 'Редактировать' : (createEntityType === 'group' ? '👥 Новая группа E2EE' : (createEntityType === 'channel' ? '📢 Новый канал' : '📁 Новая папка'))}</h3>
-            <button class="btn-icon" on:click={onCancelFolder}><div class="icon-svg">{@html Icons.X}</div></button>
+            <button type="button" class="btn-icon" on:click={() => { showEmojiPicker = false; if (onCancelFolder) onCancelFolder(); }}><div class="icon-svg">{@html Icons.X}</div></button>
         </div>
         <div class="modal-body">
-            <label class="form-label">Название
-                <input type="text" bind:value={folderName} class="input-field" placeholder="Напр: Работа, Семья" />
+            {#if !isEditingFolder}
+                <div style="display: flex; gap: 6px; margin-bottom: 14px; background: #121212; padding: 4px; border-radius: 100px; border: 1px solid rgba(138,180,248,0.2);">
+                    <button type="button" on:click={() => { createEntityType = 'folder'; folderIcon = '📁'; }} style="flex: 1; padding: 8px 4px; border-radius: 100px; border: none; font-size: 12px; font-weight: 700; cursor: pointer; background: {createEntityType === 'folder' ? '#8AB4F8' : 'transparent'}; color: {createEntityType === 'folder' ? '#062E6F' : '#9AA0A6'};">📁 Папка</button>
+                    <button type="button" on:click={() => { createEntityType = 'group'; folderIcon = '👥'; }} style="flex: 1; padding: 8px 4px; border-radius: 100px; border: none; font-size: 12px; font-weight: 700; cursor: pointer; background: {createEntityType === 'group' ? '#8AB4F8' : 'transparent'}; color: {createEntityType === 'group' ? '#062E6F' : '#9AA0A6'};">👥 Группа</button>
+                    <button type="button" on:click={() => { createEntityType = 'channel'; folderIcon = '📢'; }} style="flex: 1; padding: 8px 4px; border-radius: 100px; border: none; font-size: 12px; font-weight: 700; cursor: pointer; background: {createEntityType === 'channel' ? '#8AB4F8' : 'transparent'}; color: {createEntityType === 'channel' ? '#062E6F' : '#9AA0A6'};">📢 Канал</button>
+                </div>
+            {/if}
+            <label class="form-label">
+                {createEntityType === 'group' ? 'Название группы' : (createEntityType === 'channel' ? 'Название канала' : 'Название папки')}
+                <input type="text" bind:value={folderName} class="input-field" style="box-sizing: border-box;" placeholder={createEntityType === 'group' ? 'Напр: Секретный чат' : (createEntityType === 'channel' ? 'Напр: Новости Hydra' : 'Напр: Работа, Семья')} />
             </label>
-            <div class="emoji-section" style="margin-top: 16px;">
-                <label class="form-label">Иконка</label>
-                <div class="emoji-current" on:click={() => showEmojiPicker = !showEmojiPicker} role="button" tabindex="0" on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && (showEmojiPicker = !showEmojiPicker)}>
+            <div class="emoji-section" style="margin-top: 14px;">
+                <div class="form-label">Иконка</div>
+                <div class="emoji-current" on:click={() => showEmojiPicker = !showEmojiPicker} role="button" tabindex="0" on:keydown={(e) => e.key === 'Enter' && (showEmojiPicker = !showEmojiPicker)}>
                     <span class="emoji-display">{folderIcon}</span>
-                    <span class="emoji-hint">{showEmojiPicker ? 'Закрыть' : 'Выбрать'}</span>
+                    <span class="emoji-hint">{showEmojiPicker ? 'Скрыть иконки' : 'Выбрать иконку'}</span>
                 </div>
                 {#if showEmojiPicker}
                     <div class="emoji-grid">
                         {#each emojiList as emoji}
-                            <button class="emoji-btn" class:selected={folderIcon === emoji} on:click={() => selectEmoji(emoji)}>{emoji}</button>
+                            <button type="button" class="emoji-btn" class:selected={folderIcon === emoji} on:click={() => selectEmoji(emoji)}>{emoji}</button>
                         {/each}
                     </div>
                 {/if}
@@ -252,10 +261,18 @@
         </div>
         <div class="modal-footer">
             {#if isEditingFolder}
-                <button class="btn-small btn-danger" on:click={onDeleteFolder} style="margin-right: auto;">Удалить</button>
+                <button type="button" class="btn-small btn-danger" on:click={onDeleteFolder} style="margin-right: auto;">Удалить</button>
             {/if}
-            <button class="btn-small btn-glass" on:click={onCancelFolder}>Отмена</button>
-            <button class="btn-small btn-primary" on:click={onSaveFolder}>Сохранить</button>
+            <button type="button" class="btn-small btn-glass" on:click={() => { showEmojiPicker = false; if (onCancelFolder) onCancelFolder(); }}>Отмена</button>
+            <button type="button" class="btn-small btn-primary" on:click={() => {
+                if (!isEditingFolder && createEntityType === 'group' && folderName && !folderName.startsWith('👥 ')) {
+                    folderName = '👥 ' + folderName.trim();
+                } else if (!isEditingFolder && createEntityType === 'channel' && folderName && !folderName.startsWith('📢 ')) {
+                    folderName = '📢 ' + folderName.trim();
+                }
+                showEmojiPicker = false;
+                if (onSaveFolder) onSaveFolder();
+            }}>Создать</button>
         </div>
     </div>
 </div>

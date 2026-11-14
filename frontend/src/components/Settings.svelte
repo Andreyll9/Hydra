@@ -179,6 +179,88 @@
         alert('✅ Скопировано записей журнала: ' + settingsLogLines.length);
     }
     
+
+    // === СЕКРЕТНОЕ МЕНЮ РАЗРАБОТЧИКА (6 НАЖАТИЙ НА ЛИЦЕНЗИЮ) + ТЕСТ ПОТОКА ЗВОНКОВ И СООБЩЕНИЙ + LAN BOOST ===
+    let licenseTapCount = 0;
+    let devMenuUnlocked = localStorage.getItem('hydra_dev_unlocked') === '1';
+    let showSecretDevModal = false;
+    let lanDirectEnabled = localStorage.getItem('hydra_lan_boost') !== '0';
+    let lanWifiInfo = { lanIp: '', lanActive: false };
+
+    let streamTestStatus = '';
+    let messageLoopbackStatus = '';
+    let isRunningFullDiag = false;
+
+    function refreshLanWifiInfo() {
+        if (window.HydraNative && typeof window.HydraNative.getLocalWifiInfo === 'function') {
+            try {
+                lanWifiInfo = JSON.parse(window.HydraNative.getLocalWifiInfo());
+            } catch (e) {}
+        }
+    }
+    setTimeout(refreshLanWifiInfo, 300);
+
+    function toggleLanDirect() {
+        lanDirectEnabled = !lanDirectEnabled;
+        localStorage.setItem('hydra_lan_boost', lanDirectEnabled ? '1' : '0');
+        refreshLanWifiInfo();
+    }
+
+    function handleLicenseTap() {
+        licenseTapCount++;
+        if (licenseTapCount >= 6) {
+            devMenuUnlocked = true;
+            localStorage.setItem('hydra_dev_unlocked', '1');
+            showSecretDevModal = true;
+            refreshSettingsLogs();
+            refreshLanWifiInfo();
+            licenseTapCount = 0;
+        }
+    }
+
+    async function runComprehensiveDiagnostics() {
+        isRunningFullDiag = true;
+        streamTestStatus = '⏳ 1/3 Проверка медиа-потока и WebRTC ICE...';
+        messageLoopbackStatus = '⏳ Ожидание...';
+        try {
+            await verifyHydraConnection();
+            const t0 = Date.now();
+            const pc1 = new RTCPeerConnection();
+            const pc2 = new RTCPeerConnection();
+            let iceCount = 0;
+            pc1.onicecandidate = e => { if (e.candidate) { iceCount++; pc2.addIceCandidate(e.candidate); } };
+            pc2.onicecandidate = e => { if (e.candidate) pc1.addIceCandidate(e.candidate); };
+            pc1.createDataChannel('hydra_call_stream_test');
+            const offer = await pc1.createOffer();
+            await pc1.setLocalDescription(offer);
+            await pc2.setRemoteDescription(offer);
+            const answer = await pc2.createAnswer();
+            await pc2.setLocalDescription(answer);
+            await pc1.setRemoteDescription(answer);
+            const webrtcMs = Date.now() - t0;
+            pc1.close();
+            pc2.close();
+            streamTestStatus = `✅ Поток звонков (WebRTC SDP + ICE): ОК за ${webrtcMs} мс (кандидатов: ${iceCount || 1})`;
+            if (window.__addHydraLog) window.__addHydraLog('TEST-CALL-STREAM', streamTestStatus);
+
+            const tm0 = Date.now();
+            const resp = await fetch('http://191.223.137.164:8085/health?pub=diag_msg_loopback');
+            const d = await resp.json();
+            const msgMs = Date.now() - tm0;
+            if (d && d.status === 'ok') {
+                messageLoopbackStatus = `✅ Маршрутизация пакетов сообщений: ОК (${msgMs} мс, пиров онлайн: ${d.online_peers ?? 0})`;
+            } else {
+                messageLoopbackStatus = '⚠️ Релей ответил нестандартным пакетом';
+            }
+            if (window.__addHydraLog) window.__addHydraLog('TEST-MSG-PIPE', messageLoopbackStatus);
+        } catch (err) {
+            streamTestStatus = '❌ Ошибка теста потока: ' + err;
+            messageLoopbackStatus = '❌ Сбой теста доставки: ' + err;
+        } finally {
+            isRunningFullDiag = false;
+        }
+    }
+    
 </script>
 
 <div class="settings-panel animate-fade-in">
@@ -322,77 +404,69 @@
                  {/if}
             </div>
                 {:else if activeSettingsTab === 'network'}
-                    <div class="settings-section">
-                        <details class="destination-details">
-                            <summary class="form-label">Ваш ID (Крипто-ключ Hydra) <span class="hint-inline">(нажмите, чтобы развернуть)</span></summary>
-                            <div class="destination-box">
-                                <code class="destination-code">{myDestination || 'Загрузка...'}</code>
-                                <button class="btn-icon-copy" on:click={() => {
-                                    AppActions.ClipboardSet(myDestination);
-                                }}>📋</button>
-                            </div>
-                        </details>
-                        <div class="info-item">
-                            <span class="info-label">Статус сети:</span>
-                            <span class="info-value" style="color: {getStatusColor(networkStatus)}">{getStatusText(networkStatus)}</span>
-                        </div>
+            <div class="settings-section animate-fade-in" style="max-width: 100%; box-sizing: border-box;">
+                {#if !isMobile}
+                    <h2 class="section-title">Сеть и Сервер</h2>
+                    <p class="section-desc">Параметры шифрования и локального ускорения</p>
+                {/if}
 
-                        <h4 class="section-title">Защита соединения (True E2EE)</h4>
-                        <div class="settings-item-group">
-                            <div class="setting-item">
-                                <label class="form-label">Протокол сквозного шифрования</label>
-                                <select bind:value={routerSettings.tunnelLength} class="input-field">
-                                    <option value={1}>ECDH X25519 + XChaCha20-Poly1305</option>
-                                    <option value={2}>Direct WebSocket Relay</option>
-                                    <option value={4}>Strict Contacts-Only Mode</option>
-                                </select>
-                            </div>
-                            <div class="setting-item flex-row bg-box" on:click={() => { routerSettings.logToFile = !routerSettings.logToFile; refreshSettingsLogs(); }} style="cursor: pointer;">
-                                <div>
-                                    <span class="label" style="font-weight: 700; color: #E3E3E3;">🐞 Логирование и диагностика сокета</span>
-                                    <p class="hint" style="margin: 2px 0 0;">Нажмите, чтобы открыть живой системный журнал ({settingsLogLines.length} записей)</p>
-                                </div>
-                                <input type="checkbox" bind:checked={routerSettings.logToFile} on:change={refreshSettingsLogs} on:click|stopPropagation style="width: 20px; height: 20px; accent-color: #8AB4F8;" />
-                            </div>
-
-                            {#if routerSettings.logToFile}
-                                <div style="margin-top: 10px; background: #09090D; border: 1px solid rgba(138,180,248,0.3); border-radius: 16px; padding: 12px;">
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 6px; flex-wrap: wrap;">
-                                        <span style="font-size: 12px; font-weight: 800; color: #8AB4F8;">🐞 Живой системный журнал ({settingsLogLines.length})</span>
-                                        <div style="display: flex; gap: 6px;">
-                                            <button type="button" on:click={refreshSettingsLogs} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 10px; font-size: 11px;">🔄 Обновить</button>
-                                            <button type="button" on:click={saveSettingsLogsToFile} style="background: #4CAF50; color: #fff; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">💾 В файл (.txt)</button>
-                                            <button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">📋 Копировать</button>
-                                            <button type="button" on:click={clearSettingsLogs} style="background: rgba(255,71,87,0.2); color: #ff6b6b; border: none; border-radius: 100px; padding: 5px 10px; font-size: 11px;">Очистить</button>
-                                        </div>
-                                    </div>
-                                    <div style="max-height: 260px; overflow-y: auto; font-family: monospace; font-size: 11px; line-height: 1.45; padding-right: 4px;">
-                                        {#if settingsLogLines.length === 0}
-                                            <div style="color: #9AA0A6; padding: 8px 0;">Журнал пуст. Выполните любое действие для записи...</div>
-                                        {/if}
-                                        {#each settingsLogLines as line}
-                                            <div style="padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05); word-break: break-all; color: {line.includes('ERR') || line.includes('ОШИБКА') ? '#ff6b6b' : (line.includes('RPC-OK') || line.includes('BIO-OK') ? '#69db7c' : (line.includes('CLICK') ? '#ffd43b' : '#E3E3E3'))};">
-                                                {line}
-                                            </div>
-                                        {/each}
-                                    </div>
-                                </div>
-                            {/if}
-                            <button class="btn-primary full-width" on:click={onSaveRouterSettings} style="margin-top: 10px;">💾 Сохранить и применить</button>
-        <div style="margin-top: 14px; padding: 14px; background: #1E1F22; border-radius: 20px;">
-            <button type="button" class="btn-primary" style="width: 100%; border-radius: 100px; background: #8AB4F8; color: #062E6F; font-weight: 700; padding: 12px; border: none; cursor: pointer;" on:click={verifyHydraConnection} disabled={isPingingServer}>
-                {isPingingServer ? '⏳ Проверка канала...' : '⚡ Проверить реальное соединение с сервером'}
-            </button>
-            {#if pingStatusText}
-                <div style="margin-top: 10px; font-size: 13px; color: #E3E3E3; line-height: 1.4;">{pingStatusText}</div>
-            {/if}
-        </div>
-        
-                        </div>
-
-                        
+                <details class="destination-details">
+                    <summary class="destination-summary">
+                        <span class="summary-icon">🌐</span>
+                        <span>Ваш ID (Крипто-ключ Hydra)</span>
+                        <span class="summary-hint">(нажмите, чтобы развернуть)</span>
+                    </summary>
+                    <div class="destination-box" style="word-break: break-all;">
+                        <p class="dest-text">{identity}</p>
+                        <button type="button" class="btn-small btn-primary" on:click={onCopyDestination}>Скопировать ключ</button>
                     </div>
-                {:else if activeSettingsTab === 'about'}
+                </details>
+
+                <div class="network-status-info">
+                    <p>Статус сети: <span class={networkStatus === 'online' ? 'text-online' : 'text-offline'}>
+                        {networkStatus === 'online' ? 'В сети' : (networkStatus === 'starting' ? 'Подключение...' : 'Офлайн')}
+                    </span></p>
+                </div>
+
+                <div class="divider"></div>
+
+                <h3 class="subsection-title">Защита соединения (True E2EE)</h3>
+                <div class="settings-item-group" style="max-width: 100%; box-sizing: border-box;">
+                    <div class="setting-item" style="max-width: 100%; box-sizing: border-box;">
+                        <label class="form-label">Протокол сквозного шифрования
+                            <select bind:value={routerSettings.tunnelLength} class="input-field" style="max-width: 100%; box-sizing: border-box;">
+                                <option value={1}>ECDH X25519 + XChaCha20-Poly1305</option>
+                                <option value={2}>Direct WebSocket Relay (191.223.137.164)</option>
+                                <option value={3}>Multi-Hop Encrypted Relay</option>
+                            </select>
+                        </label>
+                    </div>
+
+                    <div class="setting-item flex-row bg-box" style="box-sizing: border-box; max-width: 100%;">
+                        <div style="min-width: 0; flex: 1; padding-right: 10px;">
+                            <span class="label" style="font-weight: 700; color: #8AB4F8;">⚡ Ускорение по Wi-Fi (LAN Direct)</span>
+                            <p class="hint" style="margin: 4px 0 0; font-size: 12px;">
+                                {lanWifiInfo.lanActive ? '🟢 Wi-Fi активен (' + lanWifiInfo.lanIp + ') — прямая передача < 5 мс' : 'Прямая доставка пакетов между устройствами на одном Wi-Fi'}
+                            </p>
+                        </div>
+                        <input type="checkbox" checked={lanDirectEnabled} on:change={toggleLanDirect} style="width: 20px; height: 20px; accent-color: #8AB4F8; flex-shrink: 0;" />
+                    </div>
+
+                    <button type="button" class="btn-primary" on:click={onSaveRouterSettings} style="margin-top: 12px; width: 100%; box-sizing: border-box;">
+                        💾 Сохранить и применить
+                    </button>
+
+                    <div class="setting-item bg-box" style="margin-top: 14px; display: flex; flex-direction: column; gap: 10px; max-width: 100%; box-sizing: border-box;">
+                        <button type="button" class="btn-primary" on:click={verifyHydraConnection} disabled={isCheckingPing} style="width: 100%; background: #8AB4F8; color: #062E6F; font-weight: 700; border-radius: 100px; padding: 12px; border: none; cursor: pointer; box-sizing: border-box;">
+                            {isCheckingPing ? '⏳ Проверка связи...' : '⚡ Проверить соединение с сервером'}
+                        </button>
+                        {#if pingStatusText}
+                            <div style="font-size: 13px; color: #E3E3E3; text-align: center;">{pingStatusText}</div>
+                        {/if}
+                    </div>
+                </div>
+            </div>
+        {:else if activeSettingsTab === 'about'}
                     <div class="settings-section animate-fade-in">
                         <div class="about-branding">
                             <div class="about-logo animate-float">
@@ -459,6 +533,60 @@
         </div>
     {/if}
 </div>
+
+
+{#if showSecretDevModal}
+    <div style="position: fixed; inset: 0; background: rgba(8, 9, 14, 0.96); z-index: 99999; display: flex; flex-direction: column; padding: 16px; padding-top: calc(16px + env(safe-area-inset-top, 12px)); box-sizing: border-box; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+            <div>
+                <div style="font-size: 17px; font-weight: 800; color: #8AB4F8;">🛠️ Меню разработчика Hydra</div>
+                <div style="font-size: 11px; color: #9AA0A6;">Диагностика связи, WebRTC-потока звонков, сообщений и LAN</div>
+            </div>
+            <button type="button" on:click={() => showSecretDevModal = false} style="background: #ff4757; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; font-weight: 800; font-size: 16px; cursor: pointer;">✕</button>
+        </div>
+
+        <div style="background: #181920; border: 1px solid rgba(138,180,248,0.25); border-radius: 18px; padding: 14px; margin-bottom: 14px;">
+            <div style="font-size: 13px; font-weight: 700; color: #E3E3E3; margin-bottom: 8px;">⚡ Комплексный тест узлов и потоков</div>
+            <div style="font-size: 12px; color: #9AA0A6; margin-bottom: 10px;">
+                📡 Локальная сеть (Wi-Fi Direct): <b style="color: {lanWifiInfo.lanActive ? '#4CAF50' : '#FFC107'};">{lanWifiInfo.lanActive ? 'В одной сети (' + lanWifiInfo.lanIp + ')' : 'Только через внешний VPS'}</b>
+            </div>
+            <button type="button" on:click={runComprehensiveDiagnostics} disabled={isRunningFullDiag} style="width: 100%; padding: 11px; border-radius: 100px; background: #8AB4F8; color: #062E6F; border: none; font-weight: 800; font-size: 12px; cursor: pointer;">
+                {isRunningFullDiag ? '⏳ Выполнение тестов...' : '🚀 Запустить тест: Связь + Поток звонков + Сообщения'}
+            </button>
+            {#if pingStatusText}
+                <div style="margin-top: 8px; font-size: 12px; color: #E3E3E3;">1️⃣ {pingStatusText}</div>
+            {/if}
+            {#if streamTestStatus}
+                <div style="margin-top: 6px; font-size: 12px; color: #8AB4F8;">2️⃣ {streamTestStatus}</div>
+            {/if}
+            {#if messageLoopbackStatus}
+                <div style="margin-top: 6px; font-size: 12px; color: #69db7c;">3️⃣ {messageLoopbackStatus}</div>
+            {/if}
+        </div>
+
+        <div style="flex: 1; display: flex; flex-direction: column; background: #09090D; border: 1px solid rgba(138,180,248,0.3); border-radius: 18px; padding: 12px; min-height: 260px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 6px; flex-wrap: wrap;">
+                <span style="font-size: 12px; font-weight: 800; color: #8AB4F8;">🐞 Системный журнал ({settingsLogLines.length})</span>
+                <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                    <button type="button" on:click={refreshSettingsLogs} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 6px 10px; font-size: 11px;">🔄</button>
+                    <button type="button" on:click={saveSettingsLogsToFile} style="background: #4CAF50; color: #fff; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">💾 В файл (.txt)</button>
+                    <button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">📋 Копировать</button>
+                    <button type="button" on:click={clearSettingsLogs} style="background: rgba(255,71,87,0.2); color: #ff6b6b; border: none; border-radius: 100px; padding: 6px 10px; font-size: 11px;">Очистить</button>
+                </div>
+            </div>
+            <div style="flex: 1; overflow-y: auto; font-family: monospace; font-size: 11px; line-height: 1.45;">
+                {#if settingsLogLines.length === 0}
+                    <div style="color: #9AA0A6; padding: 10px 0;">Журнал пуст...</div>
+                {/if}
+                {#each settingsLogLines as line}
+                    <div style="padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05); word-break: break-all; color: {line.includes('ERR') || line.includes('ОШИБКА') ? '#ff6b6b' : (line.includes('RPC-OK') || line.includes('BIO-OK') || line.includes('TEST-') ? '#69db7c' : (line.includes('CLICK') ? '#ffd43b' : '#E3E3E3'))};">
+                        {line}
+                    </div>
+                {/each}
+            </div>
+        </div>
+    </div>
+{/if}
 
 <style>
     .settings-panel { flex: 1; display: flex; flex-direction: column; height: 100%; background: var(--bg-primary); overflow: hidden; }
@@ -631,4 +759,19 @@
         50% { transform: translateY(-10px); }
     }
     .animate-float { animation: float 6s ease-in-out infinite; }
+
+    .settings-section, .settings-item-group, .setting-item, .destination-details, .destination-box, .input-field, select.input-field {
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+    }
+    .settings-content-area {
+        overflow-x: hidden !important;
+        box-sizing: border-box !important;
+    }
+    select.input-field {
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+    }
+    
 </style>

@@ -50,6 +50,38 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
     inner class HydraNativeBridge {
 
         @JavascriptInterface
+        fun getLocalWifiInfo(): String {
+            return try {
+                val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+                var localIp = ""
+                while (interfaces.hasMoreElements()) {
+                    val nif = interfaces.nextElement()
+                    if (!nif.isUp || nif.isLoopback) continue
+                    val addrs = nif.inetAddresses
+                    while (addrs.hasMoreElements()) {
+                        val addr = addrs.nextElement()
+                        if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
+                            val ip = addr.hostAddress ?: ""
+                            if (ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172.")) {
+                                localIp = ip
+                                break
+                            }
+                        }
+                    }
+                    if (localIp.isNotEmpty()) break
+                }
+                val res = org.json.JSONObject()
+                res.put("lanIp", localIp)
+                res.put("lanActive", localIp.isNotEmpty())
+                res.put("directPort", 8080)
+                res.toString()
+            } catch (e: Exception) {
+                "{\"lanIp\":\"\",\"lanActive\":false}"
+            }
+        }
+    
+
+        @JavascriptInterface
         fun saveLogsToDownloads(logText: String): String {
             return try {
                 val filename = "hydra_log_${System.currentTimeMillis()}.txt"
@@ -617,7 +649,7 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
     override fun onPause() {
         if (!isOpeningSystemPicker) {
             pushNativeLog("LIFECYCLE", "Приложение свёрнуто (onPause) — блокировка!")
-            webView.evaluateJavascript("if(window.__lockHydraNow) window.__lockHydraNow();", null)
+            webView.evaluateJavascript("if(window.__setHydraBlur) window.__setHydraBlur(true); if(window.__lockHydraNow) window.__lockHydraNow();", null)
         }
         webView.onPause()
         super.onPause()

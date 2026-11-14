@@ -447,11 +447,13 @@
         </div>
 
     {#if selectedContact && !selectedContact.IsFavorites && selectedContact.Nickname !== 'Избранное'}
-        <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
-            {#if isRecordingMedia}
-            <span style="margin-left: auto; color: #ff4757; font-size: 12px; font-weight: 700;">🔴 Запись: {recordingSeconds} сек... (нажмите Стоп для отправки)</span>
-        {/if}
-            <button type="button" on:click={startHydraCall} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer;" title="Защищённый звонок">
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+            {#if !String(selectedContact.Nickname || '').startsWith('👥') && !String(selectedContact.Nickname || '').startsWith('📢')}
+                <button type="button" on:click={cycleDisappearingTimer} style="background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.3); border-radius: 100px; padding: 6px 10px; font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap;" title="Таймер личного чата">
+                    ⏱ {disappearingTimer === 0 ? 'Выкл' : (disappearingTimer === 60 ? '1м' : '1ч')}
+                </button>
+            {/if}
+            <button type="button" on:click={startHydraCall} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 50%; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; font-size: 17px; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 8px rgba(138,180,248,0.35);" title="Позвонить (WebRTC E2EE)">
                 📞
             </button>
         </div>
@@ -491,7 +493,7 @@
                     class="message-bubble-wrapper" 
                     style="transform: translateX(-{swipedMsgId === msg.ID ? touchMoveX : 0}px); transition: {swipedMsgId === msg.ID ? 'none' : 'transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28)'};"
                 >
-                    <div class="message-bubble" class:outgoing={msg.IsOutgoing} 
+                    <div class="message-bubble" class:outgoing={msg.IsOutgoing} class:circle-only-bubble={msg.Content && msg.Content.startsWith("[HYDRA_CIRCLE]:")} 
                          on:contextmenu|preventDefault={(e) => onShowMessageMenu(e, msg)}
                     >
                         {#if msg.ReplyPreview}
@@ -939,4 +941,38 @@
         30% { filter: brightness(1.7); transform: scale(1.02); box-shadow: 0 0 30px var(--accent); z-index: 10; }
         100% { filter: brightness(1); transform: scale(1); box-shadow: none; z-index: 1; }
     }
+
+    .message-bubble.circle-only-bubble,
+    .message.outgoing .message-bubble.circle-only-bubble {
+        background: transparent !important;
+        box-shadow: none !important;
+        padding: 2px 0 !important;
+        border: none !important;
+    }
+    .chat-area.mobile .chat-header {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+        padding: 0 12px !important;
+    }
+    .chat-area.mobile .chat-contact-info {
+        margin-left: 0 !important;
+        flex-direction: row !important;
+        flex: 1 !important;
+        min-width: 0 !important;
+        overflow: hidden !important;
+    }
+    .chat-area.mobile .chat-name {
+        text-align: left !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        max-width: 145px !important;
+    }
+    .chat-area.mobile .chat-status {
+        flex-direction: row !important;
+    }
+    
 </style>
