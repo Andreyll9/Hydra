@@ -86,14 +86,9 @@ jobs:
               if "fun getLocalWifiInfo(" not in kt:
                   kt = kt.replace("inner class HydraNativeBridge {", "inner class HydraNativeBridge {\n" + lan_ip_kt, 1)
 
-              # Включаем мутную дымку (блюр) мгновенно при сворачивании в onPause
               kt = kt.replace(
                   'webView.evaluateJavascript("if(window.__lockHydraNow) window.__lockHydraNow();", null)',
                   'webView.evaluateJavascript("if(window.__setHydraBlur) window.__setHydraBlur(true); if(window.__lockHydraNow) window.__lockHydraNow();", null)'
-              )
-              kt = kt.replace(
-                  'webView.evaluateJavascript("if(window.__onHydraAppResume) window.__onHydraAppResume();", null)',
-                  'webView.evaluateJavascript("if(window.__onHydraAppResume) window.__onHydraAppResume();", null)'
               )
               with open(kt_path, "w", encoding="utf-8") as f:
                   f.write(kt)
@@ -154,8 +149,6 @@ jobs:
               print("[OK] 2. frontend/index.html: добавлена мутная дымка (матовый блюр) при сворачивании приложения")
 
           # 3. Modals.svelte:
-          #    ЧИНИМ зависание кнопки "+ Создать"!
-          #    Почему зависало: в Modals.svelte условие {#if showFolderModal} рендерило битую вёрстку или не закрывало backdrop.
           #    Переписываем блок <!-- Add/Edit Folder Modal --> начисто с выбором: 📁 Папка / 👥 Группа / 📢 Канал!
           md_path = "frontend/src/components/Modals.svelte"
           if os.path.exists(md_path):
@@ -235,24 +228,21 @@ jobs:
                   md = md[:i1] + clean_folder_modal + md[i2:]
                   with open(md_path, "w", encoding="utf-8") as f:
                       f.write(md)
-                  print("[OK] 3. Modals.svelte: кнопка '+ Создать' починена, выбор Папка / Группа / Канал работает без зависания экрана")
+                  print("[OK] 3. Modals.svelte: кнопка '+ Создать' починена, выбор Папка / Группа / Канал работает")
 
           # 4. Chat.svelte:
-          #    - Убираем огромную квадратную синюю подложку вокруг видео-кружка! Оставляем ТОЛЬКО чистый круг с видео как в Telegram!
+          #    - Убираем огромную квадратную синюю подложку вокруг видео-кружка!
           #    - Чиним отображение кнопки звонка 📞 и Таймера ⏱ в шапке (таймер строго ТОЛЬКО в личных чатах 1-на-1!)
-          #    - Добавляем ускоренную доставку по локальной сети Wi-Fi (LAN Direct P2P Boost)
           ch_path = "frontend/src/components/Chat.svelte"
           if os.path.exists(ch_path):
               with open(ch_path, "r", encoding="utf-8") as f:
                   ch = f.read()
 
-              # Добавляем класс circle-bubble к message-bubble, когда сообщение начинается с [HYDRA_CIRCLE]:
               ch = ch.replace(
                   '<div class="message-bubble" class:outgoing={msg.IsOutgoing}',
                   '<div class="message-bubble" class:outgoing={msg.IsOutgoing} class:circle-only-bubble={msg.Content && msg.Content.startsWith("[HYDRA_CIRCLE]:")}'
               )
 
-              # В CSS добавляем полное обнуление фона, рамок и отступов для .circle-only-bubble, а также чиним шапку чата на мобилке, чтобы кнопки звонка и таймера были всегда видны справа!
               circle_and_header_css = """
               .message-bubble.circle-only-bubble,
               .message.outgoing .message-bubble.circle-only-bubble {
@@ -290,10 +280,6 @@ jobs:
               if ".circle-only-bubble" not in ch:
                   ch = ch.replace("</style>", circle_and_header_css + "\n</style>", 1)
 
-              # В шапке чата гарантируем, что:
-              # - Кнопка звонка 📞 видна во всех чатах (кроме Избранного)
-              # - Таймер ⏱ виден ТОЛЬКО в личных чатах (не Избранное, не Группа 👥, не Канал 📢)
-              # - Показывается значок ⚡ Wi-Fi Direct, если активна локальная сеть
               old_header_act = r'\{#if selectedContact && !selectedContact\.IsFavorites && selectedContact\.Nickname !== \'Избранное\'\}[\s\S]*?\{/if\}\s*</div>'
               new_header_act = """{#if selectedContact && !selectedContact.IsFavorites && selectedContact.Nickname !== 'Избранное'}
                   <div style="margin-left: auto; display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
@@ -312,12 +298,10 @@ jobs:
 
               with open(ch_path, "w", encoding="utf-8") as f:
                   f.write(ch)
-              print("[OK] 4. Chat.svelte: убрана квадратная подложка у кружков, возвращена кнопка звонков 📞, таймер оставлен строго в личных чатах")
+              print("[OK] 4. Chat.svelte: убрана квадратная подложка у кружков, возвращена кнопка звонков 📞, таймер строго в личных чатах")
 
           # 5. Settings.svelte:
-          #    - Чиним выход интерфейса за рамки экрана в разделе "Сеть и Сервер" (box-sizing: border-box, max-width: 100%)
-          #    - Добавляем индикатор "⚡ Локальное ускорение Wi-Fi (LAN Direct P2P)"
-          #    - Прячем логи и комплексное тестирование (Связь + Поток звонков + Сообщения) в СЕКРЕТНОЕ МЕНЮ РАЗРАБОТЧИКА (открывается по 6 нажатиям на карточку "Лицензия" в разделе "О программе"!)
+          #    Заменяем вкладку network точным срезом по индексам (БЕЗ регулярок re.sub!), чтобы не нарушить баланс {#if}/{:else if}!
           st_path = "frontend/src/components/Settings.svelte"
           if os.path.exists(st_path):
               with open(st_path, "r", encoding="utf-8") as f:
@@ -367,17 +351,14 @@ jobs:
                   streamTestStatus = '⏳ 1/3 Проверка медиа-потока и WebRTC ICE...';
                   messageLoopbackStatus = '⏳ Ожидание...';
                   try {
-                      // 1. Тест связи с VPS
                       await verifyHydraConnection();
-
-                      // 2. Тест аудио-потока и локального WebRTC Loopback для звонков
                       const t0 = Date.now();
                       const pc1 = new RTCPeerConnection();
                       const pc2 = new RTCPeerConnection();
                       let iceCount = 0;
                       pc1.onicecandidate = e => { if (e.candidate) { iceCount++; pc2.addIceCandidate(e.candidate); } };
                       pc2.onicecandidate = e => { if (e.candidate) pc1.addIceCandidate(e.candidate); };
-                      const dc = pc1.createDataChannel('hydra_call_stream_test');
+                      pc1.createDataChannel('hydra_call_stream_test');
                       const offer = await pc1.createOffer();
                       await pc1.setLocalDescription(offer);
                       await pc2.setRemoteDescription(offer);
@@ -390,7 +371,6 @@ jobs:
                       streamTestStatus = `✅ Поток звонков (WebRTC SDP + ICE): ОК за ${webrtcMs} мс (кандидатов: ${iceCount || 1})`;
                       if (window.__addHydraLog) window.__addHydraLog('TEST-CALL-STREAM', streamTestStatus);
 
-                      // 3. Тест прохождения пакета сообщения через крипто-ядро и релей
                       const tm0 = Date.now();
                       const resp = await fetch('http://191.223.137.164:8085/health?pub=diag_msg_loopback');
                       const d = await resp.json();
@@ -412,22 +392,79 @@ jobs:
               if "function handleLicenseTap()" not in st:
                   st = st.replace("</script>", dev_menu_js + "\n</script>", 1)
 
-              # В разделе "Сеть и Сервер" убираем громоздкий журнал (он теперь в секретном меню разработчика по 6 тапам на Лицензию!) и ставим аккуратную плашку LAN Wi-Fi Direct
-              st = re.sub(
-                  r'<div class="setting-item flex-row bg-box" on:click=\{\(\) => \{ routerSettings\.logToFile = !routerSettings\.logToFile;[\s\S]*?\{#if routerSettings\.logToFile\}[\s\S]*?\{/if\}',
-                  """<div class="setting-item flex-row bg-box" style="box-sizing: border-box; max-width: 100%;">
-                                  <div style="min-width: 0; flex: 1;">
-                                      <span class="label" style="font-weight: 700; color: #8AB4F8;">⚡ Ускорение в локальной сети (LAN Wi-Fi Boost)</span>
+              # Точная замена секции network по индексам строк (от {:else if activeSettingsTab === 'network'} до {:else if activeSettingsTab === 'about'})
+              net_start_m = "{:else if activeSettingsTab === 'network'}"
+              about_start_m = "{:else if activeSettingsTab === 'about'}"
+              ni1 = st.find(net_start_m)
+              ni2 = st.find(about_start_m, ni1) if ni1 != -1 else -1
+
+              if ni1 != -1 and ni2 != -1:
+                  clean_network_tab = """{:else if activeSettingsTab === 'network'}
+                      <div class="settings-section animate-fade-in" style="max-width: 100%; box-sizing: border-box;">
+                          {#if !isMobile}
+                              <h2 class="section-title">Сеть и Сервер</h2>
+                              <p class="section-desc">Параметры шифрования и локального ускорения</p>
+                          {/if}
+
+                          <details class="destination-details">
+                              <summary class="destination-summary">
+                                  <span class="summary-icon">🌐</span>
+                                  <span>Ваш ID (Крипто-ключ Hydra)</span>
+                                  <span class="summary-hint">(нажмите, чтобы развернуть)</span>
+                              </summary>
+                              <div class="destination-box" style="word-break: break-all;">
+                                  <p class="dest-text">{identity}</p>
+                                  <button type="button" class="btn-small btn-primary" on:click={onCopyDestination}>Скопировать ключ</button>
+                              </div>
+                          </details>
+
+                          <div class="network-status-info">
+                              <p>Статус сети: <span class={networkStatus === 'online' ? 'text-online' : 'text-offline'}>
+                                  {networkStatus === 'online' ? 'В сети' : (networkStatus === 'starting' ? 'Подключение...' : 'Офлайн')}
+                              </span></p>
+                          </div>
+
+                          <div class="divider"></div>
+
+                          <h3 class="subsection-title">Защита соединения (True E2EE)</h3>
+                          <div class="settings-item-group" style="max-width: 100%; box-sizing: border-box;">
+                              <div class="setting-item" style="max-width: 100%; box-sizing: border-box;">
+                                  <label class="form-label">Протокол сквозного шифрования
+                                      <select bind:value={routerSettings.tunnelLength} class="input-field" style="max-width: 100%; box-sizing: border-box;">
+                                          <option value={1}>ECDH X25519 + XChaCha20-Poly1305</option>
+                                          <option value={2}>Direct WebSocket Relay (191.223.137.164)</option>
+                                          <option value={3}>Multi-Hop Encrypted Relay</option>
+                                      </select>
+                                  </label>
+                              </div>
+
+                              <div class="setting-item flex-row bg-box" style="box-sizing: border-box; max-width: 100%;">
+                                  <div style="min-width: 0; flex: 1; padding-right: 10px;">
+                                      <span class="label" style="font-weight: 700; color: #8AB4F8;">⚡ Ускорение по Wi-Fi (LAN Direct)</span>
                                       <p class="hint" style="margin: 4px 0 0; font-size: 12px;">
-                                          {lanWifiInfo.lanActive ? '🟢 Активен Wi-Fi (' + lanWifiInfo.lanIp + ') — прямая передача < 5 мс' : 'Авто-поиск устройств Hydra в одной сети Wi-Fi для мгновенной передачи'}
+                                          {lanWifiInfo.lanActive ? '🟢 Wi-Fi активен (' + lanWifiInfo.lanIp + ') — прямая передача < 5 мс' : 'Прямая доставка пакетов между устройствами на одном Wi-Fi'}
                                       </p>
                                   </div>
                                   <input type="checkbox" checked={lanDirectEnabled} on:change={toggleLanDirect} style="width: 20px; height: 20px; accent-color: #8AB4F8; flex-shrink: 0;" />
-                              </div>""",
-                  st
-              )
+                              </div>
 
-              # Делаем карточку "Лицензия" в разделе "О программе" кликабельной (6 нажатий открывают меню разработчика!)
+                              <button type="button" class="btn-primary" on:click={onSaveRouterSettings} style="margin-top: 12px; width: 100%; box-sizing: border-box;">
+                                  💾 Сохранить и применить
+                              </button>
+
+                              <div class="setting-item bg-box" style="margin-top: 14px; display: flex; flex-direction: column; gap: 10px; max-width: 100%; box-sizing: border-box;">
+                                  <button type="button" class="btn-primary" on:click={verifyHydraConnection} disabled={isCheckingPing} style="width: 100%; background: #8AB4F8; color: #062E6F; font-weight: 700; border-radius: 100px; padding: 12px; border: none; cursor: pointer; box-sizing: border-box;">
+                                      {isCheckingPing ? '⏳ Проверка связи...' : '⚡ Проверить соединение с сервером'}
+                                  </button>
+                                  {#if pingStatusText}
+                                      <div style="font-size: 13px; color: #E3E3E3; text-align: center;">{pingStatusText}</div>
+                                  {/if}
+                              </div>
+                          </div>
+                      </div>
+                  """
+                  st = st[:ni1] + clean_network_tab + st[ni2:]
+
               old_license_card = """                            <div class="info-item-fancy">
                                   <div class="info-icon">{@html Icons.File}</div>
                                   <div class="info-content">
@@ -456,7 +493,6 @@ jobs:
 
               st = st.replace(old_license_card, new_license_card, 1)
 
-              # Добавляем модальное окно Секретного Меню Разработчика (Логи + Тестирование связи, потока звонков и сообщений) и жёсткий CSS-фикс от выхода за рамки в "Сеть и Сервер"
               secret_dev_modal_html = """
           {#if showSecretDevModal}
               <div style="position: fixed; inset: 0; background: rgba(8, 9, 14, 0.96); z-index: 99999; display: flex; flex-direction: column; padding: 16px; padding-top: calc(16px + env(safe-area-inset-top, 12px)); box-sizing: border-box; overflow-y: auto;">
@@ -468,7 +504,6 @@ jobs:
                       <button type="button" on:click={() => showSecretDevModal = false} style="background: #ff4757; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; font-weight: 800; font-size: 16px; cursor: pointer;">✕</button>
                   </div>
 
-                  <!-- Блок комплексного тестирования потоков -->
                   <div style="background: #181920; border: 1px solid rgba(138,180,248,0.25); border-radius: 18px; padding: 14px; margin-bottom: 14px;">
                       <div style="font-size: 13px; font-weight: 700; color: #E3E3E3; margin-bottom: 8px;">⚡ Комплексный тест узлов и потоков</div>
                       <div style="font-size: 12px; color: #9AA0A6; margin-bottom: 10px;">
@@ -488,7 +523,6 @@ jobs:
                       {/if}
                   </div>
 
-                  <!-- Живой системный журнал -->
                   <div style="flex: 1; display: flex; flex-direction: column; background: #09090D; border: 1px solid rgba(138,180,248,0.3); border-radius: 18px; padding: 12px; min-height: 260px;">
                       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 6px; flex-wrap: wrap;">
                           <span style="font-size: 12px; font-weight: 800; color: #8AB4F8;">🐞 Системный журнал ({settingsLogLines.length})</span>
@@ -537,7 +571,7 @@ jobs:
 
               with open(st_path, "w", encoding="utf-8") as f:
                   f.write(st)
-              print("[OK] 5. Settings.svelte: исправлены рамки в 'Сеть и Сервер', добавлено секретное Меню разработчика по 6 тапам на Лицензию")
+              print("[OK] 5. Settings.svelte: чисто заменена вкладка network по индексам и добавлено меню разработчика по 6 тапам на Лицензию")
           PYEOF
           python3 apply_stage5_complete.py
           rm -f apply_stage5_complete.py
