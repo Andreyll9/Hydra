@@ -38,543 +38,278 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply Blur Curtain, Pure Round Circle, Fixed Create Modal, Secret 6-Tap Dev Menu, Calls & LAN P2P Boost
+      - name: Apply Exact Fixes for App.svelte, Settings.svelte, index.html & appcore.go
         run: |
-          cat << 'PYEOF' > apply_stage5_complete.py
-          import os, re
+          cat << 'PYEOF' > exact_5files_fix.py
+          import os
 
-          # 1. MainActivity.kt:
-          #    - Добавляем локальный LAN-детектор (Wi-Fi IP подсеть) для прямого ускорения между устройствами на одном Wi-Fi
-          #    - В onPause() мгновенно включаем матовую дымку/блюр (window.__setHydraBlur(true)), чтобы при сворачивании ничего не было видно!
-          kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
-          if os.path.exists(kt_path):
-              with open(kt_path, "r", encoding="utf-8") as f:
-                  kt = f.read()
+          # 1. frontend/src/App.svelte:
+          #    - Чиним блокировку при сворачивании: переключаем реальную переменную screen = 'login'!
+          #    - При разворачивании приложения на экране входа автоматически вызываем проверку отпечатка пальца и убираем блюр только после входа!
+          #    - В мобильной ветке <Settings> добавляем bind:profileNickname, bind:profileBio, bind:profileAvatar!
+          app_path = "frontend/src/App.svelte"
+          if os.path.exists(app_path):
+              with open(app_path, "r", encoding="utf-8") as f:
+                  ap = f.read()
 
-              lan_ip_kt = """
-                  @JavascriptInterface
-                  fun getLocalWifiInfo(): String {
-                      return try {
-                          val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
-                          var localIp = ""
-                          while (interfaces.hasMoreElements()) {
-                              val nif = interfaces.nextElement()
-                              if (!nif.isUp || nif.isLoopback) continue
-                              val addrs = nif.inetAddresses
-                              while (addrs.hasMoreElements()) {
-                                  val addr = addrs.nextElement()
-                                  if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
-                                      val ip = addr.hostAddress ?: ""
-                                      if (ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172.")) {
-                                          localIp = ip
-                                          break
-                                      }
-                                  }
-                              }
-                              if (localIp.isNotEmpty()) break
-                          }
-                          val res = org.json.JSONObject()
-                          res.put("lanIp", localIp)
-                          res.put("lanActive", localIp.isNotEmpty())
-                          res.put("directPort", 8080)
-                          res.toString()
-                      } catch (e: Exception) {
-                          "{\\"lanIp\\":\\"\\",\\"lanActive\\":false}"
+              old_lock_block = """    if (typeof window !== 'undefined') {
+                  window.__lockHydraNow = () => {
+                      if (typeof isLoggedIn !== 'undefined' && isLoggedIn) {
+                          isLoggedIn = false;
+                          showSettings = false;
+                          if (window.__addHydraLog) window.__addHydraLog('SECURITY-LOCK', '🔒 Приложение свёрнуто — сессия мгновенно заблокирована!');
                       }
-                  }
-              """
-              if "fun getLocalWifiInfo(" not in kt:
-                  kt = kt.replace("inner class HydraNativeBridge {", "inner class HydraNativeBridge {\n" + lan_ip_kt, 1)
+                  };
+                  document.addEventListener('visibilitychange', () => {
+                      if (document.visibilityState === 'hidden') {
+                          window.__lockHydraNow();
+                      }
+                  });
+              }"""
 
-              kt = kt.replace(
-                  'webView.evaluateJavascript("if(window.__lockHydraNow) window.__lockHydraNow();", null)',
-                  'webView.evaluateJavascript("if(window.__setHydraBlur) window.__setHydraBlur(true); if(window.__lockHydraNow) window.__lockHydraNow();", null)'
+              new_lock_block = """    if (typeof window !== 'undefined') {
+                  window.__lockHydraNow = () => {
+                      if (screen === 'main') {
+                          screen = 'login';
+                          showSettings = false;
+                          if (window.__setHydraBlur) window.__setHydraBlur(true);
+                          if (window.__addHydraLog) window.__addHydraLog('SECURITY-LOCK', '🔒 Приложение свёрнуто — включён экран блокировки и матовый фильтр!');
+                      }
+                  };
+              }"""
+
+              ap = ap.replace(old_lock_block, new_lock_block)
+
+              # Когда пользователь успешно вошёл (onLoginSuccess), снимаем матовый блюр!
+              ap = ap.replace(
+                  "screen = 'main';",
+                  "screen = 'main';\n          if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);"
               )
-              with open(kt_path, "w", encoding="utf-8") as f:
-                  f.write(kt)
-              print("[OK] 1. MainActivity.kt: добавлены LAN Direct Wi-Fi детектор и мгновенный блюр при сворачивании")
+
+              # Чиним отсутствие bind: на мобильном экране настроек!
+              ap = ap.replace(
+                  "<Settings \n                            {profileNickname} {profileBio} {profileAvatar} {routerSettings}",
+                  "<Settings \n                            bind:profileNickname={profileNickname} bind:profileBio={profileBio} bind:profileAvatar={profileAvatar} {routerSettings}"
+              )
+
+              with open(app_path, "w", encoding="utf-8") as f:
+                  f.write(ap)
+              print("[OK] 1. App.svelte: блокировка теперь переключает screen = 'login', добавлен bind: для мобильных настроек")
 
           # 2. frontend/index.html:
-          #    Добавляем глобальный слой мутной дымки (Blur Privacy Curtain) при сворачивании и блокировке!
-          index_html_path = "frontend/index.html"
-          if os.path.exists(index_html_path):
-              with open(index_html_path, "r", encoding="utf-8") as f:
+          #    Убираем авто-снятие блюра через 350 мс при возврате? Нет: когда приложение сворачивается (hidden) — включаем плотный матовый блюр поверх всего,
+          #    а когда разворачивается (visible) — так как App.svelte уже переключил screen = 'login', снимаем верхний слой #hydra-blur-curtain,
+          #    чтобы пользователь увидел окно ввода ПИН-кода / сканера отпечатка пальца (а сами чаты уже закрыты экраном входа)!
+          idx_path = "frontend/index.html"
+          if os.path.exists(idx_path):
+              with open(idx_path, "r", encoding="utf-8") as f:
                   ih = f.read()
 
-              blur_curtain_code = """
-            #hydra-blur-curtain {
-              position: fixed;
-              inset: 0;
-              z-index: 2147483645;
-              backdrop-filter: blur(28px) brightness(0.32);
-              -webkit-backdrop-filter: blur(28px) brightness(0.32);
-              background: rgba(10, 11, 16, 0.78);
-              display: none;
-              flex-direction: column;
-              align-items: center;
-              justify-content: center;
-              color: #E3E3E3;
-              font-family: sans-serif;
-              user-select: none;
-              pointer-events: none;
-            }
-          """
-              if "#hydra-blur-curtain" not in ih:
-                  ih = ih.replace("html, body, #app {", blur_curtain_code + "\n  html, body, #app {", 1)
-
-              blur_js = """
-              window.__setHydraBlur = function(active) {
-                var el = document.getElementById('hydra-blur-curtain');
-                if (!el) {
-                  el = document.createElement('div');
-                  el.id = 'hydra-blur-curtain';
-                  el.innerHTML = '<div style="font-size:48px;margin-bottom:12px;">🛡️</div><div style="font-weight:800;font-size:18px;color:#8AB4F8;">Hydra защищена</div><div style="font-size:12px;color:#9AA0A6;margin-top:4px;">Экран скрыт матовым фильтром безопасности</div>';
-                  document.body.appendChild(el);
-                }
-                el.style.display = active ? 'flex' : 'none';
-              };
-              document.addEventListener('visibilitychange', function() {
+              ih = ih.replace(
+                  """    document.addEventListener('visibilitychange', function() {
                 if (document.visibilityState === 'hidden') {
                   window.__setHydraBlur(true);
                 } else {
                   setTimeout(function() { window.__setHydraBlur(false); }, 350);
                 }
-              });
-              """
-              if "window.__setHydraBlur =" not in ih:
-                  ih = ih.replace("window.__addHydraLog = function", blur_js + "\n    window.__addHydraLog = function", 1)
-
-              with open(index_html_path, "w", encoding="utf-8") as f:
-                  f.write(ih)
-              print("[OK] 2. frontend/index.html: добавлена мутная дымка (матовый блюр) при сворачивании приложения")
-
-          # 3. Modals.svelte:
-          #    Переписываем блок <!-- Add/Edit Folder Modal --> начисто с выбором: 📁 Папка / 👥 Группа / 📢 Канал!
-          md_path = "frontend/src/components/Modals.svelte"
-          if os.path.exists(md_path):
-              with open(md_path, "r", encoding="utf-8") as f:
-                  md = f.read()
-
-              if "let createEntityType =" not in md:
-                  md = md.replace("let showEmojiPicker = false;", "let showEmojiPicker = false;\n    let createEntityType = 'folder';", 1)
-
-              f_start = "<!-- Add/Edit Folder Modal -->"
-              f_end = "<!-- Contact Profile Modal -->"
-              i1 = md.find(f_start)
-              i2 = md.find(f_end, i1) if i1 != -1 else -1
-
-              if i1 != -1 and i2 != -1:
-                  clean_folder_modal = """<!-- Add/Edit Folder Modal -->
-          {#if showFolderModal}
-          <div 
-              class="modal-backdrop animate-fade-in" 
-              role="button"
-              tabindex="0"
-              on:click|self={() => { showEmojiPicker = false; if (onCancelFolder) onCancelFolder(); }}
-              on:keydown={(e) => e.key === 'Escape' && onCancelFolder && onCancelFolder()}
-          >
-              <div class="modal-content animate-slide-down" style="max-width: 400px; width: 92%; box-sizing: border-box;">
-                  <div class="modal-header">
-                      <h3>{isEditingFolder ? 'Редактировать' : (createEntityType === 'group' ? '👥 Новая группа E2EE' : (createEntityType === 'channel' ? '📢 Новый канал' : '📁 Новая папка'))}</h3>
-                      <button type="button" class="btn-icon" on:click={() => { showEmojiPicker = false; if (onCancelFolder) onCancelFolder(); }}><div class="icon-svg">{@html Icons.X}</div></button>
-                  </div>
-                  <div class="modal-body">
-                      {#if !isEditingFolder}
-                          <div style="display: flex; gap: 6px; margin-bottom: 14px; background: #121212; padding: 4px; border-radius: 100px; border: 1px solid rgba(138,180,248,0.2);">
-                              <button type="button" on:click={() => { createEntityType = 'folder'; folderIcon = '📁'; }} style="flex: 1; padding: 8px 4px; border-radius: 100px; border: none; font-size: 12px; font-weight: 700; cursor: pointer; background: {createEntityType === 'folder' ? '#8AB4F8' : 'transparent'}; color: {createEntityType === 'folder' ? '#062E6F' : '#9AA0A6'};">📁 Папка</button>
-                              <button type="button" on:click={() => { createEntityType = 'group'; folderIcon = '👥'; }} style="flex: 1; padding: 8px 4px; border-radius: 100px; border: none; font-size: 12px; font-weight: 700; cursor: pointer; background: {createEntityType === 'group' ? '#8AB4F8' : 'transparent'}; color: {createEntityType === 'group' ? '#062E6F' : '#9AA0A6'};">👥 Группа</button>
-                              <button type="button" on:click={() => { createEntityType = 'channel'; folderIcon = '📢'; }} style="flex: 1; padding: 8px 4px; border-radius: 100px; border: none; font-size: 12px; font-weight: 700; cursor: pointer; background: {createEntityType === 'channel' ? '#8AB4F8' : 'transparent'}; color: {createEntityType === 'channel' ? '#062E6F' : '#9AA0A6'};">📢 Канал</button>
-                          </div>
-                      {/if}
-                      <label class="form-label">
-                          {createEntityType === 'group' ? 'Название группы' : (createEntityType === 'channel' ? 'Название канала' : 'Название папки')}
-                          <input type="text" bind:value={folderName} class="input-field" style="box-sizing: border-box;" placeholder={createEntityType === 'group' ? 'Напр: Секретный чат' : (createEntityType === 'channel' ? 'Напр: Новости Hydra' : 'Напр: Работа, Семья')} />
-                      </label>
-                      <div class="emoji-section" style="margin-top: 14px;">
-                          <div class="form-label">Иконка</div>
-                          <div class="emoji-current" on:click={() => showEmojiPicker = !showEmojiPicker} role="button" tabindex="0" on:keydown={(e) => e.key === 'Enter' && (showEmojiPicker = !showEmojiPicker)}>
-                              <span class="emoji-display">{folderIcon}</span>
-                              <span class="emoji-hint">{showEmojiPicker ? 'Скрыть иконки' : 'Выбрать иконку'}</span>
-                          </div>
-                          {#if showEmojiPicker}
-                              <div class="emoji-grid">
-                                  {#each emojiList as emoji}
-                                      <button type="button" class="emoji-btn" class:selected={folderIcon === emoji} on:click={() => selectEmoji(emoji)}>{emoji}</button>
-                                  {/each}
-                              </div>
-                          {/if}
-                      </div>
-                  </div>
-                  <div class="modal-footer">
-                      {#if isEditingFolder}
-                          <button type="button" class="btn-small btn-danger" on:click={onDeleteFolder} style="margin-right: auto;">Удалить</button>
-                      {/if}
-                      <button type="button" class="btn-small btn-glass" on:click={() => { showEmojiPicker = false; if (onCancelFolder) onCancelFolder(); }}>Отмена</button>
-                      <button type="button" class="btn-small btn-primary" on:click={() => {
-                          if (!isEditingFolder && createEntityType === 'group' && folderName && !folderName.startsWith('👥 ')) {
-                              folderName = '👥 ' + folderName.trim();
-                          } else if (!isEditingFolder && createEntityType === 'channel' && folderName && !folderName.startsWith('📢 ')) {
-                              folderName = '📢 ' + folderName.trim();
-                          }
-                          showEmojiPicker = false;
-                          if (onSaveFolder) onSaveFolder();
-                      }}>Создать</button>
-                  </div>
-              </div>
-          </div>
-          {/if}
-
-          """
-                  md = md[:i1] + clean_folder_modal + md[i2:]
-                  with open(md_path, "w", encoding="utf-8") as f:
-                      f.write(md)
-                  print("[OK] 3. Modals.svelte: кнопка '+ Создать' починена, выбор Папка / Группа / Канал работает")
-
-          # 4. Chat.svelte:
-          #    - Убираем огромную квадратную синюю подложку вокруг видео-кружка!
-          #    - Чиним отображение кнопки звонка 📞 и Таймера ⏱ в шапке (таймер строго ТОЛЬКО в личных чатах 1-на-1!)
-          ch_path = "frontend/src/components/Chat.svelte"
-          if os.path.exists(ch_path):
-              with open(ch_path, "r", encoding="utf-8") as f:
-                  ch = f.read()
-
-              ch = ch.replace(
-                  '<div class="message-bubble" class:outgoing={msg.IsOutgoing}',
-                  '<div class="message-bubble" class:outgoing={msg.IsOutgoing} class:circle-only-bubble={msg.Content && msg.Content.startsWith("[HYDRA_CIRCLE]:")}'
+              });""",
+                  """    document.addEventListener('visibilitychange', function() {
+                if (document.visibilityState === 'hidden') {
+                  if (window.__lockHydraNow) window.__lockHydraNow();
+                  window.__setHydraBlur(true);
+                } else {
+                  setTimeout(function() {
+                    window.__setHydraBlur(false);
+                    if (window.__onHydraAppResume) window.__onHydraAppResume();
+                  }, 250);
+                }
+              });"""
               )
+              with open(idx_path, "w", encoding="utf-8") as f:
+                  f.write(ih)
+              print("[OK] 2. index.html: при сворачивании мгновенно включается блюр и блокируется сессия до ввода отпечатка/ПИН")
 
-              circle_and_header_css = """
-              .message-bubble.circle-only-bubble,
-              .message.outgoing .message-bubble.circle-only-bubble {
-                  background: transparent !important;
-                  box-shadow: none !important;
-                  padding: 2px 0 !important;
-                  border: none !important;
-              }
-              .chat-area.mobile .chat-header {
-                  display: flex !important;
-                  align-items: center !important;
-                  justify-content: space-between !important;
-                  width: 100% !important;
-                  box-sizing: border-box !important;
-                  padding: 0 12px !important;
-              }
-              .chat-area.mobile .chat-contact-info {
-                  margin-left: 0 !important;
-                  flex-direction: row !important;
-                  flex: 1 !important;
-                  min-width: 0 !important;
-                  overflow: hidden !important;
-              }
-              .chat-area.mobile .chat-name {
-                  text-align: left !important;
-                  white-space: nowrap !important;
-                  overflow: hidden !important;
-                  text-overflow: ellipsis !important;
-                  max-width: 145px !important;
-              }
-              .chat-area.mobile .chat-status {
-                  flex-direction: row !important;
-              }
-              """
-              if ".circle-only-bubble" not in ch:
-                  ch = ch.replace("</style>", circle_and_header_css + "\n</style>", 1)
-
-              old_header_act = r'\{#if selectedContact && !selectedContact\.IsFavorites && selectedContact\.Nickname !== \'Избранное\'\}[\s\S]*?\{/if\}\s*</div>'
-              new_header_act = """{#if selectedContact && !selectedContact.IsFavorites && selectedContact.Nickname !== 'Избранное'}
-                  <div style="margin-left: auto; display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
-                      {#if !String(selectedContact.Nickname || '').startsWith('👥') && !String(selectedContact.Nickname || '').startsWith('📢')}
-                          <button type="button" on:click={cycleDisappearingTimer} style="background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.3); border-radius: 100px; padding: 6px 10px; font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap;" title="Таймер личного чата">
-                              ⏱ {disappearingTimer === 0 ? 'Выкл' : (disappearingTimer === 60 ? '1м' : '1ч')}
-                          </button>
-                      {/if}
-                      <button type="button" on:click={startHydraCall} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 50%; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; font-size: 17px; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 8px rgba(138,180,248,0.35);" title="Позвонить (WebRTC E2EE)">
-                          📞
-                      </button>
-                  </div>
-              {/if}
-          </div>"""
-              ch = re.sub(old_header_act, lambda _: new_header_act, ch, count=1)
-
-              with open(ch_path, "w", encoding="utf-8") as f:
-                  f.write(ch)
-              print("[OK] 4. Chat.svelte: убрана квадратная подложка у кружков, возвращена кнопка звонков 📞, таймер строго в личных чатах")
-
-          # 5. Settings.svelte:
-          #    Заменяем вкладку network точным срезом по индексам (БЕЗ регулярок re.sub!), чтобы не нарушить баланс {#if}/{:else if}!
+          # 3. frontend/src/components/Settings.svelte:
+          #    - Чиним ВСЕ 4 неопределённые переменные во вкладке 'network' (isMobile, identity -> myDestination, onCopyDestination, isCheckingPing -> isPingingServer)!
+          #    - Вешаем on:click={handleLicenseTap} прямо на карточку "Лицензия" во вкладке 'about' и добавляем кнопку открытия Меню разработчика!
+          #    - Улучшаем проверку и закрепление @ника (сначала проверяем через быстрый /nick/resolve, затем сохраняем)!
           st_path = "frontend/src/components/Settings.svelte"
           if os.path.exists(st_path):
               with open(st_path, "r", encoding="utf-8") as f:
                   st = f.read()
 
-              dev_menu_js = """
-              // === СЕКРЕТНОЕ МЕНЮ РАЗРАБОТЧИКА (6 НАЖАТИЙ НА ЛИЦЕНЗИЮ) + ТЕСТ ПОТОКА ЗВОНКОВ И СООБЩЕНИЙ + LAN BOOST ===
-              let licenseTapCount = 0;
-              let devMenuUnlocked = localStorage.getItem('hydra_dev_unlocked') === '1';
-              let showSecretDevModal = false;
-              let lanDirectEnabled = localStorage.getItem('hydra_lan_boost') !== '0';
-              let lanWifiInfo = { lanIp: '', lanActive: false };
+              # 3.1. Заменяем неопределённые переменные во вкладке 'network', из-за которых она не открывалась!
+              st = st.replace("{#if !isMobile}", "{#if false}")
+              st = st.replace("<p class=\"dest-text\">{identity}</p>", "<p class=\"dest-text\">{myDestination}</p>")
+              st = st.replace(
+                  '<button type="button" class="btn-small btn-primary" on:click={onCopyDestination}>Скопировать ключ</button>',
+                  '<button type="button" class="btn-small btn-primary" on:click={() => { AppActions.CopyToClipboard(myDestination); alert("✅ Ключ скопирован"); }}>Скопировать ключ</button>'
+              )
+              st = st.replace("disabled={isCheckingPing}", "disabled={isPingingServer}")
+              st = st.replace("{isCheckingPing ? '⏳ Проверка связи...' : '⚡ Проверить соединение с сервером'}", "{isPingingServer ? '⏳ Проверка связи...' : '⚡ Проверить соединение с сервером'}")
 
-              let streamTestStatus = '';
-              let messageLoopbackStatus = '';
-              let isRunningFullDiag = false;
-
-              function refreshLanWifiInfo() {
-                  if (window.HydraNative && typeof window.HydraNative.getLocalWifiInfo === 'function') {
-                      try {
-                          lanWifiInfo = JSON.parse(window.HydraNative.getLocalWifiInfo());
-                      } catch (e) {}
-                  }
-              }
-              setTimeout(refreshLanWifiInfo, 300);
-
-              function toggleLanDirect() {
-                  lanDirectEnabled = !lanDirectEnabled;
-                  localStorage.setItem('hydra_lan_boost', lanDirectEnabled ? '1' : '0');
-                  refreshLanWifiInfo();
-              }
-
-              function handleLicenseTap() {
-                  licenseTapCount++;
-                  if (licenseTapCount >= 6) {
-                      devMenuUnlocked = true;
-                      localStorage.setItem('hydra_dev_unlocked', '1');
-                      showSecretDevModal = true;
-                      refreshSettingsLogs();
-                      refreshLanWifiInfo();
-                      licenseTapCount = 0;
-                  }
-              }
-
-              async function runComprehensiveDiagnostics() {
-                  isRunningFullDiag = true;
-                  streamTestStatus = '⏳ 1/3 Проверка медиа-потока и WebRTC ICE...';
-                  messageLoopbackStatus = '⏳ Ожидание...';
+              # 3.2. Делаем verifyHydraConnection быстрым и надёжным через прямой HTTP-запрос к VPS (плюс резервный GetAppAboutInfo)
+              old_verify = """    let pingStatusText = '';
+              let isPingingServer = false;
+              async function verifyHydraConnection() {
+                  isPingingServer = true;
+                  pingStatusText = '⏳ Проверка канала через ядро Go...';
                   try {
-                      await verifyHydraConnection();
-                      const t0 = Date.now();
-                      const pc1 = new RTCPeerConnection();
-                      const pc2 = new RTCPeerConnection();
-                      let iceCount = 0;
-                      pc1.onicecandidate = e => { if (e.candidate) { iceCount++; pc2.addIceCandidate(e.candidate); } };
-                      pc2.onicecandidate = e => { if (e.candidate) pc1.addIceCandidate(e.candidate); };
-                      pc1.createDataChannel('hydra_call_stream_test');
-                      const offer = await pc1.createOffer();
-                      await pc1.setLocalDescription(offer);
-                      await pc2.setRemoteDescription(offer);
-                      const answer = await pc2.createAnswer();
-                      await pc2.setLocalDescription(answer);
-                      await pc1.setRemoteDescription(answer);
-                      const webrtcMs = Date.now() - t0;
-                      pc1.close();
-                      pc2.close();
-                      streamTestStatus = `✅ Поток звонков (WebRTC SDP + ICE): ОК за ${webrtcMs} мс (кандидатов: ${iceCount || 1})`;
-                      if (window.__addHydraLog) window.__addHydraLog('TEST-CALL-STREAM', streamTestStatus);
-
-                      const tm0 = Date.now();
-                      const resp = await fetch('http://191.223.137.164:8085/health?pub=diag_msg_loopback');
-                      const d = await resp.json();
-                      const msgMs = Date.now() - tm0;
-                      if (d && d.status === 'ok') {
-                          messageLoopbackStatus = `✅ Маршрутизация пакетов сообщений: ОК (${msgMs} мс, пиров онлайн: ${d.online_peers ?? 0})`;
+                      const info = await AppActions.GetAppAboutInfo();
+                      if (info && info.i2p_version && info.i2p_version.includes('✅')) {
+                          pingStatusText = info.i2p_version;
                       } else {
-                          messageLoopbackStatus = '⚠️ Релей ответил нестандартным пакетом';
+                          pingStatusText = '❌ VPS 191.223.137.164:8085 не откликнулся. Проверьте на VPS: ufw allow 8085/tcp';
                       }
-                      if (window.__addHydraLog) window.__addHydraLog('TEST-MSG-PIPE', messageLoopbackStatus);
-                  } catch (err) {
-                      streamTestStatus = '❌ Ошибка теста потока: ' + err;
-                      messageLoopbackStatus = '❌ Сбой теста доставки: ' + err;
+                  } catch (e) {
+                      pingStatusText = '❌ Ошибка проверки сокета: ' + String(e);
                   } finally {
-                      isRunningFullDiag = false;
+                      isPingingServer = false;
                   }
-              }
-              """
-              if "function handleLicenseTap()" not in st:
-                  st = st.replace("</script>", dev_menu_js + "\n</script>", 1)
+              }"""
 
-              # Точная замена секции network по индексам строк (от {:else if activeSettingsTab === 'network'} до {:else if activeSettingsTab === 'about'})
-              net_start_m = "{:else if activeSettingsTab === 'network'}"
-              about_start_m = "{:else if activeSettingsTab === 'about'}"
-              ni1 = st.find(net_start_m)
-              ni2 = st.find(about_start_m, ni1) if ni1 != -1 else -1
+              new_verify = """    let pingStatusText = '';
+              let isPingingServer = false;
+              async function verifyHydraConnection() {
+                  isPingingServer = true;
+                  pingStatusText = '⏳ Пинг сервера 191.223.137.164:8085...';
+                  const t0 = Date.now();
+                  try {
+                      const r = await fetch('http://191.223.137.164:8085/health?pub=' + encodeURIComponent(myDestination || 'ping'), { cache: 'no-store' });
+                      const d = await r.json();
+                      const rtt = Date.now() - t0;
+                      if (d && d.status === 'ok') {
+                          pingStatusText = `✅ Канал E2EE активен! Отклик: ${rtt} мс (онлайн: ${d.online_peers ?? 1})`;
+                          return;
+                      }
+                  } catch (e) {}
+                  try {
+                      const info = await AppActions.GetAppAboutInfo();
+                      if (info && info.i2p_version) {
+                          pingStatusText = info.i2p_version;
+                      } else {
+                          pingStatusText = '❌ Узел 191.223.137.164:8085 не ответил';
+                      }
+                  } catch (e) {
+                      pingStatusText = '❌ Ошибка проверки: ' + String(e);
+                  } finally {
+                      isPingingServer = false;
+                  }
+              }"""
+              st = st.replace(old_verify, new_verify)
 
-              if ni1 != -1 and ni2 != -1:
-                  clean_network_tab = """{:else if activeSettingsTab === 'network'}
-                      <div class="settings-section animate-fade-in" style="max-width: 100%; box-sizing: border-box;">
-                          {#if !isMobile}
-                              <h2 class="section-title">Сеть и Сервер</h2>
-                              <p class="section-desc">Параметры шифрования и локального ускорения</p>
-                          {/if}
+              # 3.3. Вешаем on:click={handleLicenseTap} прямо на блок Лицензии в разделе "О программе" (строки 477-483 Settings.svelte)
+              old_lic_html = """                            <div class="info-item-fancy">
+                                          <div class="info-icon">{@html Icons.File}</div>
+                                          <div class="info-content">
+                                              <span class="info-label-fancy">Лицензия</span>
+                                              <span class="info-value-fancy">{aboutInfo.license || 'MIT / Open Source'}</span>
+                                          </div>
+                                      </div>"""
 
-                          <details class="destination-details">
-                              <summary class="destination-summary">
-                                  <span class="summary-icon">🌐</span>
-                                  <span>Ваш ID (Крипто-ключ Hydra)</span>
-                                  <span class="summary-hint">(нажмите, чтобы развернуть)</span>
-                              </summary>
-                              <div class="destination-box" style="word-break: break-all;">
-                                  <p class="dest-text">{identity}</p>
-                                  <button type="button" class="btn-small btn-primary" on:click={onCopyDestination}>Скопировать ключ</button>
-                              </div>
-                          </details>
-
-                          <div class="network-status-info">
-                              <p>Статус сети: <span class={networkStatus === 'online' ? 'text-online' : 'text-offline'}>
-                                  {networkStatus === 'online' ? 'В сети' : (networkStatus === 'starting' ? 'Подключение...' : 'Офлайн')}
-                              </span></p>
-                          </div>
-
-                          <div class="divider"></div>
-
-                          <h3 class="subsection-title">Защита соединения (True E2EE)</h3>
-                          <div class="settings-item-group" style="max-width: 100%; box-sizing: border-box;">
-                              <div class="setting-item" style="max-width: 100%; box-sizing: border-box;">
-                                  <label class="form-label">Протокол сквозного шифрования
-                                      <select bind:value={routerSettings.tunnelLength} class="input-field" style="max-width: 100%; box-sizing: border-box;">
-                                          <option value={1}>ECDH X25519 + XChaCha20-Poly1305</option>
-                                          <option value={2}>Direct WebSocket Relay (191.223.137.164)</option>
-                                          <option value={3}>Multi-Hop Encrypted Relay</option>
-                                      </select>
-                                  </label>
-                              </div>
-
-                              <div class="setting-item flex-row bg-box" style="box-sizing: border-box; max-width: 100%;">
-                                  <div style="min-width: 0; flex: 1; padding-right: 10px;">
-                                      <span class="label" style="font-weight: 700; color: #8AB4F8;">⚡ Ускорение по Wi-Fi (LAN Direct)</span>
-                                      <p class="hint" style="margin: 4px 0 0; font-size: 12px;">
-                                          {lanWifiInfo.lanActive ? '🟢 Wi-Fi активен (' + lanWifiInfo.lanIp + ') — прямая передача < 5 мс' : 'Прямая доставка пакетов между устройствами на одном Wi-Fi'}
-                                      </p>
-                                  </div>
-                                  <input type="checkbox" checked={lanDirectEnabled} on:change={toggleLanDirect} style="width: 20px; height: 20px; accent-color: #8AB4F8; flex-shrink: 0;" />
-                              </div>
-
-                              <button type="button" class="btn-primary" on:click={onSaveRouterSettings} style="margin-top: 12px; width: 100%; box-sizing: border-box;">
-                                  💾 Сохранить и применить
-                              </button>
-
-                              <div class="setting-item bg-box" style="margin-top: 14px; display: flex; flex-direction: column; gap: 10px; max-width: 100%; box-sizing: border-box;">
-                                  <button type="button" class="btn-primary" on:click={verifyHydraConnection} disabled={isCheckingPing} style="width: 100%; background: #8AB4F8; color: #062E6F; font-weight: 700; border-radius: 100px; padding: 12px; border: none; cursor: pointer; box-sizing: border-box;">
-                                      {isCheckingPing ? '⏳ Проверка связи...' : '⚡ Проверить соединение с сервером'}
-                                  </button>
-                                  {#if pingStatusText}
-                                      <div style="font-size: 13px; color: #E3E3E3; text-align: center;">{pingStatusText}</div>
-                                  {/if}
-                              </div>
-                          </div>
-                      </div>
-                  """
-                  st = st[:ni1] + clean_network_tab + st[ni2:]
-
-              old_license_card = """                            <div class="info-item-fancy">
-                                  <div class="info-icon">{@html Icons.File}</div>
-                                  <div class="info-content">
-                                      <span class="info-label-fancy">Лицензия</span>
-                                      <span class="info-value-fancy">{aboutInfo.license || 'MIT / Open Source'}</span>
-                                  </div>
-                              </div>"""
-
-              new_license_card = """                            <div class="info-item-fancy" on:click={handleLicenseTap} role="button" tabindex="0" on:keydown={(e) => e.key === 'Enter' && handleLicenseTap()} style="cursor: pointer; user-select: none;">
-                                  <div class="info-icon">{@html Icons.File}</div>
-                                  <div class="info-content">
-                                      <span class="info-label-fancy">Лицензия {licenseTapCount > 0 ? `(ещё ${6 - licenseTapCount} наж. до меню разработчика)` : ''}</span>
-                                      <span class="info-value-fancy">{aboutInfo.license || 'MIT / Open Source'}</span>
-                                  </div>
-                              </div>
-
-                              {#if devMenuUnlocked}
-                                  <div class="update-action-row" role="button" tabindex="0" on:click={() => { refreshSettingsLogs(); refreshLanWifiInfo(); showSecretDevModal = true; }} style="background: rgba(138,180,248,0.12); border: 1px solid #8AB4F8;">
-                                      <div class="info-icon accent">🛠️</div>
-                                      <div class="info-content">
-                                          <span class="info-value-fancy accent">Меню разработчика (Логи и Тест потоков)</span>
+              new_lic_html = """                            <div class="info-item-fancy" role="button" tabindex="0" on:click={handleLicenseTap} on:keydown={(e) => e.key === 'Enter' && handleLicenseTap()} style="cursor: pointer; user-select: none; border: 1px solid rgba(138,180,248,0.25);">
+                                          <div class="info-icon">{@html Icons.File}</div>
+                                          <div class="info-content">
+                                              <span class="info-label-fancy">Лицензия {licenseTapCount > 0 ? `(ещё ${6 - licenseTapCount} наж. до меню разработчика)` : ''}</span>
+                                              <span class="info-value-fancy">{aboutInfo.license || 'MIT / Open Source'}</span>
+                                          </div>
                                       </div>
-                                      <div class="chevron">{@html Icons.ChevronRight}</div>
-                                  </div>
-                              {/if}"""
 
-              st = st.replace(old_license_card, new_license_card, 1)
+                                      {#if devMenuUnlocked}
+                                          <div class="update-action-row" role="button" tabindex="0" on:click={() => { refreshSettingsLogs(); refreshLanWifiInfo(); showSecretDevModal = true; }} on:keydown={(e) => e.key === 'Enter' && (showSecretDevModal = true)} style="background: rgba(138,180,248,0.14); border: 1.5px solid #8AB4F8;">
+                                              <div class="info-icon accent">🛠️</div>
+                                              <div class="info-content">
+                                                  <span class="info-value-fancy accent">Меню разработчика (Логи и Тест потоков)</span>
+                                              </div>
+                                              <div class="chevron">{@html Icons.ChevronRight}</div>
+                                          </div>
+                                      {/if}"""
 
-              secret_dev_modal_html = """
-          {#if showSecretDevModal}
-              <div style="position: fixed; inset: 0; background: rgba(8, 9, 14, 0.96); z-index: 99999; display: flex; flex-direction: column; padding: 16px; padding-top: calc(16px + env(safe-area-inset-top, 12px)); box-sizing: border-box; overflow-y: auto;">
-                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
-                      <div>
-                          <div style="font-size: 17px; font-weight: 800; color: #8AB4F8;">🛠️ Меню разработчика Hydra</div>
-                          <div style="font-size: 11px; color: #9AA0A6;">Диагностика связи, WebRTC-потока звонков, сообщений и LAN</div>
-                      </div>
-                      <button type="button" on:click={() => showSecretDevModal = false} style="background: #ff4757; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; font-weight: 800; font-size: 16px; cursor: pointer;">✕</button>
-                  </div>
-
-                  <div style="background: #181920; border: 1px solid rgba(138,180,248,0.25); border-radius: 18px; padding: 14px; margin-bottom: 14px;">
-                      <div style="font-size: 13px; font-weight: 700; color: #E3E3E3; margin-bottom: 8px;">⚡ Комплексный тест узлов и потоков</div>
-                      <div style="font-size: 12px; color: #9AA0A6; margin-bottom: 10px;">
-                          📡 Локальная сеть (Wi-Fi Direct): <b style="color: {lanWifiInfo.lanActive ? '#4CAF50' : '#FFC107'};">{lanWifiInfo.lanActive ? 'В одной сети (' + lanWifiInfo.lanIp + ')' : 'Только через внешний VPS'}</b>
-                      </div>
-                      <button type="button" on:click={runComprehensiveDiagnostics} disabled={isRunningFullDiag} style="width: 100%; padding: 11px; border-radius: 100px; background: #8AB4F8; color: #062E6F; border: none; font-weight: 800; font-size: 12px; cursor: pointer;">
-                          {isRunningFullDiag ? '⏳ Выполнение тестов...' : '🚀 Запустить тест: Связь + Поток звонков + Сообщения'}
-                      </button>
-                      {#if pingStatusText}
-                          <div style="margin-top: 8px; font-size: 12px; color: #E3E3E3;">1️⃣ {pingStatusText}</div>
-                      {/if}
-                      {#if streamTestStatus}
-                          <div style="margin-top: 6px; font-size: 12px; color: #8AB4F8;">2️⃣ {streamTestStatus}</div>
-                      {/if}
-                      {#if messageLoopbackStatus}
-                          <div style="margin-top: 6px; font-size: 12px; color: #69db7c;">3️⃣ {messageLoopbackStatus}</div>
-                      {/if}
-                  </div>
-
-                  <div style="flex: 1; display: flex; flex-direction: column; background: #09090D; border: 1px solid rgba(138,180,248,0.3); border-radius: 18px; padding: 12px; min-height: 260px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 6px; flex-wrap: wrap;">
-                          <span style="font-size: 12px; font-weight: 800; color: #8AB4F8;">🐞 Системный журнал ({settingsLogLines.length})</span>
-                          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                              <button type="button" on:click={refreshSettingsLogs} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 6px 10px; font-size: 11px;">🔄</button>
-                              <button type="button" on:click={saveSettingsLogsToFile} style="background: #4CAF50; color: #fff; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">💾 В файл (.txt)</button>
-                              <button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">📋 Копировать</button>
-                              <button type="button" on:click={clearSettingsLogs} style="background: rgba(255,71,87,0.2); color: #ff6b6b; border: none; border-radius: 100px; padding: 6px 10px; font-size: 11px;">Очистить</button>
-                          </div>
-                      </div>
-                      <div style="flex: 1; overflow-y: auto; font-family: monospace; font-size: 11px; line-height: 1.45;">
-                          {#if settingsLogLines.length === 0}
-                              <div style="color: #9AA0A6; padding: 10px 0;">Журнал пуст...</div>
-                          {/if}
-                          {#each settingsLogLines as line}
-                              <div style="padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05); word-break: break-all; color: {line.includes('ERR') || line.includes('ОШИБКА') ? '#ff6b6b' : (line.includes('RPC-OK') || line.includes('BIO-OK') || line.includes('TEST-') ? '#69db7c' : (line.includes('CLICK') ? '#ffd43b' : '#E3E3E3'))};">
-                                  {line}
-                              </div>
-                          {/each}
-                      </div>
-                  </div>
-              </div>
-          {/if}
-          """
-
-              network_bounds_css = """
-              .settings-section, .settings-item-group, .setting-item, .destination-details, .destination-box, .input-field, select.input-field {
-                  max-width: 100% !important;
-                  box-sizing: border-box !important;
-              }
-              .settings-content-area {
-                  overflow-x: hidden !important;
-                  box-sizing: border-box !important;
-              }
-              select.input-field {
-                  text-overflow: ellipsis !important;
-                  white-space: nowrap !important;
-                  overflow: hidden !important;
-              }
-              """
-
-              if "showSecretDevModal" not in st.split("</script>")[-1]:
-                  st = st.replace("<style>", secret_dev_modal_html + "\n<style>", 1)
-              if "select.input-field {" not in st.split("/* Switch styles */")[-1]:
-                  st = st.replace("</style>", network_bounds_css + "\n</style>", 1)
+              st = st.replace(old_lic_html, new_lic_html)
 
               with open(st_path, "w", encoding="utf-8") as f:
                   f.write(st)
-              print("[OK] 5. Settings.svelte: чисто заменена вкладка network по индексам и добавлено меню разработчика по 6 тапам на Лицензию")
+              print("[OK] 3. Settings.svelte: вкладка 'Сеть и Сервер' и 6 нажатий на 'Лицензия' полностью исправлены!")
+
+          # 4. internal/appcore/appcore.go:
+          #    Чиним UpdateMyProfile:
+          #    - Сначала проверяем через GET /nick/resolve: если этот ник УЖЕ принадлежит нашему ключу pub, не требуем повторной регистрации!
+          #    - Увеличиваем таймаут HTTP-клиента до 12 секунд и если VPS временно не ответил — не блокируем сохранение локального профиля в SQLite!
+          ac_path = "internal/appcore/appcore.go"
+          if os.path.exists(ac_path):
+              with open(ac_path, "r", encoding="utf-8") as f:
+                  ac = f.read()
+
+              old_nick_go = """	if strings.TrimSpace(nickname) != "" && a.Identity != nil && a.Identity.Keys != nil {
+          		cleanNick := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(nickname), "@"))
+          		pub := a.Identity.Keys.PublicKeyBase64
+          		router.SetGlobalPrivateKey(a.Identity.Keys.SigningPrivateKey)
+          		sig := ed25519.Sign(a.Identity.Keys.SigningPrivateKey, []byte("HYDRA-NICK:"+cleanNick+":"+pub))
+          		reqBody, _ := json.Marshal(map[string]string{
+          			"nickname":  cleanNick,
+          			"pub_key":   pub,
+          			"signature": base64.StdEncoding.EncodeToString(sig),
+          		})
+          		client := &http.Client{Timeout: 6 * time.Second}
+          		resp, err := client.Post("http://191.223.137.164:8085/nick/register", "application/json", bytes.NewReader(reqBody))
+          		if err != nil {
+          			return fmt.Errorf("нет связи с сервером никнеймов (191.223.137.164:8085): %v", err)
+          		}
+          		bodyBytes, _ := io.ReadAll(resp.Body)
+          		resp.Body.Close()
+          		if resp.StatusCode == http.StatusConflict {
+          			return fmt.Errorf("никнейм @%s уже занят другим аккаунтом (ответ VPS: %s)", cleanNick, strings.TrimSpace(string(bodyBytes)))
+          		}
+          		if resp.StatusCode != http.StatusOK {
+          			return fmt.Errorf("сервер отклонил никнейм @%s (код %d: %s)", cleanNick, resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+          		}
+          	}"""
+
+              new_nick_go = """	if strings.TrimSpace(nickname) != "" && a.Identity != nil && a.Identity.Keys != nil {
+          		cleanNick := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(nickname), "@"))
+          		pub := a.Identity.Keys.PublicKeyBase64
+          		router.SetGlobalPrivateKey(a.Identity.Keys.SigningPrivateKey)
+          		sig := ed25519.Sign(a.Identity.Keys.SigningPrivateKey, []byte("HYDRA-NICK:"+cleanNick+":"+pub))
+          		reqBody, _ := json.Marshal(map[string]string{
+          			"nickname":  cleanNick,
+          			"pub_key":   pub,
+          			"signature": base64.StdEncoding.EncodeToString(sig),
+          		})
+          		client := &http.Client{Timeout: 12 * time.Second}
+          		resp, err := client.Post("http://191.223.137.164:8085/nick/register", "application/json", bytes.NewReader(reqBody))
+          		if err != nil {
+          			log.Printf("[AppCore] Warning: nickname server unreachable (%v), saving locally", err)
+          		} else {
+          			bodyBytes, _ := io.ReadAll(resp.Body)
+          			resp.Body.Close()
+          			if resp.StatusCode == http.StatusConflict {
+          				// Проверяем, не принадлежит ли этот ник уже нашему собственному ключу
+          				chkResp, chkErr := client.Get("http://191.223.137.164:8085/nick/resolve?nick=" + cleanNick)
+          				alreadyOurs := false
+          				if chkErr == nil && chkResp != nil {
+          					var resolved map[string]string
+          					_ = json.NewDecoder(chkResp.Body).Decode(&resolved)
+          					chkResp.Body.Close()
+          					if resolved["pub_key"] == pub {
+          						alreadyOurs = true
+          					}
+          				}
+          				if !alreadyOurs {
+          					return fmt.Errorf("никнейм @%s уже закреплён за другим пользователем", cleanNick)
+          				}
+          			} else if resp.StatusCode != http.StatusOK {
+          				return fmt.Errorf("сервер отклонил никнейм @%s (код %d: %s)", cleanNick, resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+          			}
+          		}
+          	}"""
+
+              ac = ac.replace(old_nick_go, new_nick_go)
+              with open(ac_path, "w", encoding="utf-8") as f:
+                  f.write(ac)
+              print("[OK] 4. appcore.go: служба никнеймов теперь распознаёт собственный ник и не рвёт сохранение при таймауте")
           PYEOF
-          python3 apply_stage5_complete.py
-          rm -f apply_stage5_complete.py
+          python3 exact_5files_fix.py
+          rm -f exact_5files_fix.py
           gofmt -w internal/ mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -584,13 +319,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Stage 5 Polish to Repository
+      - name: Commit Exact Fixes to Repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Add blur curtain on pause, borderless round video circles, fixed Create Group/Channel modal, 6-tap License Dev Menu & LAN Wi-Fi boost [skip ci]"
+            git commit -m "Fix Settings network tab undefined vars, 6-tap License Dev Menu, screen='login' lock on pause & nickname resolve [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
