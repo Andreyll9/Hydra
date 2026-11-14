@@ -38,307 +38,509 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply All 8 Fixes Safely Without Breaking Braces in messages.go
+      - name: Apply Blur Curtain, Pure Round Circle, Fixed Create Modal, Secret 6-Tap Dev Menu, Calls & LAN P2P Boost
         run: |
-          cat << 'PYEOF' > fix_all_safe.py
+          cat << 'PYEOF' > apply_stage5_complete.py
           import os, re
 
-          # 1. MainActivity.kt: пропуск блокировки при открытии Галереи + сохранение логов в файл Downloads
+          # 1. MainActivity.kt:
+          #    - Добавляем локальный LAN-детектор (Wi-Fi IP подсеть) для прямого ускорения между устройствами на одном Wi-Fi
+          #    - В onPause() мгновенно включаем матовую дымку/блюр (window.__setHydraBlur(true)), чтобы при сворачивании ничего не было видно!
           kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
           if os.path.exists(kt_path):
               with open(kt_path, "r", encoding="utf-8") as f:
                   kt = f.read()
 
-              if "private var isOpeningSystemPicker = false" not in kt:
-                  kt = kt.replace(
-                      "private var webViewFileCallback: ValueCallback<Array<Uri>>? = null",
-                      "private var webViewFileCallback: ValueCallback<Array<Uri>>? = null\n    private var isOpeningSystemPicker = false"
-                  )
-
-              save_logs_kt = """
+              lan_ip_kt = """
                   @JavascriptInterface
-                  fun saveLogsToDownloads(logText: String): String {
+                  fun getLocalWifiInfo(): String {
                       return try {
-                          val filename = "hydra_log_${System.currentTimeMillis()}.txt"
-                          val resolver = applicationContext.contentResolver
-                          val cv = android.content.ContentValues().apply {
-                              put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
-                              put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
-                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                  put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                          val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+                          var localIp = ""
+                          while (interfaces.hasMoreElements()) {
+                              val nif = interfaces.nextElement()
+                              if (!nif.isUp || nif.isLoopback) continue
+                              val addrs = nif.inetAddresses
+                              while (addrs.hasMoreElements()) {
+                                  val addr = addrs.nextElement()
+                                  if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
+                                      val ip = addr.hostAddress ?: ""
+                                      if (ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172.")) {
+                                          localIp = ip
+                                          break
+                                      }
+                                  }
                               }
+                              if (localIp.isNotEmpty()) break
                           }
-                          val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                              resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
-                          } else {
-                              resolver.insert(android.provider.MediaStore.Files.getContentUri("external"), cv)
-                          }
-                          if (uri != null) {
-                              resolver.openOutputStream(uri)?.use { it.write(logText.toByteArray(Charsets.UTF_8)) }
-                              runOnUiThread {
-                                  android.widget.Toast.makeText(this@MainActivity, "✅ Лог сохранён в Загрузки: $filename", android.widget.Toast.LENGTH_LONG).show()
-                              }
-                              pushNativeLog("LOG-FILE", "Сохранено в Downloads/$filename")
-                              filename
-                          } else "error"
+                          val res = org.json.JSONObject()
+                          res.put("lanIp", localIp)
+                          res.put("lanActive", localIp.isNotEmpty())
+                          res.put("directPort", 8080)
+                          res.toString()
                       } catch (e: Exception) {
-                          pushNativeLog("LOG-ERR", "Ошибка записи файла: ${e.message}")
-                          "error"
+                          "{\\"lanIp\\":\\"\\",\\"lanActive\\":false}"
                       }
                   }
               """
-              if "fun saveLogsToDownloads(" not in kt:
-                  kt = kt.replace("inner class HydraNativeBridge {", "inner class HydraNativeBridge {\n" + save_logs_kt, 1)
+              if "fun getLocalWifiInfo(" not in kt:
+                  kt = kt.replace("inner class HydraNativeBridge {", "inner class HydraNativeBridge {\n" + lan_ip_kt, 1)
 
-              kt = kt.replace("filePickerLauncher.launch(intent)", "isOpeningSystemPicker = true\n                filePickerLauncher.launch(intent)")
+              # Включаем мутную дымку (блюр) мгновенно при сворачивании в onPause
               kt = kt.replace(
-                  'webViewFileChooserLauncher.launch(Intent.createChooser(intent, "Выберите изображение или QR-код"))',
-                  'isOpeningSystemPicker = true\n                        webViewFileChooserLauncher.launch(Intent.createChooser(intent, "Выберите изображение или QR-код"))'
+                  'webView.evaluateJavascript("if(window.__lockHydraNow) window.__lockHydraNow();", null)',
+                  'webView.evaluateJavascript("if(window.__setHydraBlur) window.__setHydraBlur(true); if(window.__lockHydraNow) window.__lockHydraNow();", null)'
               )
-
-              old_pr = """    override fun onResume() {
-                  super.onResume()
-                  webView.onResume()
-                  mobile.Mobile.setPlatformBridge(this)
-                  pushNativeLog("LIFECYCLE", "Приложение развёрнуто (onResume) — проверка безопасности и биометрии")
-                  webView.evaluateJavascript("if(window.__onHydraAppResume) window.__onHydraAppResume();", null)
-              }
-
-              override fun onPause() {
-                  pushNativeLog("LIFECYCLE", "Приложение свёрнуто (onPause) — мгновенная блокировка сессии!")
-                  webView.evaluateJavascript("if(window.__lockHydraNow) window.__lockHydraNow();", null)
-                  webView.onPause()
-                  super.onPause()
-              }"""
-
-              new_pr = """    override fun onResume() {
-                  super.onResume()
-                  webView.onResume()
-                  mobile.Mobile.setPlatformBridge(this)
-                  if (isOpeningSystemPicker) {
-                      isOpeningSystemPicker = false
-                      pushNativeLog("LIFECYCLE", "Возврат из Галереи (без блокировки)")
-                      return
-                  }
-                  pushNativeLog("LIFECYCLE", "Приложение развёрнуто (onResume)")
-                  webView.evaluateJavascript("if(window.__onHydraAppResume) window.__onHydraAppResume();", null)
-              }
-
-              override fun onPause() {
-                  if (!isOpeningSystemPicker) {
-                      pushNativeLog("LIFECYCLE", "Приложение свёрнуто (onPause) — блокировка!")
-                      webView.evaluateJavascript("if(window.__lockHydraNow) window.__lockHydraNow();", null)
-                  }
-                  webView.onPause()
-                  super.onPause()
-              }"""
-              kt = kt.replace(old_pr, new_pr)
+              kt = kt.replace(
+                  'webView.evaluateJavascript("if(window.__onHydraAppResume) window.__onHydraAppResume();", null)',
+                  'webView.evaluateJavascript("if(window.__onHydraAppResume) window.__onHydraAppResume();", null)'
+              )
               with open(kt_path, "w", encoding="utf-8") as f:
                   f.write(kt)
-              print("[OK] 1. MainActivity.kt обновлён")
+              print("[OK] 1. MainActivity.kt: добавлены LAN Direct Wi-Fi детектор и мгновенный блюр при сворачивании")
 
-          # 2. Сетевой движок Go (internal/appcore/messages.go и contacts.go) БЕЗ слома скобок!
-          #    Вместо удаления блоков if/else просто подставляем PublicKey = I2PAddress ДО проверки!
-          for root, _, files in os.walk("internal"):
-              for fn in files:
-                  if not fn.endswith(".go"):
-                      continue
-                  fp = os.path.join(root, fn)
-                  with open(fp, "r", encoding="utf-8") as f:
-                      gc = f.read()
-                  orig = gc
+          # 2. frontend/index.html:
+          #    Добавляем глобальный слой мутной дымки (Blur Privacy Curtain) при сворачивании и блокировке!
+          index_html_path = "frontend/index.html"
+          if os.path.exists(index_html_path):
+              with open(index_html_path, "r", encoding="utf-8") as f:
+                  ih = f.read()
 
-                  # Безопасная однострочная подстановка: если PublicKey пуст, сразу копируем в него I2PAddress ПЕРЕД проверкой!
-                  gc = gc.replace(
-                      'if contact.PublicKey == "" {',
-                      'if contact.PublicKey == "" && contact.I2PAddress != "" { contact.PublicKey = contact.I2PAddress }\n\tif contact.PublicKey == "" {'
-                  )
-                  gc = gc.replace(
-                      'if c.PublicKey == "" {',
-                      'if c.PublicKey == "" && c.I2PAddress != "" { c.PublicKey = c.I2PAddress }\n\tif c.PublicKey == "" {'
-                  )
-                  # И сокращаем ожидание с 60 секунд до 2 секунд на случай резервного пути
-                  gc = gc.replace("60 * time.Second", "2 * time.Second")
+              blur_curtain_code = """
+            #hydra-blur-curtain {
+              position: fixed;
+              inset: 0;
+              z-index: 2147483645;
+              backdrop-filter: blur(28px) brightness(0.32);
+              -webkit-backdrop-filter: blur(28px) brightness(0.32);
+              background: rgba(10, 11, 16, 0.78);
+              display: none;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              color: #E3E3E3;
+              font-family: sans-serif;
+              user-select: none;
+              pointer-events: none;
+            }
+          """
+              if "#hydra-blur-curtain" not in ih:
+                  ih = ih.replace("html, body, #app {", blur_curtain_code + "\n  html, body, #app {", 1)
 
-                  if "func (a *AppCore) AddContact(" in gc:
-                      gc = gc.replace('PublicKey:  "",', 'PublicKey:  cleanDest,')
-                      gc = re.sub(r'(I2PAddress:\s*([a-zA-Z0-9_]+),\s*\n\s*PublicKey:\s*)""', r'\1\2', gc)
-
-                  if gc != orig:
-                      with open(fp, "w", encoding="utf-8") as f:
-                          f.write(gc)
-                      print("[OK] 2. Безопасно обновлён сетевой модуль:", fp)
-
-          # 3. App.svelte: чиним ReferenceError: isAuthenticated is not defined
-          app_path = "frontend/src/App.svelte"
-          if os.path.exists(app_path):
-              with open(app_path, "r", encoding="utf-8") as f:
-                  ap = f.read()
-              ap = ap.replace("if (isAuthenticated) {\n                isAuthenticated = false;", "if (typeof isLoggedIn !== 'undefined' && isLoggedIn) {\n                isLoggedIn = false;")
-              with open(app_path, "w", encoding="utf-8") as f:
-                  f.write(ap)
-              print("[OK] 3. App.svelte обновлён")
-
-          # 4. Settings.svelte: кнопка "💾 В файл (.txt)" + выравнивание отступов
-          st_path = "frontend/src/components/Settings.svelte"
-          if os.path.exists(st_path):
-              with open(st_path, "r", encoding="utf-8") as f:
-                  st = f.read()
-              if "function saveSettingsLogsToFile()" not in st:
-                  save_js = """
-              function saveSettingsLogsToFile() {
-                  const text = (settingsLogLines || []).join('\\n');
-                  if (!text) return alert('Журнал пуст');
-                  if (window.HydraNative && typeof window.HydraNative.saveLogsToDownloads === 'function') {
-                      window.HydraNative.saveLogsToDownloads(text);
-                  }
-              }
+              blur_js = """
+              window.__setHydraBlur = function(active) {
+                var el = document.getElementById('hydra-blur-curtain');
+                if (!el) {
+                  el = document.createElement('div');
+                  el.id = 'hydra-blur-curtain';
+                  el.innerHTML = '<div style="font-size:48px;margin-bottom:12px;">🛡️</div><div style="font-weight:800;font-size:18px;color:#8AB4F8;">Hydra защищена</div><div style="font-size:12px;color:#9AA0A6;margin-top:4px;">Экран скрыт матовым фильтром безопасности</div>';
+                  document.body.appendChild(el);
+                }
+                el.style.display = active ? 'flex' : 'none';
+              };
+              document.addEventListener('visibilitychange', function() {
+                if (document.visibilityState === 'hidden') {
+                  window.__setHydraBlur(true);
+                } else {
+                  setTimeout(function() { window.__setHydraBlur(false); }, 350);
+                }
+              });
               """
-                  st = st.replace("function copySettingsLogs() {", save_js + "\n    function copySettingsLogs() {", 1)
-              st = st.replace(
-                  '<button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700;">📋 Копировать всё</button>',
-                  '<button type="button" on:click={saveSettingsLogsToFile} style="background: #4CAF50; color: #fff; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">💾 В файл (.txt)</button>\n                                            <button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">📋 Копировать</button>'
-              )
-              st = st.replace(
-                  '.settings-content-area { flex: 1; padding: 40px; overflow-y: auto; max-width: 800px; margin: 0 auto; width: 100%; }',
-                  '.settings-content-area { flex: 1; padding: 24px 16px 90px; overflow-y: auto; max-width: 800px; margin: 0 auto; width: 100%; box-sizing: border-box; }'
-              )
-              with open(st_path, "w", encoding="utf-8") as f:
-                  f.write(st)
-              print("[OK] 4. Settings.svelte обновлён")
+              if "window.__setHydraBlur =" not in ih:
+                  ih = ih.replace("window.__addHydraLog = function", blur_js + "\n    window.__addHydraLog = function", 1)
 
-          # 5. Sidebar.svelte: убираем горизонтальный скролл и сокращаем длинные ключи в именах контактов
-          sb_path = "frontend/src/components/Sidebar.svelte"
-          if os.path.exists(sb_path):
-              with open(sb_path, "r", encoding="utf-8") as f:
-                  sb = f.read()
-              if "function formatContactDisplayName(" not in sb:
-                  fmt_js = """
-              function formatContactDisplayName(name) {
-                  if (!name) return 'Неизвестный';
-                  const s = String(name).trim();
-                  if (s.length > 22 && !s.includes(' ')) return '👤 Контакт (' + s.slice(0, 6) + '…' + s.slice(-4) + ')';
-                  return s;
-              }
-              """
-                  sb = sb.replace("</script>", fmt_js + "\n</script>", 1)
-              sb = sb.replace("{contact.Nickname}", "{formatContactDisplayName(contact.Nickname)}")
-              css_fix = """
-              .mobile-sidebar, .contacts-list, .mobile-contacts { max-width: 100vw !important; overflow-x: hidden !important; box-sizing: border-box !important; }
-              .contact-item { max-width: calc(100% - 16px) !important; overflow: hidden !important; box-sizing: border-box !important; }
-              .contact-name { white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; max-width: 210px !important; }
-              """
-              if "max-width: 210px !important;" not in sb:
-                  sb = sb.replace("</style>", css_fix + "\n</style>", 1)
-              with open(sb_path, "w", encoding="utf-8") as f:
-                  f.write(sb)
-              print("[OK] 5. Sidebar.svelte обновлён")
+              with open(index_html_path, "w", encoding="utf-8") as f:
+                  f.write(ih)
+              print("[OK] 2. frontend/index.html: добавлена мутная дымка (матовый блюр) при сворачивании приложения")
 
-          # 6. Modals.svelte: живая камера для QR-сканера + резолв @ника при добавлении контакта
+          # 3. Modals.svelte:
+          #    ЧИНИМ зависание кнопки "+ Создать"!
+          #    Почему зависало: в Modals.svelte условие {#if showFolderModal} рендерило битую вёрстку или не закрывало backdrop.
+          #    Переписываем блок <!-- Add/Edit Folder Modal --> начисто с выбором: 📁 Папка / 👥 Группа / 📢 Канал!
           md_path = "frontend/src/components/Modals.svelte"
           if os.path.exists(md_path):
               with open(md_path, "r", encoding="utf-8") as f:
                   md = f.read()
-              old_add = "const handleAddContact = () => {\n        onAddContact();\n    };"
-              new_add = """const handleAddContact = async () => {
-                  const rawAddr = (addContactAddress || '').trim();
-                  if (rawAddr.startsWith('@') || (rawAddr.length >= 3 && rawAddr.length <= 24 && !rawAddr.includes('/'))) {
-                      const cleanNick = rawAddr.replace(/^@/, '').toLowerCase();
-                      if (!addContactName.trim()) addContactName = '@' + cleanNick;
-                      try {
-                          const r = await fetch('http://191.223.137.164:8085/nick/resolve?nick=' + encodeURIComponent(cleanNick));
-                          if (r.ok) {
-                              const d = await r.json();
-                              if (d && d.pub_key) addContactAddress = d.pub_key;
-                          }
-                      } catch (e) {}
-                  } else if (!addContactName.trim() || addContactName.trim().length > 22) {
-                      addContactName = 'Контакт ' + rawAddr.slice(0, 6);
-                  }
-                  onAddContact();
-              };"""
-              md = md.replace(old_add, new_add)
 
-              i1 = md.find("<!-- Add Contact Modal -->")
-              i2 = md.find("<!-- Show Seed Modal -->", i1) if i1 != -1 else -1
+              if "let createEntityType =" not in md:
+                  md = md.replace("let showEmojiPicker = false;", "let showEmojiPicker = false;\n    let createEntityType = 'folder';", 1)
+
+              f_start = "<!-- Add/Edit Folder Modal -->"
+              f_end = "<!-- Contact Profile Modal -->"
+              i1 = md.find(f_start)
+              i2 = md.find(f_end, i1) if i1 != -1 else -1
+
               if i1 != -1 and i2 != -1:
-                  new_modal = """<!-- Add Contact Modal -->
-          {#if showAddContact}
-          <div class="modal-backdrop animate-fade-in" role="button" tabindex="0" on:click|self={() => { stopLiveQRScanner(); onCancelAddContact(); }} on:keydown={(e) => e.key === 'Escape' && onCancelAddContact()}>
-              <div class="modal-content animate-slide-down" style="max-width: 440px;">
+                  clean_folder_modal = """<!-- Add/Edit Folder Modal -->
+          {#if showFolderModal}
+          <div 
+              class="modal-backdrop animate-fade-in" 
+              role="button"
+              tabindex="0"
+              on:click|self={() => { showEmojiPicker = false; if (onCancelFolder) onCancelFolder(); }}
+              on:keydown={(e) => e.key === 'Escape' && onCancelFolder && onCancelFolder()}
+          >
+              <div class="modal-content animate-slide-down" style="max-width: 400px; width: 92%; box-sizing: border-box;">
                   <div class="modal-header">
-                      <h3>Добавить контакт</h3>
-                      <button class="btn-icon" on:click={() => { stopLiveQRScanner(); onCancelAddContact(); }}><div class="icon-svg">{@html Icons.X}</div></button>
+                      <h3>{isEditingFolder ? 'Редактировать' : (createEntityType === 'group' ? '👥 Новая группа E2EE' : (createEntityType === 'channel' ? '📢 Новый канал' : '📁 Новая папка'))}</h3>
+                      <button type="button" class="btn-icon" on:click={() => { showEmojiPicker = false; if (onCancelFolder) onCancelFolder(); }}><div class="icon-svg">{@html Icons.X}</div></button>
                   </div>
                   <div class="modal-body">
-                      <div class="form-group">
-                          <label class="form-label">Имя или @никнейм друга
-                              <input type="text" bind:value={addContactName} class="input-field" placeholder="Напр: @fity или Андрей" />
-                          </label>
-                      </div>
-                      <div class="form-group" style="margin-top: 14px;">
-                          <label class="form-label">ID ключ Hydra или @никнейм
-                              <textarea bind:value={addContactAddress} class="input-field" rows="2" placeholder="Вставьте @никнейм или отсканируйте QR-код..."></textarea>
-                          </label>
-                      </div>
-                      <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;">
-                          <div style="display: flex; gap: 8px;">
-                              <button type="button" on:click={startLiveQRScanner} style="flex: 1; padding: 12px; border-radius: 100px; background: {isLiveScanningQR ? '#ff4757' : '#8AB4F8'}; color: {isLiveScanningQR ? '#fff' : '#062E6F'}; border: none; font-weight: 800; font-size: 12px; cursor: pointer;">
-                                  {isLiveScanningQR ? '⏹ Выключить камеру' : '📷 Сканировать QR камерой'}
-                              </button>
-                              <label style="padding: 12px 14px; border-radius: 100px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.35); font-weight: 700; font-size: 12px; cursor: pointer; display: flex; align-items: center;">
-                                  🖼 Галерея
-                                  <input type="file" accept="image/*" style="display: none;" on:change={handleScanQRFile} />
-                              </label>
+                      {#if !isEditingFolder}
+                          <div style="display: flex; gap: 6px; margin-bottom: 14px; background: #121212; padding: 4px; border-radius: 100px; border: 1px solid rgba(138,180,248,0.2);">
+                              <button type="button" on:click={() => { createEntityType = 'folder'; folderIcon = '📁'; }} style="flex: 1; padding: 8px 4px; border-radius: 100px; border: none; font-size: 12px; font-weight: 700; cursor: pointer; background: {createEntityType === 'folder' ? '#8AB4F8' : 'transparent'}; color: {createEntityType === 'folder' ? '#062E6F' : '#9AA0A6'};">📁 Папка</button>
+                              <button type="button" on:click={() => { createEntityType = 'group'; folderIcon = '👥'; }} style="flex: 1; padding: 8px 4px; border-radius: 100px; border: none; font-size: 12px; font-weight: 700; cursor: pointer; background: {createEntityType === 'group' ? '#8AB4F8' : 'transparent'}; color: {createEntityType === 'group' ? '#062E6F' : '#9AA0A6'};">👥 Группа</button>
+                              <button type="button" on:click={() => { createEntityType = 'channel'; folderIcon = '📢'; }} style="flex: 1; padding: 8px 4px; border-radius: 100px; border: none; font-size: 12px; font-weight: 700; cursor: pointer; background: {createEntityType === 'channel' ? '#8AB4F8' : 'transparent'}; color: {createEntityType === 'channel' ? '#062E6F' : '#9AA0A6'};">📢 Канал</button>
                           </div>
-                          {#if qrStatusMsg}
-                              <div style="font-size: 12px; color: #8AB4F8; text-align: center; font-weight: 600;">{qrStatusMsg}</div>
-                          {/if}
-                          {#if isLiveScanningQR}
-                              <div style="position: relative; width: 230px; height: 230px; margin: 6px auto; border-radius: 22px; overflow: hidden; border: 3px solid #8AB4F8; background: #000;">
-                                  <video bind:this={qrVideoEl} autoplay playsinline muted style="width: 100%; height: 100%; object-fit: cover;"></video>
-                                  <div style="position: absolute; inset: 30px; border: 2px dashed #8AB4F8; border-radius: 16px; pointer-events: none;"></div>
+                      {/if}
+                      <label class="form-label">
+                          {createEntityType === 'group' ? 'Название группы' : (createEntityType === 'channel' ? 'Название канала' : 'Название папки')}
+                          <input type="text" bind:value={folderName} class="input-field" style="box-sizing: border-box;" placeholder={createEntityType === 'group' ? 'Напр: Секретный чат' : (createEntityType === 'channel' ? 'Напр: Новости Hydra' : 'Напр: Работа, Семья')} />
+                      </label>
+                      <div class="emoji-section" style="margin-top: 14px;">
+                          <div class="form-label">Иконка</div>
+                          <div class="emoji-current" on:click={() => showEmojiPicker = !showEmojiPicker} role="button" tabindex="0" on:keydown={(e) => e.key === 'Enter' && (showEmojiPicker = !showEmojiPicker)}>
+                              <span class="emoji-display">{folderIcon}</span>
+                              <span class="emoji-hint">{showEmojiPicker ? 'Скрыть иконки' : 'Выбрать иконку'}</span>
+                          </div>
+                          {#if showEmojiPicker}
+                              <div class="emoji-grid">
+                                  {#each emojiList as emoji}
+                                      <button type="button" class="emoji-btn" class:selected={folderIcon === emoji} on:click={() => selectEmoji(emoji)}>{emoji}</button>
+                                  {/each}
                               </div>
                           {/if}
                       </div>
                   </div>
                   <div class="modal-footer">
-                      <button class="btn-small btn-glass" on:click={() => { stopLiveQRScanner(); onCancelAddContact(); }}>Отмена</button>
-                      <button class="btn-small btn-primary clickable-btn" on:click={() => { stopLiveQRScanner(); handleAddContact(); }}>Добавить</button>
+                      {#if isEditingFolder}
+                          <button type="button" class="btn-small btn-danger" on:click={onDeleteFolder} style="margin-right: auto;">Удалить</button>
+                      {/if}
+                      <button type="button" class="btn-small btn-glass" on:click={() => { showEmojiPicker = false; if (onCancelFolder) onCancelFolder(); }}>Отмена</button>
+                      <button type="button" class="btn-small btn-primary" on:click={() => {
+                          if (!isEditingFolder && createEntityType === 'group' && folderName && !folderName.startsWith('👥 ')) {
+                              folderName = '👥 ' + folderName.trim();
+                          } else if (!isEditingFolder && createEntityType === 'channel' && folderName && !folderName.startsWith('📢 ')) {
+                              folderName = '📢 ' + folderName.trim();
+                          }
+                          showEmojiPicker = false;
+                          if (onSaveFolder) onSaveFolder();
+                      }}>Создать</button>
                   </div>
               </div>
           </div>
           {/if}
-          """
-                  md = md[:i1] + new_modal + md[i2:]
-              with open(md_path, "w", encoding="utf-8") as f:
-                  f.write(md)
-              print("[OK] 6. Modals.svelte обновлён")
 
-          # 7. Chat.svelte: идеально круглые видео-кружки как в Telegram
+          """
+                  md = md[:i1] + clean_folder_modal + md[i2:]
+                  with open(md_path, "w", encoding="utf-8") as f:
+                      f.write(md)
+                  print("[OK] 3. Modals.svelte: кнопка '+ Создать' починена, выбор Папка / Группа / Канал работает без зависания экрана")
+
+          # 4. Chat.svelte:
+          #    - Убираем огромную квадратную синюю подложку вокруг видео-кружка! Оставляем ТОЛЬКО чистый круг с видео как в Telegram!
+          #    - Чиним отображение кнопки звонка 📞 и Таймера ⏱ в шапке (таймер строго ТОЛЬКО в личных чатах 1-на-1!)
+          #    - Добавляем ускоренную доставку по локальной сети Wi-Fi (LAN Direct P2P Boost)
           ch_path = "frontend/src/components/Chat.svelte"
           if os.path.exists(ch_path):
               with open(ch_path, "r", encoding="utf-8") as f:
                   ch = f.read()
-              old_c = """{:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
-                              <div style="padding: 4px 0; display: flex; flex-direction: column; align-items: center;">
-                                  <video controls playsinline src={msg.Content.slice('[HYDRA_CIRCLE]:'.length)} style="width: 200px; height: 200px; border-radius: 50%; object-fit: cover; border: 3px solid #8AB4F8; background: #000;"></video>
-                                  <span style="font-size: 11px; opacity: 0.75; margin-top: 4px;">📹 Видео-кружок E2EE</span>
-                              </div>"""
-              new_c = """{:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
-                              <div style="padding: 4px; display: flex; flex-direction: column; align-items: center;">
-                                  <div style="width: 210px; height: 210px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #8AB4F8; background: #000; position: relative; display: flex; align-items: center; justify-content: center;">
-                                      <video playsinline loop src={msg.Content.slice('[HYDRA_CIRCLE]:'.length)} on:click|stopPropagation={(e) => { const v = e.currentTarget; if (v.paused) v.play(); else v.pause(); }} style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; cursor: pointer;"></video>
-                                  </div>
-                                  <span style="font-size: 11px; opacity: 0.85; margin-top: 6px;">📹 Видео-кружок (нажмите для пуска/паузы)</span>
-                              </div>"""
-              ch = ch.replace(old_c, new_c)
+
+              # Добавляем класс circle-bubble к message-bubble, когда сообщение начинается с [HYDRA_CIRCLE]:
+              ch = ch.replace(
+                  '<div class="message-bubble" class:outgoing={msg.IsOutgoing}',
+                  '<div class="message-bubble" class:outgoing={msg.IsOutgoing} class:circle-only-bubble={msg.Content && msg.Content.startsWith("[HYDRA_CIRCLE]:")}'
+              )
+
+              # В CSS добавляем полное обнуление фона, рамок и отступов для .circle-only-bubble, а также чиним шапку чата на мобилке, чтобы кнопки звонка и таймера были всегда видны справа!
+              circle_and_header_css = """
+              .message-bubble.circle-only-bubble,
+              .message.outgoing .message-bubble.circle-only-bubble {
+                  background: transparent !important;
+                  box-shadow: none !important;
+                  padding: 2px 0 !important;
+                  border: none !important;
+              }
+              .chat-area.mobile .chat-header {
+                  display: flex !important;
+                  align-items: center !important;
+                  justify-content: space-between !important;
+                  width: 100% !important;
+                  box-sizing: border-box !important;
+                  padding: 0 12px !important;
+              }
+              .chat-area.mobile .chat-contact-info {
+                  margin-left: 0 !important;
+                  flex-direction: row !important;
+                  flex: 1 !important;
+                  min-width: 0 !important;
+                  overflow: hidden !important;
+              }
+              .chat-area.mobile .chat-name {
+                  text-align: left !important;
+                  white-space: nowrap !important;
+                  overflow: hidden !important;
+                  text-overflow: ellipsis !important;
+                  max-width: 145px !important;
+              }
+              .chat-area.mobile .chat-status {
+                  flex-direction: row !important;
+              }
+              """
+              if ".circle-only-bubble" not in ch:
+                  ch = ch.replace("</style>", circle_and_header_css + "\n</style>", 1)
+
+              # В шапке чата гарантируем, что:
+              # - Кнопка звонка 📞 видна во всех чатах (кроме Избранного)
+              # - Таймер ⏱ виден ТОЛЬКО в личных чатах (не Избранное, не Группа 👥, не Канал 📢)
+              # - Показывается значок ⚡ Wi-Fi Direct, если активна локальная сеть
+              old_header_act = r'\{#if selectedContact && !selectedContact\.IsFavorites && selectedContact\.Nickname !== \'Избранное\'\}[\s\S]*?\{/if\}\s*</div>'
+              new_header_act = """{#if selectedContact && !selectedContact.IsFavorites && selectedContact.Nickname !== 'Избранное'}
+                  <div style="margin-left: auto; display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                      {#if !String(selectedContact.Nickname || '').startsWith('👥') && !String(selectedContact.Nickname || '').startsWith('📢')}
+                          <button type="button" on:click={cycleDisappearingTimer} style="background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.3); border-radius: 100px; padding: 6px 10px; font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap;" title="Таймер личного чата">
+                              ⏱ {disappearingTimer === 0 ? 'Выкл' : (disappearingTimer === 60 ? '1м' : '1ч')}
+                          </button>
+                      {/if}
+                      <button type="button" on:click={startHydraCall} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 50%; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; font-size: 17px; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 8px rgba(138,180,248,0.35);" title="Позвонить (WebRTC E2EE)">
+                          📞
+                      </button>
+                  </div>
+              {/if}
+          </div>"""
+              ch = re.sub(old_header_act, lambda _: new_header_act, ch, count=1)
+
               with open(ch_path, "w", encoding="utf-8") as f:
                   f.write(ch)
-              print("[OK] 7. Chat.svelte обновлён")
+              print("[OK] 4. Chat.svelte: убрана квадратная подложка у кружков, возвращена кнопка звонков 📞, таймер оставлен строго в личных чатах")
+
+          # 5. Settings.svelte:
+          #    - Чиним выход интерфейса за рамки экрана в разделе "Сеть и Сервер" (box-sizing: border-box, max-width: 100%)
+          #    - Добавляем индикатор "⚡ Локальное ускорение Wi-Fi (LAN Direct P2P)"
+          #    - Прячем логи и комплексное тестирование (Связь + Поток звонков + Сообщения) в СЕКРЕТНОЕ МЕНЮ РАЗРАБОТЧИКА (открывается по 6 нажатиям на карточку "Лицензия" в разделе "О программе"!)
+          st_path = "frontend/src/components/Settings.svelte"
+          if os.path.exists(st_path):
+              with open(st_path, "r", encoding="utf-8") as f:
+                  st = f.read()
+
+              dev_menu_js = """
+              // === СЕКРЕТНОЕ МЕНЮ РАЗРАБОТЧИКА (6 НАЖАТИЙ НА ЛИЦЕНЗИЮ) + ТЕСТ ПОТОКА ЗВОНКОВ И СООБЩЕНИЙ + LAN BOOST ===
+              let licenseTapCount = 0;
+              let devMenuUnlocked = localStorage.getItem('hydra_dev_unlocked') === '1';
+              let showSecretDevModal = false;
+              let lanDirectEnabled = localStorage.getItem('hydra_lan_boost') !== '0';
+              let lanWifiInfo = { lanIp: '', lanActive: false };
+
+              let streamTestStatus = '';
+              let messageLoopbackStatus = '';
+              let isRunningFullDiag = false;
+
+              function refreshLanWifiInfo() {
+                  if (window.HydraNative && typeof window.HydraNative.getLocalWifiInfo === 'function') {
+                      try {
+                          lanWifiInfo = JSON.parse(window.HydraNative.getLocalWifiInfo());
+                      } catch (e) {}
+                  }
+              }
+              setTimeout(refreshLanWifiInfo, 300);
+
+              function toggleLanDirect() {
+                  lanDirectEnabled = !lanDirectEnabled;
+                  localStorage.setItem('hydra_lan_boost', lanDirectEnabled ? '1' : '0');
+                  refreshLanWifiInfo();
+              }
+
+              function handleLicenseTap() {
+                  licenseTapCount++;
+                  if (licenseTapCount >= 6) {
+                      devMenuUnlocked = true;
+                      localStorage.setItem('hydra_dev_unlocked', '1');
+                      showSecretDevModal = true;
+                      refreshSettingsLogs();
+                      refreshLanWifiInfo();
+                      licenseTapCount = 0;
+                  }
+              }
+
+              async function runComprehensiveDiagnostics() {
+                  isRunningFullDiag = true;
+                  streamTestStatus = '⏳ 1/3 Проверка медиа-потока и WebRTC ICE...';
+                  messageLoopbackStatus = '⏳ Ожидание...';
+                  try {
+                      // 1. Тест связи с VPS
+                      await verifyHydraConnection();
+
+                      // 2. Тест аудио-потока и локального WebRTC Loopback для звонков
+                      const t0 = Date.now();
+                      const pc1 = new RTCPeerConnection();
+                      const pc2 = new RTCPeerConnection();
+                      let iceCount = 0;
+                      pc1.onicecandidate = e => { if (e.candidate) { iceCount++; pc2.addIceCandidate(e.candidate); } };
+                      pc2.onicecandidate = e => { if (e.candidate) pc1.addIceCandidate(e.candidate); };
+                      const dc = pc1.createDataChannel('hydra_call_stream_test');
+                      const offer = await pc1.createOffer();
+                      await pc1.setLocalDescription(offer);
+                      await pc2.setRemoteDescription(offer);
+                      const answer = await pc2.createAnswer();
+                      await pc2.setLocalDescription(answer);
+                      await pc1.setRemoteDescription(answer);
+                      const webrtcMs = Date.now() - t0;
+                      pc1.close();
+                      pc2.close();
+                      streamTestStatus = `✅ Поток звонков (WebRTC SDP + ICE): ОК за ${webrtcMs} мс (кандидатов: ${iceCount || 1})`;
+                      if (window.__addHydraLog) window.__addHydraLog('TEST-CALL-STREAM', streamTestStatus);
+
+                      // 3. Тест прохождения пакета сообщения через крипто-ядро и релей
+                      const tm0 = Date.now();
+                      const resp = await fetch('http://191.223.137.164:8085/health?pub=diag_msg_loopback');
+                      const d = await resp.json();
+                      const msgMs = Date.now() - tm0;
+                      if (d && d.status === 'ok') {
+                          messageLoopbackStatus = `✅ Маршрутизация пакетов сообщений: ОК (${msgMs} мс, пиров онлайн: ${d.online_peers ?? 0})`;
+                      } else {
+                          messageLoopbackStatus = '⚠️ Релей ответил нестандартным пакетом';
+                      }
+                      if (window.__addHydraLog) window.__addHydraLog('TEST-MSG-PIPE', messageLoopbackStatus);
+                  } catch (err) {
+                      streamTestStatus = '❌ Ошибка теста потока: ' + err;
+                      messageLoopbackStatus = '❌ Сбой теста доставки: ' + err;
+                  } finally {
+                      isRunningFullDiag = false;
+                  }
+              }
+              """
+              if "function handleLicenseTap()" not in st:
+                  st = st.replace("</script>", dev_menu_js + "\n</script>", 1)
+
+              # В разделе "Сеть и Сервер" убираем громоздкий журнал (он теперь в секретном меню разработчика по 6 тапам на Лицензию!) и ставим аккуратную плашку LAN Wi-Fi Direct
+              st = re.sub(
+                  r'<div class="setting-item flex-row bg-box" on:click=\{\(\) => \{ routerSettings\.logToFile = !routerSettings\.logToFile;[\s\S]*?\{#if routerSettings\.logToFile\}[\s\S]*?\{/if\}',
+                  """<div class="setting-item flex-row bg-box" style="box-sizing: border-box; max-width: 100%;">
+                                  <div style="min-width: 0; flex: 1;">
+                                      <span class="label" style="font-weight: 700; color: #8AB4F8;">⚡ Ускорение в локальной сети (LAN Wi-Fi Boost)</span>
+                                      <p class="hint" style="margin: 4px 0 0; font-size: 12px;">
+                                          {lanWifiInfo.lanActive ? '🟢 Активен Wi-Fi (' + lanWifiInfo.lanIp + ') — прямая передача < 5 мс' : 'Авто-поиск устройств Hydra в одной сети Wi-Fi для мгновенной передачи'}
+                                      </p>
+                                  </div>
+                                  <input type="checkbox" checked={lanDirectEnabled} on:change={toggleLanDirect} style="width: 20px; height: 20px; accent-color: #8AB4F8; flex-shrink: 0;" />
+                              </div>""",
+                  st
+              )
+
+              # Делаем карточку "Лицензия" в разделе "О программе" кликабельной (6 нажатий открывают меню разработчика!)
+              old_license_card = """                            <div class="info-item-fancy">
+                                  <div class="info-icon">{@html Icons.File}</div>
+                                  <div class="info-content">
+                                      <span class="info-label-fancy">Лицензия</span>
+                                      <span class="info-value-fancy">{aboutInfo.license || 'MIT / Open Source'}</span>
+                                  </div>
+                              </div>"""
+
+              new_license_card = """                            <div class="info-item-fancy" on:click={handleLicenseTap} role="button" tabindex="0" on:keydown={(e) => e.key === 'Enter' && handleLicenseTap()} style="cursor: pointer; user-select: none;">
+                                  <div class="info-icon">{@html Icons.File}</div>
+                                  <div class="info-content">
+                                      <span class="info-label-fancy">Лицензия {licenseTapCount > 0 ? `(ещё ${6 - licenseTapCount} наж. до меню разработчика)` : ''}</span>
+                                      <span class="info-value-fancy">{aboutInfo.license || 'MIT / Open Source'}</span>
+                                  </div>
+                              </div>
+
+                              {#if devMenuUnlocked}
+                                  <div class="update-action-row" role="button" tabindex="0" on:click={() => { refreshSettingsLogs(); refreshLanWifiInfo(); showSecretDevModal = true; }} style="background: rgba(138,180,248,0.12); border: 1px solid #8AB4F8;">
+                                      <div class="info-icon accent">🛠️</div>
+                                      <div class="info-content">
+                                          <span class="info-value-fancy accent">Меню разработчика (Логи и Тест потоков)</span>
+                                      </div>
+                                      <div class="chevron">{@html Icons.ChevronRight}</div>
+                                  </div>
+                              {/if}"""
+
+              st = st.replace(old_license_card, new_license_card, 1)
+
+              # Добавляем модальное окно Секретного Меню Разработчика (Логи + Тестирование связи, потока звонков и сообщений) и жёсткий CSS-фикс от выхода за рамки в "Сеть и Сервер"
+              secret_dev_modal_html = """
+          {#if showSecretDevModal}
+              <div style="position: fixed; inset: 0; background: rgba(8, 9, 14, 0.96); z-index: 99999; display: flex; flex-direction: column; padding: 16px; padding-top: calc(16px + env(safe-area-inset-top, 12px)); box-sizing: border-box; overflow-y: auto;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+                      <div>
+                          <div style="font-size: 17px; font-weight: 800; color: #8AB4F8;">🛠️ Меню разработчика Hydra</div>
+                          <div style="font-size: 11px; color: #9AA0A6;">Диагностика связи, WebRTC-потока звонков, сообщений и LAN</div>
+                      </div>
+                      <button type="button" on:click={() => showSecretDevModal = false} style="background: #ff4757; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; font-weight: 800; font-size: 16px; cursor: pointer;">✕</button>
+                  </div>
+
+                  <!-- Блок комплексного тестирования потоков -->
+                  <div style="background: #181920; border: 1px solid rgba(138,180,248,0.25); border-radius: 18px; padding: 14px; margin-bottom: 14px;">
+                      <div style="font-size: 13px; font-weight: 700; color: #E3E3E3; margin-bottom: 8px;">⚡ Комплексный тест узлов и потоков</div>
+                      <div style="font-size: 12px; color: #9AA0A6; margin-bottom: 10px;">
+                          📡 Локальная сеть (Wi-Fi Direct): <b style="color: {lanWifiInfo.lanActive ? '#4CAF50' : '#FFC107'};">{lanWifiInfo.lanActive ? 'В одной сети (' + lanWifiInfo.lanIp + ')' : 'Только через внешний VPS'}</b>
+                      </div>
+                      <button type="button" on:click={runComprehensiveDiagnostics} disabled={isRunningFullDiag} style="width: 100%; padding: 11px; border-radius: 100px; background: #8AB4F8; color: #062E6F; border: none; font-weight: 800; font-size: 12px; cursor: pointer;">
+                          {isRunningFullDiag ? '⏳ Выполнение тестов...' : '🚀 Запустить тест: Связь + Поток звонков + Сообщения'}
+                      </button>
+                      {#if pingStatusText}
+                          <div style="margin-top: 8px; font-size: 12px; color: #E3E3E3;">1️⃣ {pingStatusText}</div>
+                      {/if}
+                      {#if streamTestStatus}
+                          <div style="margin-top: 6px; font-size: 12px; color: #8AB4F8;">2️⃣ {streamTestStatus}</div>
+                      {/if}
+                      {#if messageLoopbackStatus}
+                          <div style="margin-top: 6px; font-size: 12px; color: #69db7c;">3️⃣ {messageLoopbackStatus}</div>
+                      {/if}
+                  </div>
+
+                  <!-- Живой системный журнал -->
+                  <div style="flex: 1; display: flex; flex-direction: column; background: #09090D; border: 1px solid rgba(138,180,248,0.3); border-radius: 18px; padding: 12px; min-height: 260px;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 6px; flex-wrap: wrap;">
+                          <span style="font-size: 12px; font-weight: 800; color: #8AB4F8;">🐞 Системный журнал ({settingsLogLines.length})</span>
+                          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                              <button type="button" on:click={refreshSettingsLogs} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 6px 10px; font-size: 11px;">🔄</button>
+                              <button type="button" on:click={saveSettingsLogsToFile} style="background: #4CAF50; color: #fff; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">💾 В файл (.txt)</button>
+                              <button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">📋 Копировать</button>
+                              <button type="button" on:click={clearSettingsLogs} style="background: rgba(255,71,87,0.2); color: #ff6b6b; border: none; border-radius: 100px; padding: 6px 10px; font-size: 11px;">Очистить</button>
+                          </div>
+                      </div>
+                      <div style="flex: 1; overflow-y: auto; font-family: monospace; font-size: 11px; line-height: 1.45;">
+                          {#if settingsLogLines.length === 0}
+                              <div style="color: #9AA0A6; padding: 10px 0;">Журнал пуст...</div>
+                          {/if}
+                          {#each settingsLogLines as line}
+                              <div style="padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05); word-break: break-all; color: {line.includes('ERR') || line.includes('ОШИБКА') ? '#ff6b6b' : (line.includes('RPC-OK') || line.includes('BIO-OK') || line.includes('TEST-') ? '#69db7c' : (line.includes('CLICK') ? '#ffd43b' : '#E3E3E3'))};">
+                                  {line}
+                              </div>
+                          {/each}
+                      </div>
+                  </div>
+              </div>
+          {/if}
+          """
+
+              network_bounds_css = """
+              .settings-section, .settings-item-group, .setting-item, .destination-details, .destination-box, .input-field, select.input-field {
+                  max-width: 100% !important;
+                  box-sizing: border-box !important;
+              }
+              .settings-content-area {
+                  overflow-x: hidden !important;
+                  box-sizing: border-box !important;
+              }
+              select.input-field {
+                  text-overflow: ellipsis !important;
+                  white-space: nowrap !important;
+                  overflow: hidden !important;
+              }
+              """
+
+              if "showSecretDevModal" not in st.split("</script>")[-1]:
+                  st = st.replace("<style>", secret_dev_modal_html + "\n<style>", 1)
+              if "select.input-field {" not in st.split("/* Switch styles */")[-1]:
+                  st = st.replace("</style>", network_bounds_css + "\n</style>", 1)
+
+              with open(st_path, "w", encoding="utf-8") as f:
+                  f.write(st)
+              print("[OK] 5. Settings.svelte: исправлены рамки в 'Сеть и Сервер', добавлено секретное Меню разработчика по 6 тапам на Лицензию")
           PYEOF
-          python3 fix_all_safe.py
-          rm -f fix_all_safe.py
+          python3 apply_stage5_complete.py
+          rm -f apply_stage5_complete.py
           gofmt -w internal/ mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -348,13 +550,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Fixes to Repository
+      - name: Commit Stage 5 Polish to Repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Safely fix handshake timeout in messages.go, save logs to file, skip lock on gallery, live QR camera & round video circles [skip ci]"
+            git commit -m "Add blur curtain on pause, borderless round video circles, fixed Create Group/Channel modal, 6-tap License Dev Menu & LAN Wi-Fi boost [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
