@@ -38,596 +38,20 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply Hardware Biometrics, Native FileChooser & Clean Auth/Settings Without Regex
+      - name: Apply Live Camera QR/Stories, Instant onPause Lock, Startup Visualizer & Settings Logger
         run: |
-          cat << 'PYEOF' > apply_hardware_clean.py
+          cat << 'PYEOF' > apply_stage5_fixes.py
           import os, re
 
-          # 1. AndroidManifest.xml: добавляем разрешения USE_BIOMETRIC и USE_FINGERPRINT
-          manifest_path = "android/app/src/main/AndroidManifest.xml"
-          if os.path.exists(manifest_path):
-              with open(manifest_path, "r", encoding="utf-8") as f:
-                  mf = f.read()
-              bio_perms = """    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
-              <uses-permission android:name="android.permission.USE_FINGERPRINT" />
-          """
-              if "android.permission.USE_BIOMETRIC" not in mf:
-                  mf = mf.replace('<uses-permission android:name="android.permission.INTERNET" />', bio_perms + '    <uses-permission android:name="android.permission.INTERNET" />', 1)
-                  with open(manifest_path, "w", encoding="utf-8") as f:
-                      f.write(mf)
-                  print("[OK] AndroidManifest.xml: добавлены USE_BIOMETRIC и USE_FINGERPRINT")
-
-          # 2. MainActivity.kt: аппаратный BiometricPrompt + onShowFileChooser для Сторис и QR + системный логгер
+          # 1. MainActivity.kt:
+          #    - В onPause() вызываем мгновенную блокировку приложения window.__lockHydraNow()!
+          #    - В onResume() обновляем статус разрешений и автоматически запрашиваем сканер отпечатка пальца!
           kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
-          clean_kt = '''package com.teleghost.app
+          if os.path.exists(kt_path):
+              with open(kt_path, "r", encoding="utf-8") as f:
+                  kt = f.read()
 
-          import android.annotation.SuppressLint
-          import android.app.Activity
-          import android.content.Context
-          import android.content.Intent
-          import android.content.pm.PackageManager
-          import android.hardware.biometrics.BiometricPrompt
-          import android.net.Uri
-          import android.os.Build
-          import android.os.Bundle
-          import android.os.CancellationSignal
-          import android.view.View
-          import android.view.WindowManager
-          import android.webkit.*
-          import androidx.activity.result.contract.ActivityResultContracts
-          import androidx.appcompat.app.AppCompatActivity
-          import java.io.File
-          import java.io.FileOutputStream
-          import java.util.UUID
-          import org.json.JSONObject
-
-          class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
-
-              private lateinit var webView: WebView
-              private var webViewFileCallback: ValueCallback<Array<Uri>>? = null
-
-              companion object {
-                  private const val TAG = "Hydra"
-                  private const val SERVER_URL = "http://127.0.0.1:8080"
-                  private const val HEALTH_URL = "$SERVER_URL/health"
-                  private const val MAX_RETRIES = 30
-                  private const val RETRY_DELAY_MS = 1000L
-                  private const val NOTIFICATION_CHANNEL_ID = "teleghost_messages"
-                  private const val PREFS_NAME = "hydra_biometric_prefs"
-              }
-
-              fun pushNativeLog(tag: String, msg: String) {
-                  android.util.Log.i(TAG, "[$tag] $msg")
-                  runOnUiThread {
-                      if (::webView.isInitialized) {
-                          val safeTag = JSONObject.quote(tag)
-                          val safeMsg = JSONObject.quote(msg)
-                          webView.evaluateJavascript("if(window.__addHydraLog) window.__addHydraLog($safeTag, $safeMsg);", null)
-                      }
-                  }
-              }
-
-              inner class HydraNativeBridge {
-
-                  @JavascriptInterface
-                  fun checkSystemStatus(profileId: String): String {
-                      val cam = if (Build.VERSION.SDK_INT >= 23) checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED else true
-                      val mic = if (Build.VERSION.SDK_INT >= 23) checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED else true
-                      val notif = if (Build.VERSION.SDK_INT >= 33) checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED else true
-                      val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                      val hasBioBound = prefs.contains("bio_pin_$profileId") || prefs.contains("bio_pin_default")
-                      val obj = JSONObject()
-                      obj.put("camera", cam)
-                      obj.put("microphone", mic)
-                      obj.put("notifications", notif)
-                      obj.put("biometricBound", hasBioBound)
-                      obj.put("sdkInt", Build.VERSION.SDK_INT)
-                      obj.put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
-                      pushNativeLog("SYS-CHECK", "Устройство ${Build.MODEL} (SDK ${Build.VERSION.SDK_INT}): CAM=$cam, MIC=$mic, BIO_BOUND=$hasBioBound (profile=$profileId)")
-                      return obj.toString()
-                  }
-
-                  @JavascriptInterface
-                  fun requestMissingPermissions() {
-                      runOnUiThread {
-                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                              val needed = mutableListOf<String>()
-                              if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                                  needed.add(android.Manifest.permission.RECORD_AUDIO)
-                              }
-                              if (checkSelfPermission(android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                                  needed.add(android.Manifest.permission.CAMERA)
-                              }
-                              if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                                  needed.add(android.Manifest.permission.POST_NOTIFICATIONS)
-                              }
-                              if (needed.isNotEmpty()) {
-                                  pushNativeLog("ANDROID-PERM", "Запрос разрешений: ${needed.joinToString()}")
-                                  requestPermissions(needed.toTypedArray(), 101)
-                              } else {
-                                  pushNativeLog("ANDROID-PERM", "Все разрешения уже выданы")
-                              }
-                          }
-                      }
-                  }
-
-                  @JavascriptInterface
-                  fun enrollBiometric(profileId: String, pin: String) {
-                      runOnUiThread {
-                          pushNativeLog("BIO-HW", "Запуск аппаратного сканера отпечатка для ПРИВЯЗКИ (profile=$profileId)...")
-                          if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-                              pushNativeLog("BIO-ERR", "Android SDK < 28, BiometricPrompt недоступен")
-                              webView.evaluateJavascript("if(window.__onBiometricEnrollResult) window.__onBiometricEnrollResult(false, 'Версия Android ниже 9.0');", null)
-                              return@runOnUiThread
-                          }
-                          try {
-                              val cancelSignal = CancellationSignal()
-                              val prompt = BiometricPrompt.Builder(this@MainActivity)
-                                  .setTitle("Привязка отпечатка пальца")
-                                  .setSubtitle("Приложите палец к сканеру для подтверждения")
-                                  .setDescription("Ваш ПИН-код будет зашифрован и доступен только по вашему отпечатку пальца.")
-                                  .setNegativeButton("Отмена", mainExecutor) { _, _ ->
-                                      pushNativeLog("BIO-HW", "Пользователь отменил привязку отпечатка")
-                                      webView.evaluateJavascript("if(window.__onBiometricEnrollResult) window.__onBiometricEnrollResult(false, 'Отменено пользователем');", null)
-                                  }
-                                  .build()
-
-                              prompt.authenticate(cancelSignal, mainExecutor, object : BiometricPrompt.AuthenticationCallback() {
-                                  override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) {
-                                      super.onAuthenticationSucceeded(result)
-                                      val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                                      prefs.edit()
-                                          .putString("bio_pin_$profileId", pin)
-                                          .putString("bio_pin_default", pin)
-                                          .apply()
-                                      pushNativeLog("BIO-OK", "Аппаратный отпечаток УСПЕШНО считан и привязан к профилю $profileId!")
-                                      webView.evaluateJavascript("if(window.__onBiometricEnrollResult) window.__onBiometricEnrollResult(true, 'Отпечаток успешно подтверждён и привязан!');", null)
-                                  }
-
-                                  override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
-                                      super.onAuthenticationError(errorCode, errString)
-                                      pushNativeLog("BIO-ERR", "Ошибка сканера при привязке (код $errorCode): $errString")
-                                      val safeErr = JSONObject.quote(errString?.toString() ?: "Ошибка сканера")
-                                      webView.evaluateJavascript("if(window.__onBiometricEnrollResult) window.__onBiometricEnrollResult(false, $safeErr);", null)
-                                  }
-
-                                  override fun onAuthenticationFailed() {
-                                      super.onAuthenticationFailed()
-                                      pushNativeLog("BIO-FAIL", "Отпечаток не распознан датчиком (попробуйте ещё раз)")
-                                  }
-                              })
-                          } catch (e: Exception) {
-                              pushNativeLog("BIO-EXCEPTION", "Исключение BiometricPrompt: ${e.message}")
-                              val safeErr = JSONObject.quote(e.message ?: "Ошибка биометрии")
-                              webView.evaluateJavascript("if(window.__onBiometricEnrollResult) window.__onBiometricEnrollResult(false, $safeErr);", null)
-                          }
-                      }
-                  }
-
-                  @JavascriptInterface
-                  fun authenticateBiometric(profileId: String) {
-                      runOnUiThread {
-                          val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                          val savedPin = prefs.getString("bio_pin_$profileId", null) ?: prefs.getString("bio_pin_default", null)
-                          if (savedPin.isNullOrEmpty()) {
-                              pushNativeLog("BIO-AUTH", "Для профиля $profileId отпечаток ещё не привязан")
-                              webView.evaluateJavascript("if(window.__onBiometricAuthResult) window.__onBiometricAuthResult(false, '', 'Сначала привяжите отпечаток пальца в Настройки -> Приватность');", null)
-                              return@runOnUiThread
-                          }
-                          if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-                              pushNativeLog("BIO-ERR", "Android SDK < 28")
-                              return@runOnUiThread
-                          }
-                          pushNativeLog("BIO-HW", "Запрос аппаратного сканера отпечатка для ВХОДА в профиль $profileId...")
-                          try {
-                              val cancelSignal = CancellationSignal()
-                              val prompt = BiometricPrompt.Builder(this@MainActivity)
-                                  .setTitle("Вход в Hydra")
-                                  .setSubtitle("Приложите палец к сканеру отпечатков")
-                                  .setNegativeButton("Ввести ПИН-код вручную", mainExecutor) { _, _ ->
-                                      pushNativeLog("BIO-HW", "Выбран ручной ввод ПИН-кода")
-                                      webView.evaluateJavascript("if(window.__onBiometricAuthResult) window.__onBiometricAuthResult(false, '', 'Выбран ручной ввод ПИН-кода');", null)
-                                  }
-                                  .build()
-
-                              prompt.authenticate(cancelSignal, mainExecutor, object : BiometricPrompt.AuthenticationCallback() {
-                                  override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) {
-                                      super.onAuthenticationSucceeded(result)
-                                      pushNativeLog("BIO-OK", "Отпечаток пальца подтверждён аппаратно! Вход разрешён.")
-                                      val safePin = JSONObject.quote(savedPin)
-                                      webView.evaluateJavascript("if(window.__onBiometricAuthResult) window.__onBiometricAuthResult(true, $safePin, 'OK');", null)
-                                  }
-
-                                  override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
-                                      super.onAuthenticationError(errorCode, errString)
-                                      pushNativeLog("BIO-ERR", "Отмена/ошибка биометрии при входе (код $errorCode): $errString")
-                                      val safeErr = JSONObject.quote(errString?.toString() ?: "Отменено")
-                                      webView.evaluateJavascript("if(window.__onBiometricAuthResult) window.__onBiometricAuthResult(false, '', $safeErr);", null)
-                                  }
-
-                                  override fun onAuthenticationFailed() {
-                                      super.onAuthenticationFailed()
-                                      pushNativeLog("BIO-FAIL", "Неверный отпечаток пальца!")
-                                  }
-                              })
-                          } catch (e: Exception) {
-                              pushNativeLog("BIO-EXCEPTION", "Ошибка вызова сканера: ${e.message}")
-                          }
-                      }
-                  }
-              }
-
-              private fun createNotificationChannel() {
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                      val name = "Messages"
-                      val descriptionText = "New messages from contacts"
-                      val importance = android.app.NotificationManager.IMPORTANCE_DEFAULT
-                      val channel = android.app.NotificationChannel(NOTIFICATION_CHANNEL_ID, name, importance).apply {
-                          description = descriptionText
-                      }
-                      val notificationManager: android.app.NotificationManager =
-                          getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-                      notificationManager.createNotificationChannel(channel)
-                  }
-              }
-
-              private val filePickerLauncher = registerForActivityResult(
-                  ActivityResultContracts.StartActivityForResult()
-              ) { result ->
-                  if (result.resultCode == Activity.RESULT_OK) {
-                      val uri = result.data?.data
-                      if (uri != null) {
-                          Thread {
-                              try {
-                                  val path = copyFileToInternalStorage(uri)
-                                  pushNativeLog("FILE-PICKER", "Файл скопирован для Go: $path")
-                                  mobile.Mobile.onFileSelected(path)
-                              } catch (e: Exception) {
-                                  pushNativeLog("FILE-ERR", "Ошибка копирования файла: ${e.message}")
-                                  mobile.Mobile.onFileSelected("")
-                              }
-                          }.start()
-                      } else {
-                          mobile.Mobile.onFileSelected("")
-                      }
-                  } else {
-                      mobile.Mobile.onFileSelected("")
-                  }
-              }
-
-              private val webViewFileChooserLauncher = registerForActivityResult(
-                  ActivityResultContracts.StartActivityForResult()
-              ) { result ->
-                  val cb = webViewFileCallback
-                  webViewFileCallback = null
-                  if (cb == null) return@registerForActivityResult
-                  if (result.resultCode == Activity.RESULT_OK) {
-                      val dataUri = result.data?.data
-                      if (dataUri != null) {
-                          pushNativeLog("WEB-FILE", "Выбран файл в Галерее: $dataUri")
-                          cb.onReceiveValue(arrayOf(dataUri))
-                          return@registerForActivityResult
-                      }
-                  }
-                  pushNativeLog("WEB-FILE", "Выбор файла отменён")
-                  cb.onReceiveValue(null)
-              }
-
-              override fun onCreate(savedInstanceState: Bundle?) {
-                  super.onCreate(savedInstanceState)
-
-                  window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                  window.statusBarColor = android.graphics.Color.parseColor("#121212")
-                  window.navigationBarColor = android.graphics.Color.parseColor("#121212")
-
-                  window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                  window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-
-                  webView = WebView(this).apply {
-                      layoutParams = android.view.ViewGroup.LayoutParams(
-                          android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                          android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                      )
-                      setBackgroundColor(android.graphics.Color.parseColor("#121212"))
-                  }
-                  setContentView(webView)
-
-                  setupWebView()
-                  startGoService()
-                  createNotificationChannel()
-
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                      val needed = mutableListOf<String>()
-                      if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                          needed.add(android.Manifest.permission.RECORD_AUDIO)
-                      }
-                      if (checkSelfPermission(android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                          needed.add(android.Manifest.permission.CAMERA)
-                      }
-                      if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                          needed.add(android.Manifest.permission.POST_NOTIFICATIONS)
-                      }
-                      if (needed.isNotEmpty()) {
-                          requestPermissions(needed.toTypedArray(), 101)
-                      }
-                  }
-
-                  mobile.Mobile.setPlatformBridge(this)
-              }
-
-              override fun pickFile() {
-                  runOnUiThread {
-                      try {
-                          pushNativeLog("GO-PICK", "Открытие системного выбора файла Android...")
-                          val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
-                              type = "*/*"
-                              addCategory(Intent.CATEGORY_OPENABLE)
-                              putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*", "application/pdf", "text/*", "application/zip"))
-                          }
-                          filePickerLauncher.launch(intent)
-                      } catch (e: Exception) {
-                          pushNativeLog("GO-PICK-ERR", "Ошибка запуска пикера: ${e.message}")
-                          mobile.Mobile.onFileSelected("")
-                      }
-                  }
-              }
-
-              override fun shareFile(path: String) {
-                  runOnUiThread {
-                      try {
-                          val file = File(path)
-                          if (!file.exists()) return@runOnUiThread
-                          val uri = androidx.core.content.FileProvider.getUriForFile(
-                              this,
-                              "com.teleghost.app.fileprovider",
-                              file
-                          )
-                          val intent = Intent(Intent.ACTION_SEND).apply {
-                              type = "application/zip"
-                              putExtra(Intent.EXTRA_STREAM, uri)
-                              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                          }
-                          startActivity(Intent.createChooser(intent, "Share Hydra Backup"))
-                      } catch (e: Exception) {
-                          android.util.Log.e(TAG, "Failed to share file", e)
-                      }
-                  }
-              }
-
-              override fun clipboardSet(text: String) {
-                  runOnUiThread {
-                      try {
-                          val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                          val clip = android.content.ClipData.newPlainText("Hydra", text)
-                          clipboard.setPrimaryClip(clip)
-                      } catch (e: Exception) {
-                          android.util.Log.e(TAG, "Clipboard set failed", e)
-                      }
-                  }
-              }
-
-              override fun showNotification(title: String, message: String) {
-                  runOnUiThread {
-                      try {
-                          val builder = androidx.core.app.NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-                              .setSmallIcon(R.mipmap.ic_launcher)
-                              .setContentTitle(title)
-                              .setContentText(message)
-                              .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
-                              .setAutoCancel(true)
-                              .setOngoing(false)
-
-                          val intent = Intent(this, MainActivity::class.java).apply {
-                              flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                          }
-                          val pendingIntent: android.app.PendingIntent = android.app.PendingIntent.getActivity(this, 0, intent, android.app.PendingIntent.FLAG_IMMUTABLE)
-                          builder.setContentIntent(pendingIntent)
-
-                          with(androidx.core.app.NotificationManagerCompat.from(this)) {
-                              notify(System.currentTimeMillis().toInt(), builder.build())
-                          }
-                      } catch (e: Exception) {
-                          android.util.Log.e(TAG, "Notification failed", e)
-                      }
-                  }
-              }
-
-              override fun saveFile(path: String, filename: String) {
-                  runOnUiThread {
-                      try {
-                          val file = File(path)
-                          if (!file.exists()) return@runOnUiThread
-                          val contentValues = android.content.ContentValues().apply {
-                              put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
-                              val mime = try {
-                                  val ext = MimeTypeMap.getFileExtensionFromUrl(filename)
-                                  MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
-                              } catch(e: Exception) { "application/octet-stream" }
-                              put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime)
-                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                  put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
-                                  put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
-                              }
-                          }
-                          val resolver = applicationContext.contentResolver
-                          val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                              resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-                          } else {
-                              resolver.insert(android.provider.MediaStore.Files.getContentUri("external"), contentValues)
-                          }
-                          if (uri != null) {
-                              resolver.openOutputStream(uri)?.use { output ->
-                                  java.io.FileInputStream(file).use { input ->
-                                      input.copyTo(output)
-                                  }
-                              }
-                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                  contentValues.clear()
-                                  contentValues.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
-                                  resolver.update(uri, contentValues, null, null)
-                              }
-                              android.widget.Toast.makeText(this, "Сохранено в Загрузки", android.widget.Toast.LENGTH_SHORT).show()
-                          }
-                      } catch (e: Exception) {
-                          android.util.Log.e(TAG, "Save file failed", e)
-                      }
-                  }
-              }
-
-              private fun copyFileToInternalStorage(uri: Uri): String {
-                  val contentResolver = applicationContext.contentResolver
-                  val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
-                  val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType) ?: "bin"
-                  val filename = "upload_${UUID.randomUUID()}.$ext"
-                  val tempDir = File(filesDir, "tmp_uploads")
-                  if (!tempDir.exists()) tempDir.mkdirs()
-                  val destFile = File(tempDir, filename)
-                  contentResolver.openInputStream(uri)?.use { input ->
-                      FileOutputStream(destFile).use { output ->
-                          input.copyTo(output)
-                      }
-                  } ?: throw Exception("Cannot open input stream")
-                  return destFile.absolutePath
-              }
-
-              @SuppressLint("SetJavaScriptEnabled")
-              private fun setupWebView() {
-                  webView.settings.apply {
-                      javaScriptEnabled = true
-                      domStorageEnabled = true
-                      databaseEnabled = true
-                      allowFileAccess = true
-                      allowContentAccess = true
-                      mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                      cacheMode = WebSettings.LOAD_DEFAULT
-                      mediaPlaybackRequiresUserGesture = false
-                      useWideViewPort = false
-                      loadWithOverviewMode = false
-                      setSupportZoom(false)
-                      builtInZoomControls = false
-                      displayZoomControls = false
-                  }
-
-                  webView.addJavascriptInterface(HydraNativeBridge(), "HydraNative")
-
-                  webView.webViewClient = object : WebViewClient() {
-                      override fun shouldOverrideUrlLoading(
-                          view: WebView?,
-                          request: WebResourceRequest?
-                      ): Boolean {
-                          val url = request?.url?.toString() ?: return false
-                          if (url.startsWith(SERVER_URL)) return false
-                          startActivity(Intent(Intent.ACTION_VIEW, request?.url))
-                          return true
-                      }
-
-                      override fun onReceivedError(
-                          view: WebView?,
-                          request: WebResourceRequest?,
-                          error: WebResourceError?
-                      ) {
-                          if (request?.isForMainFrame == true) {
-                              view?.postDelayed({ waitForServerAndLoad() }, RETRY_DELAY_MS)
-                          }
-                      }
-                  }
-
-                  webView.webChromeClient = object : WebChromeClient() {
-                      override fun onPermissionRequest(request: PermissionRequest?) {
-                          runOnUiThread {
-                              pushNativeLog("WEB-PERM", "Выдача WebRTC доступа: ${request?.resources?.joinToString()}")
-                              request?.grant(request.resources)
-                          }
-                      }
-
-                      override fun onShowFileChooser(
-                          webView: WebView?,
-                          filePathCallback: ValueCallback<Array<Uri>>?,
-                          fileChooserParams: FileChooserParams?
-                      ): Boolean {
-                          webViewFileCallback?.onReceiveValue(null)
-                          webViewFileCallback = filePathCallback
-                          return try {
-                              pushNativeLog("WEB-CHOOSER", "Открытие системной Галереи для выбора изображения...")
-                              val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
-                                  addCategory(Intent.CATEGORY_OPENABLE)
-                                  type = "image/*"
-                              }
-                              webViewFileChooserLauncher.launch(Intent.createChooser(intent, "Выберите изображение или QR-код"))
-                              true
-                          } catch (e: Exception) {
-                              pushNativeLog("WEB-CHOOSER-ERR", "Ошибка открытия галереи: ${e.message}")
-                              webViewFileCallback = null
-                              false
-                          }
-                      }
-
-                      override fun onConsoleMessage(msg: ConsoleMessage?): Boolean {
-                          android.util.Log.d(TAG, "JS: ${msg?.message()} [${msg?.sourceId()}:${msg?.lineNumber()}]")
-                          return true
-                      }
-                  }
-              }
-
-              private fun startGoService() {
-                  val intent = Intent(this, TeleGhostService::class.java)
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                      startForegroundService(intent)
-                  } else {
-                      startService(intent)
-                  }
-                  waitForServerAndLoad()
-              }
-
-              private fun waitForServerAndLoad(retryCount: Int = 0) {
-                  if (retryCount >= MAX_RETRIES) {
-                      runOnUiThread {
-                          webView.loadData(
-                              "<html><body style='background:#121212;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;'><div style='text-align:center;'><h2>⚠️ Не удалось запустить сервер</h2><p>Попробуйте перезапустить приложение</p></div></body></html>",
-                              "text/html", "UTF-8"
-                          )
-                      }
-                      return
-                  }
-
-                  Thread {
-                      try {
-                          val url = java.net.URL(HEALTH_URL)
-                          val connection = url.openConnection() as java.net.HttpURLConnection
-                          connection.connectTimeout = 1000
-                          connection.readTimeout = 1000
-                          connection.requestMethod = "GET"
-                          val responseCode = connection.responseCode
-                          connection.disconnect()
-                          if (responseCode == 200) {
-                              runOnUiThread {
-                                  webView.loadUrl(SERVER_URL)
-                              }
-                              return@Thread
-                          }
-                      } catch (e: Exception) {
-                          android.util.Log.d(TAG, "Health check failed: ${e.message}")
-                      }
-                      runOnUiThread {
-                          webView.postDelayed({ waitForServerAndLoad(retryCount + 1) }, RETRY_DELAY_MS)
-                      }
-                  }.start()
-              }
-
-              override fun onBackPressed() {
-                  if (webView.canGoBack()) {
-                      webView.goBack()
-                  } else {
-                      moveTaskToBack(true)
-                  }
-              }
-
-              override fun onDestroy() {
-                  webView.destroy()
-                  super.onDestroy()
-              }
-
-              override fun onResume() {
+              old_lifecycle = """    override fun onResume() {
                   super.onResume()
                   webView.onResume()
                   mobile.Mobile.setPlatformBridge(this)
@@ -636,194 +60,796 @@ jobs:
               override fun onPause() {
                   webView.onPause()
                   super.onPause()
+              }"""
+
+              new_lifecycle = """    override fun onResume() {
+                  super.onResume()
+                  webView.onResume()
+                  mobile.Mobile.setPlatformBridge(this)
+                  pushNativeLog("LIFECYCLE", "Приложение развёрнуто (onResume) — проверка безопасности и биометрии")
+                  webView.evaluateJavascript("if(window.__onHydraAppResume) window.__onHydraAppResume();", null)
               }
-          }
-          '''
-          with open(kt_path, "w", encoding="utf-8") as f:
-              f.write(clean_kt)
-          print("[OK] MainActivity.kt обновлён")
 
-          # 3. Settings.svelte: точная замена setupAndTestBiometric по индексам строк (БЕЗ re.sub!)
-          settings_path = "frontend/src/components/Settings.svelte"
-          if os.path.exists(settings_path):
-              with open(settings_path, "r", encoding="utf-8") as f:
-                  st = f.read()
+              override fun onPause() {
+                  pushNativeLog("LIFECYCLE", "Приложение свёрнуто (onPause) — мгновенная блокировка сессии!")
+                  webView.evaluateJavascript("if(window.__lockHydraNow) window.__lockHydraNow();", null)
+                  webView.onPause()
+                  super.onPause()
+              }"""
 
-              m1 = "let bioPinToBind"
-              if m1 not in st:
-                  m1 = "async function setupAndTestBiometric()"
-              m2 = "function toHydraMasterKey("
+              if "window.__lockHydraNow" not in kt:
+                  kt = kt.replace(old_lifecycle, new_lifecycle)
+                  with open(kt_path, "w", encoding="utf-8") as f:
+                      f.write(kt)
+                  print("[OK] MainActivity.kt: мгновенная блокировка при сворачивании (onPause) и авто-проверка при разворачивании (onResume)")
 
-              i1 = st.find(m1)
-              i2 = st.find(m2, i1) if i1 != -1 else -1
-              if i1 != -1 and i2 != -1:
-                  new_settings_bio = """let bioPinToBind = '';
-              let bioBindStatus = localStorage.getItem('hydra_hw_bio_bound') === '1'
-                  ? '✅ Аппаратный отпечаток пальца привязан и активен'
-                  : 'ℹ️ Отпечаток ещё не привязан';
+          # 2. frontend/index.html:
+          #    - Убираем плавающую кнопку #hydra-debug-btn с экрана (теперь консоль живёт в Настройки -> Сеть и Сервер!)
+          #    - Исправляем вывод 'null' в логах на '✅ Выполнено успешно (OK)'
+          index_html_path = "frontend/index.html"
+          if os.path.exists(index_html_path):
+              with open(index_html_path, "r", encoding="utf-8") as f:
+                  idx_html = f.read()
 
+              idx_html = re.sub(r'<!-- HYDRA_LOGGER_START -->[\s\S]*?<!-- HYDRA_LOGGER_END -->', '', idx_html)
+
+              clean_logger_html = """<!-- HYDRA_LOGGER_START -->
+          <style>
+            html, body, #app {
+              position: fixed !important;
+              inset: 0 !important;
+              width: 100% !important;
+              height: 100% !important;
+              max-height: 100% !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              overflow: hidden !important;
+              overscroll-behavior: none !important;
+            }
+          </style>
+          <script>
+            (function() {
+              if (window.__hydraGlobalLoggerReady) return;
+              window.__hydraGlobalLoggerReady = true;
+              window.__hydraLogList = [];
+
+              window.__addHydraLog = function(tag, msg) {
+                var d = new Date();
+                var t = d.toTimeString().split(' ')[0] + '.' + String(d.getMilliseconds()).padStart(3, '0');
+                var line = '[' + t + '] [' + tag + '] ' + msg;
+                window.__hydraLogList.unshift(line);
+                if (window.__hydraLogList.length > 500) window.__hydraLogList.pop();
+                window.dispatchEvent(new CustomEvent('hydra-log-updated'));
+              };
+
+              document.addEventListener('click', function(e) {
+                var t = e.target;
+                if (!t) return;
+                var el = t.closest ? (t.closest('button, a, input, label, select, [role="button"]') || t) : t;
+                var txt = (el.innerText || el.placeholder || el.value || el.className || '').toString().replace(/\\s+/g, ' ').trim().slice(0, 50);
+                window.__addHydraLog('UI-CLICK', '<' + (el.tagName || 'EL') + '> "' + txt + '"');
+              }, true);
+
+              var origFetch = window.fetch.bind(window);
+              window.fetch = async function(url, opts) {
+                var u = String(url);
+                if (u.indexOf('/api/') !== -1 && u.indexOf('/api/events') === -1 && u.indexOf('AppendDebugLog') === -1 && u.indexOf('GetNetworkStatus') === -1) {
+                  var mName = u.split('/api/')[1];
+                  var bodyStr = '';
+                  try { bodyStr = (opts && opts.body ? String(opts.body) : '').slice(0, 300); } catch(e){}
+                  var t0 = Date.now();
+                  window.__addHydraLog('RPC-REQ', mName + ' -> ' + (bodyStr || '{}'));
+                  try {
+                    var resp = await origFetch(url, opts);
+                    var clone = resp.clone();
+                    var data = await clone.json().catch(function(){ return {}; });
+                    var dt = Date.now() - t0;
+                    if (!resp.ok || data.error) {
+                      var errMsg = data.error || resp.statusText || ('HTTP ' + resp.status);
+                      window.__addHydraLog('RPC-ERR', mName + ' (' + dt + ' мс) ❌ ОШИБКА: ' + errMsg);
+                      return new Response(JSON.stringify({ result: null, error: errMsg }), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' }
+                      });
+                    } else {
+                      var resFormatted = '✅ Выполнено успешно (OK)';
+                      if (data.result !== null && data.result !== undefined && data.result !== '') {
+                        try { resFormatted = JSON.stringify(data.result).slice(0, 400); } catch(e){}
+                      }
+                      window.__addHydraLog('RPC-OK', mName + ' (' + dt + ' мс) -> ' + resFormatted);
+                    }
+                    return resp;
+                  } catch (err) {
+                    window.__addHydraLog('RPC-ERR', mName + ' ❌ СБОЙ СЕТИ: ' + err);
+                    throw err;
+                  }
+                }
+                return origFetch(url, opts);
+              };
+
+              window.addEventListener('error', function(e) {
+                window.__addHydraLog('JS-ERR', e.message + ' @ ' + (e.filename || '') + ':' + (e.lineno || ''));
+              });
+              window.addEventListener('unhandledrejection', function(e) {
+                window.__addHydraLog('PROMISE-ERR', String(e.reason));
+              });
+            })();
+          </script>
+          <!-- HYDRA_LOGGER_END -->"""
+
+              idx_html = idx_html.replace("</body>", clean_logger_html + "\n</body>", 1)
+              with open(index_html_path, "w", encoding="utf-8") as f:
+                  f.write(idx_html)
+              print("[OK] frontend/index.html: убрана плавающая кнопка, исправлен вывод null на '✅ Выполнено успешно (OK)'")
+
+          # 3. App.svelte:
+          #    - Подключаем мгновенную блокировку window.__lockHydraNow() при сворачивании приложения (onPause / visibilitychange / blur)!
+          app_svelte = "frontend/src/App.svelte"
+          if os.path.exists(app_svelte):
+              with open(app_svelte, "r", encoding="utf-8") as f:
+                  ap = f.read()
+
+              # Удаляем старую плавающую кнопку из App.svelte, если она там была
+              ap = re.sub(r'<!-- Плавающая кнопка открытия подробных логов -->[\s\S]*?(?=<style>)', '', ap)
+
+              lock_hook_js = """
               if (typeof window !== 'undefined') {
-                  window.__onBiometricEnrollResult = (success, message) => {
-                      if (success) {
-                          biometricEnabled = true;
-                          localStorage.setItem('hydra_biometric', '1');
-                          localStorage.setItem('hydra_hw_bio_bound', '1');
-                          bioBindStatus = '✅ ' + message;
-                          bioPinToBind = '';
-                      } else {
-                          bioBindStatus = '❌ ' + message;
+                  window.__lockHydraNow = () => {
+                      if (isAuthenticated) {
+                          isAuthenticated = false;
+                          showSettings = false;
+                          if (window.__addHydraLog) window.__addHydraLog('SECURITY-LOCK', '🔒 Приложение свёрнуто — сессия мгновенно заблокирована!');
                       }
                   };
-              }
-
-              async function setupAndTestBiometric() {
-                  const cleanPin = (bioPinToBind || '').trim();
-                  if (cleanPin.length < 4) {
-                      bioBindStatus = '⚠️ Сначала введите ваш текущий ПИН-код (минимум 4 символа) в поле ниже';
-                      if (window.__addHydraLog) window.__addHydraLog('BIO-UI', 'Попытка привязки отпечатка без ввода ПИН-кода');
-                      return;
-                  }
-                  const profId = selectedProfile?.id || 'default';
-                  if (window.HydraNative && typeof window.HydraNative.enrollBiometric === 'function') {
-                      bioBindStatus = '👆 Приложите палец к сканеру отпечатков вашего телефона...';
-                      window.HydraNative.enrollBiometric(profId, cleanPin);
-                  } else {
-                      bioBindStatus = '❌ Нативный модуль биометрии недоступен на этом устройстве';
-                  }
+                  document.addEventListener('visibilitychange', () => {
+                      if (document.visibilityState === 'hidden') {
+                          window.__lockHydraNow();
+                      }
+                  });
               }
               """
-                  st = st[:i1] + new_settings_bio + st[i2:]
-                  with open(settings_path, "w", encoding="utf-8") as f:
-                      f.write(st)
-                  print("[OK] Settings.svelte: функция setupAndTestBiometric чисто заменена по индексам")
+              if "window.__lockHydraNow =" not in ap:
+                  ap = ap.replace("onMount(", lock_hook_js + "\n    onMount(", 1)
+                  with open(app_svelte, "w", encoding="utf-8") as f:
+                      f.write(ap)
+                  print("[OK] App.svelte: подключена мгновенная блокировка сессии при сворачивании (__lockHydraNow)")
 
-          # 4. Auth.svelte: точная замена triggerBiometricUnlock до самого </script> по индексам (БЕЗ re.sub!)
+          # 4. Auth.svelte:
+          #    - Делаем красивую и работающую визуализацию проверки разрешений (Камера, Микрофон, Биометрия) и связи с VPS (мс) НА ВСЕХ ЭКРАНАХ ВХОДА сразу при запуске!
+          #    - При разворачивании приложения автоматически запускаем проверку и вызываем сканер отпечатка, если выбран профиль
           auth_path = "frontend/src/components/Auth.svelte"
           if os.path.exists(auth_path):
               with open(auth_path, "r", encoding="utf-8") as f:
                   au = f.read()
 
-              a1_marker = "async function triggerBiometricUnlock()"
-              if "let systemPermStatus = null;" in au:
-                  a1_marker = "let systemPermStatus = null;"
+              # Находим функцию checkDevicePermissionsAndBio и расширяем её живым пингом сервера + автозапуском в onMount
+              a1_marker = "let systemPermStatus = null;"
               a2_marker = "</script>"
-
               idx1 = au.find(a1_marker)
               idx2 = au.find(a2_marker, idx1) if idx1 != -1 else -1
+
               if idx1 != -1 and idx2 != -1:
-                  clean_auth_bio = """let systemPermStatus = null;
+                  new_auth_monitor = """let systemPermStatus = {
+                  device: 'Android Device',
+                  camera: false,
+                  microphone: false,
+                  biometricBound: false,
+                  serverOnline: false,
+                  serverPingMs: 0,
+                  checkingServer: true
+              };
               let bioPromptStatus = '';
 
               if (typeof window !== 'undefined') {
                   window.__onBiometricAuthResult = async (success, decryptedPin, message) => {
                       if (success && decryptedPin) {
-                          bioPromptStatus = '✅ Отпечаток распознан! Вход...';
+                          bioPromptStatus = '✅ Отпечаток распознан аппаратно! Выполняется вход...';
                           pinInput = decryptedPin;
                           await handleUnlock();
                       } else {
                           bioPromptStatus = message ? ('ℹ️ ' + message) : '';
                       }
                   };
+                  window.__onHydraAppResume = () => {
+                      runStartupDiagnostics(selectedProfile?.id || (allProfiles[0]?.id) || 'default');
+                      if (authScreen === 'pin' && selectedProfile) {
+                          setTimeout(() => triggerBiometricUnlock(), 250);
+                      }
+                  };
               }
 
-              function checkDevicePermissionsAndBio(profId) {
+              async function runStartupDiagnostics(profId) {
+                  const targetProf = profId || selectedProfile?.id || (allProfiles[0]?.id) || 'default';
                   if (window.HydraNative && typeof window.HydraNative.checkSystemStatus === 'function') {
                       try {
-                          const raw = window.HydraNative.checkSystemStatus(profId || 'default');
-                          systemPermStatus = JSON.parse(raw);
+                          const raw = window.HydraNative.checkSystemStatus(targetProf);
+                          const parsed = JSON.parse(raw);
+                          systemPermStatus = { ...systemPermStatus, ...parsed };
                       } catch (e) {
                           if (window.__addHydraLog) window.__addHydraLog('SYS-CHECK-ERR', String(e));
                       }
                   }
+                  systemPermStatus.checkingServer = true;
+                  const t0 = Date.now();
+                  try {
+                      const resp = await fetch('http://191.223.137.164:8085/health?pub=startup', { cache: 'no-store' });
+                      const data = await resp.json();
+                      const rtt = Date.now() - t0;
+                      systemPermStatus.serverOnline = (data && data.status === 'ok');
+                      systemPermStatus.serverPingMs = rtt;
+                      if (window.__addHydraLog) window.__addHydraLog('STARTUP-NET', `Связь с узлом Hydra: ОНЛАЙН (${rtt} мс)`);
+                  } catch (e) {
+                      systemPermStatus.serverOnline = false;
+                      systemPermStatus.serverPingMs = 0;
+                      if (window.__addHydraLog) window.__addHydraLog('STARTUP-NET', 'Узел Hydra недоступен при старте');
+                  } finally {
+                      systemPermStatus.checkingServer = false;
+                      systemPermStatus = { ...systemPermStatus };
+                  }
               }
 
               async function triggerBiometricUnlock() {
-                  const profId = selectedProfile?.id || 'default';
-                  checkDevicePermissionsAndBio(profId);
-                  if (localStorage.getItem('hydra_biometric') === '0') {
-                      if (window.__addHydraLog) window.__addHydraLog('BIO-SKIP', 'Биометрия отключена переключателем в настройках');
-                      return;
-                  }
+                  const profId = selectedProfile?.id || (allProfiles[0]?.id) || 'default';
+                  await runStartupDiagnostics(profId);
+                  if (localStorage.getItem('hydra_biometric') === '0') return;
                   if (window.HydraNative && typeof window.HydraNative.authenticateBiometric === 'function') {
-                      if (systemPermStatus && !systemPermStatus.biometricBound) {
-                          bioPromptStatus = 'ℹ️ Отпечаток ещё не привязан (введите ПИН вручную и привяжите его в Настройки → Приватность)';
+                      if (!systemPermStatus.biometricBound) {
+                          bioPromptStatus = 'ℹ️ Отпечаток ещё не привязан (введите ПИН и привяжите его в Настройки → Приватность)';
                           return;
                       }
                       bioPromptStatus = '👆 Приложите палец к сканеру...';
                       window.HydraNative.authenticateBiometric(profId);
                   }
               }
+
+              setTimeout(() => runStartupDiagnostics('default'), 150);
           """
-                  au = au[:idx1] + clean_auth_bio + "</script>" + au[idx2 + len(a2_marker):]
+                  au = au[:idx1] + new_auth_monitor + "</script>" + au[idx2 + len(a2_marker):]
 
-              perm_banner = """
-              {#if systemPermStatus}
-                  <div style="margin-bottom: 12px; padding: 10px 12px; border-radius: 14px; background: rgba(138,180,248,0.08); border: 1px solid rgba(138,180,248,0.2); font-size: 11px; color: #E3E3E3; text-align: left;">
-                      <div style="font-weight: 700; color: #8AB4F8; margin-bottom: 4px;">🛡️ Проверка безопасности ({systemPermStatus.device}):</div>
-                      <div>📷 Камера: {systemPermStatus.camera ? '✅ Разрешено' : '⚠️ Нет доступа'} | 🎤 Микрофон: {systemPermStatus.microphone ? '✅ Разрешено' : '⚠️ Нет доступа'}</div>
-                      <div>👆 Биометрия: {systemPermStatus.biometricBound ? '✅ Отпечаток привязан (активен)' : '⚪ Не привязан (вход по ПИН)'}</div>
-                      {#if !systemPermStatus.camera || !systemPermStatus.microphone}
-                          <button type="button" on:click={() => window.HydraNative?.requestMissingPermissions()} style="margin-top: 6px; background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 700;">Выдать разрешения</button>
-                      {/if}
+              # Выносим красивую визуализацию диагностики прямо под заголовок Hydra на экране входа, чтобы она была видна ВСЕГДА при запуске!
+              au = re.sub(r'\{#if systemPermStatus\}[\s\S]*?\{/if\}\s*\{#if bioPromptStatus\}[\s\S]*?\{/if\}', '', au)
+
+              startup_visualizer_html = """
+              <!-- КРАСИВАЯ ВИЗУАЛИЗАЦИЯ ДИАГНОСТИКИ РАЗРЕШЕНИЙ И СЕТИ ПРИ ЗАПУСКЕ -->
+              <div style="margin: 0 auto 20px; padding: 12px 14px; border-radius: 18px; background: rgba(18, 19, 26, 0.85); border: 1px solid rgba(138, 180, 248, 0.22); text-align: left; box-shadow: 0 8px 24px rgba(0,0,0,0.35);">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                      <span style="font-size: 11px; font-weight: 800; color: #8AB4F8; letter-spacing: 0.4px; text-transform: uppercase;">🛡️ Диагностика при запуске • {systemPermStatus.device}</span>
+                      <button type="button" on:click={() => runStartupDiagnostics(selectedProfile?.id || 'default')} style="background: transparent; border: none; color: #8AB4F8; font-size: 11px; cursor: pointer; padding: 0;">🔄</button>
                   </div>
-              {/if}
-              {#if bioPromptStatus}
-                  <div style="margin-bottom: 10px; font-size: 12px; color: #8AB4F8; font-weight: 600;">{bioPromptStatus}</div>
-              {/if}
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 11px;">
+                      <div style="padding: 6px 8px; border-radius: 10px; background: rgba(255,255,255,0.03); display: flex; align-items: center; gap: 6px;">
+                          <span style="width: 8px; height: 8px; border-radius: 50%; background: {systemPermStatus.serverOnline ? '#4CAF50' : (systemPermStatus.checkingServer ? '#FFC107' : '#F44336')}; display: inline-block;"></span>
+                          <span style="color: #E3E3E3;">Сервер: <b>{systemPermStatus.checkingServer ? 'Пинг...' : (systemPermStatus.serverOnline ? systemPermStatus.serverPingMs + ' мс' : 'Офлайн')}</b></span>
+                      </div>
+                      <div style="padding: 6px 8px; border-radius: 10px; background: rgba(255,255,255,0.03); display: flex; align-items: center; gap: 6px;">
+                          <span style="width: 8px; height: 8px; border-radius: 50%; background: {systemPermStatus.biometricBound ? '#4CAF50' : '#9E9E9E'}; display: inline-block;"></span>
+                          <span style="color: #E3E3E3;">Отпечаток: <b>{systemPermStatus.biometricBound ? 'Активен' : 'Не задан'}</b></span>
+                      </div>
+                      <div style="padding: 6px 8px; border-radius: 10px; background: rgba(255,255,255,0.03); display: flex; align-items: center; gap: 6px;">
+                          <span style="width: 8px; height: 8px; border-radius: 50%; background: {systemPermStatus.camera ? '#4CAF50' : '#F44336'}; display: inline-block;"></span>
+                          <span style="color: #E3E3E3;">Камера: <b>{systemPermStatus.camera ? 'ОК' : 'Нет'}</b></span>
+                      </div>
+                      <div style="padding: 6px 8px; border-radius: 10px; background: rgba(255,255,255,0.03); display: flex; align-items: center; gap: 6px;">
+                          <span style="width: 8px; height: 8px; border-radius: 50%; background: {systemPermStatus.microphone ? '#4CAF50' : '#F44336'}; display: inline-block;"></span>
+                          <span style="color: #E3E3E3;">Микрофон: <b>{systemPermStatus.microphone ? 'ОК' : 'Нет'}</b></span>
+                      </div>
+                  </div>
+                  {#if !systemPermStatus.camera || !systemPermStatus.microphone}
+                      <button type="button" on:click={() => { window.HydraNative?.requestMissingPermissions(); setTimeout(() => runStartupDiagnostics(selectedProfile?.id || 'default'), 1500); }} style="margin-top: 8px; width: 100%; background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 6px; font-size: 11px; font-weight: 700; cursor: pointer;">
+                          🔓 Разрешить доступ к Камере и Микрофону
+                      </button>
+                  {/if}
+                  {#if bioPromptStatus}
+                      <div style="margin-top: 8px; font-size: 11px; color: #8AB4F8; text-align: center; font-weight: 600;">{bioPromptStatus}</div>
+                  {/if}
+              </div>
               """
-              if "Проверка безопасности (" not in au:
-                  au = au.replace('<div class="pin-entry-box">', perm_banner + '\n            <div class="pin-entry-box">', 1)
-
-              au = au.replace(
-                  "if (selectedProfile?.id && pinInput) {\n                localStorage.setItem('hydra_bio_pin_' + selectedProfile.id, pinInput);\n            }",
-                  "// ПИН для биометрии сохраняется только через аппаратный сканер BiometricPrompt"
-              )
+              if "Диагностика при запуске" not in au:
+                  au = au.replace('</h1>', '</h1>\n' + startup_visualizer_html, 1)
 
               with open(auth_path, "w", encoding="utf-8") as f:
                   f.write(au)
-              print("[OK] Auth.svelte: чисто обновлён по индексам до </script> без синтаксических ошибок!")
+              print("[OK] Auth.svelte: добавлена визуальная панель диагностики разрешений и связи при запуске")
 
-          # 5. Sidebar.svelte: подключаем выбор фото в Сторис к нативному onShowFileChooser
+          # 5. Settings.svelte:
+          #    Подключаем живой журнал логов прямо к переключателю "Логирование в файл — Локальная диагностика сокета" под выбором протокола шифрования!
+          settings_path = "frontend/src/components/Settings.svelte"
+          if os.path.exists(settings_path):
+              with open(settings_path, "r", encoding="utf-8") as f:
+                  st = f.read()
+
+              settings_log_js = """
+              let settingsLogLines = typeof window !== 'undefined' ? (window.__hydraLogList || []) : [];
+              if (typeof window !== 'undefined') {
+                  window.addEventListener('hydra-log-updated', () => {
+                      settingsLogLines = [...(window.__hydraLogList || [])];
+                  });
+              }
+              function refreshSettingsLogs() {
+                  settingsLogLines = [...(window.__hydraLogList || [])];
+              }
+              function clearSettingsLogs() {
+                  if (typeof window !== 'undefined') window.__hydraLogList = [];
+                  settingsLogLines = [];
+              }
+              function copySettingsLogs() {
+                  const text = (settingsLogLines || []).join('\\n');
+                  AppActions.ClipboardSet(text);
+                  alert('✅ Скопировано записей журнала: ' + settingsLogLines.length);
+              }
+              """
+              if "let settingsLogLines =" not in st:
+                  st = st.replace("</script>", settings_log_js + "\n</script>", 1)
+
+              # Вставляем панель логов прямо под карточку "Логирование в файл (Локальная диагностика сокета)" во вкладке Сеть и Сервер
+              old_log_toggle = """                            <div class="setting-item flex-row bg-box">
+                                          <div>
+                                              <span class="label">Логирование в файл</span>
+                                              <p class="hint">Локальная диагностика сокета</p>
+                                          </div>
+                                          <input type="checkbox" bind:checked={routerSettings.logToFile} />
+                                      </div>"""
+
+              new_log_toggle_and_viewer = """                            <div class="setting-item flex-row bg-box" on:click={() => { routerSettings.logToFile = !routerSettings.logToFile; refreshSettingsLogs(); }} style="cursor: pointer;">
+                                          <div>
+                                              <span class="label" style="font-weight: 700; color: #E3E3E3;">🐞 Логирование и диагностика сокета</span>
+                                              <p class="hint" style="margin: 2px 0 0;">Нажмите, чтобы открыть живой системный журнал ({settingsLogLines.length} записей)</p>
+                                          </div>
+                                          <input type="checkbox" bind:checked={routerSettings.logToFile} on:change={refreshSettingsLogs} on:click|stopPropagation style="width: 20px; height: 20px; accent-color: #8AB4F8;" />
+                                      </div>
+
+                                      {#if routerSettings.logToFile}
+                                          <div style="margin-top: 10px; background: #09090D; border: 1px solid rgba(138,180,248,0.3); border-radius: 16px; padding: 12px;">
+                                              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 6px; flex-wrap: wrap;">
+                                                  <span style="font-size: 12px; font-weight: 800; color: #8AB4F8;">🐞 Живой системный журнал ({settingsLogLines.length})</span>
+                                                  <div style="display: flex; gap: 6px;">
+                                                      <button type="button" on:click={refreshSettingsLogs} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 10px; font-size: 11px;">🔄 Обновить</button>
+                                                      <button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700;">📋 Копировать всё</button>
+                                                      <button type="button" on:click={clearSettingsLogs} style="background: rgba(255,71,87,0.2); color: #ff6b6b; border: none; border-radius: 100px; padding: 5px 10px; font-size: 11px;">Очистить</button>
+                                                  </div>
+                                              </div>
+                                              <div style="max-height: 260px; overflow-y: auto; font-family: monospace; font-size: 11px; line-height: 1.45; padding-right: 4px;">
+                                                  {#if settingsLogLines.length === 0}
+                                                      <div style="color: #9AA0A6; padding: 8px 0;">Журнал пуст. Выполните любое действие для записи...</div>
+                                                  {/if}
+                                                  {#each settingsLogLines as line}
+                                                      <div style="padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05); word-break: break-all; color: {line.includes('ERR') || line.includes('ОШИБКА') ? '#ff6b6b' : (line.includes('RPC-OK') || line.includes('BIO-OK') ? '#69db7c' : (line.includes('CLICK') ? '#ffd43b' : '#E3E3E3'))};">
+                                                          {line}
+                                                      </div>
+                                                  {/each}
+                                              </div>
+                                          </div>
+                                      {/if}"""
+
+              if "Живой системный журнал" not in st:
+                  st = st.replace(old_log_toggle, new_log_toggle_and_viewer, 1)
+                  with open(settings_path, "w", encoding="utf-8") as f:
+                      f.write(st)
+                  print("[OK] Settings.svelte: живая консоль логов встроена под выбором протокола шифрования")
+
+          # 6. Modals.svelte:
+          #    Встраиваем ЖИВУЮ КАМЕРУ для сканирования QR-кода (getUserMedia + video + jsQR в реальном времени) прямо внутри окна "Добавить контакт"!
+          modals_path = "frontend/src/components/Modals.svelte"
+          if os.path.exists(modals_path):
+              with open(modals_path, "r", encoding="utf-8") as f:
+                  md = f.read()
+
+              m_start = "async function handleScanQRFile(e)"
+              m_end = "</script>"
+              idx1 = md.find(m_start)
+              idx2 = md.find(m_end, idx1) if idx1 != -1 else -1
+
+              if idx1 != -1 and idx2 != -1:
+                  live_qr_js = """let isLiveScanningQR = false;
+              let qrVideoStream = null;
+              let qrScanTimer = null;
+              let qrVideoEl = null;
+              let qrStatusMsg = '';
+
+              async function startLiveQRScanner() {
+                  if (isLiveScanningQR) {
+                      stopLiveQRScanner();
+                      return;
+                  }
+                  qrStatusMsg = '⏳ Запуск камеры для сканирования QR...';
+                  if (window.__addHydraLog) window.__addHydraLog('QR-CAM', 'Открытие прямой камеры для сканирования QR-кода...');
+                  try {
+                      if (window.HydraNative?.requestMissingPermissions) {
+                          window.HydraNative.requestMissingPermissions();
+                      }
+                      qrVideoStream = await navigator.mediaDevices.getUserMedia({
+                          video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 640 } },
+                          audio: false
+                      });
+                      isLiveScanningQR = true;
+                      qrStatusMsg = '🎯 Наведите камеру на QR-код друга...';
+                      setTimeout(() => {
+                          if (qrVideoEl && qrVideoStream) {
+                              qrVideoEl.srcObject = qrVideoStream;
+                              qrVideoEl.play().catch(() => {});
+                          }
+                      }, 100);
+
+                      const canvas = document.createElement('canvas');
+                      const ctx = canvas.getContext('2d');
+                      qrScanTimer = setInterval(() => {
+                          if (!qrVideoEl || qrVideoEl.readyState !== qrVideoEl.HAVE_ENOUGH_DATA) return;
+                          canvas.width = qrVideoEl.videoWidth || 480;
+                          canvas.height = qrVideoEl.videoHeight || 480;
+                          ctx.drawImage(qrVideoEl, 0, 0, canvas.width, canvas.height);
+                          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                          const code = jsQR(imageData.data, imageData.width, imageData.height);
+                          if (code && code.data) {
+                              addContactAddress = code.data.trim();
+                              if (!addContactName.trim()) addContactName = 'Контакт ' + addContactAddress.slice(0, 6);
+                              qrStatusMsg = '✅ QR-код успешно считан камерой!';
+                              if (window.__addHydraLog) window.__addHydraLog('QR-CAM-OK', 'Считан QR с живой камеры: ' + addContactAddress);
+                              stopLiveQRScanner();
+                          }
+                      }, 220);
+                  } catch (err) {
+                      qrStatusMsg = '❌ Не удалось открыть камеру: ' + err;
+                      if (window.__addHydraLog) window.__addHydraLog('QR-CAM-ERR', String(err));
+                  }
+              }
+
+              function stopLiveQRScanner() {
+                  if (qrScanTimer) {
+                      clearInterval(qrScanTimer);
+                      qrScanTimer = null;
+                  }
+                  if (qrVideoStream) {
+                      qrVideoStream.getTracks().forEach(t => t.stop());
+                      qrVideoStream = null;
+                  }
+                  isLiveScanningQR = false;
+              }
+
+              $: if (!showAddContact && isLiveScanningQR) {
+                  stopLiveQRScanner();
+              }
+
+              async function handleScanQRFile(e) {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  if (window.__addHydraLog) window.__addHydraLog('QR-FILE', 'Выбран файл QR из галереи: ' + file.name);
+                  try {
+                      const img = new Image();
+                      const url = URL.createObjectURL(file);
+                      await new Promise((resolve, reject) => {
+                          img.onload = resolve;
+                          img.onerror = reject;
+                          img.src = url;
+                      });
+                      const canvas = document.createElement('canvas');
+                      const maxDim = 1024;
+                      let w = img.width, h = img.height;
+                      if (w > maxDim || h > maxDim) {
+                          if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+                          else { w = Math.round((w * maxDim) / h); h = maxDim; }
+                      }
+                      canvas.width = w;
+                      canvas.height = h;
+                      const ctx = canvas.getContext('2d');
+                      ctx.drawImage(img, 0, 0, w, h);
+                      const imageData = ctx.getImageData(0, 0, w, h);
+                      URL.revokeObjectURL(url);
+                      const code = jsQR(imageData.data, imageData.width, imageData.height);
+                      if (code && code.data) {
+                          addContactAddress = code.data.trim();
+                          if (!addContactName.trim()) addContactName = 'Контакт ' + addContactAddress.slice(0, 6);
+                          qrStatusMsg = '✅ QR-код распознан из картинки!';
+                          if (window.__addHydraLog) window.__addHydraLog('QR-FILE-OK', 'Распознан адрес: ' + addContactAddress);
+                          return;
+                      }
+                      qrStatusMsg = '⚠️ QR-код не найден на картинке';
+                  } catch (err) {
+                      qrStatusMsg = '❌ Ошибка чтения файла: ' + err;
+                  }
+              }
+          """
+                  md = md[:idx1] + live_qr_js + "</script>" + md[idx2 + len(m_end):]
+
+              # Заменяем блок кнопки QR в окне Добавить контакт на 2 кнопки: Прямая Камера (видоискатель) + Из Галереи
+              old_qr_ui = """            <div style="margin-top: 12px;">
+                          <label style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 12px; border-radius: 100px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.4); font-weight: 700; font-size: 13px; cursor: pointer;">
+                              📷 Сканировать QR-код друга
+                              <input type="file" accept="image/*" capture="environment" style="display: none;" on:change={handleScanQRFile} />
+                          </label>
+                      </div>"""
+
+              new_qr_ui = """            <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;">
+                          <div style="display: flex; gap: 8px;">
+                              <button type="button" on:click={startLiveQRScanner} style="flex: 1; padding: 11px; border-radius: 100px; background: {isLiveScanningQR ? '#ff4757' : '#8AB4F8'}; color: {isLiveScanningQR ? '#fff' : '#062E6F'}; border: none; font-weight: 700; font-size: 12px; cursor: pointer;">
+                                  {isLiveScanningQR ? '⏹ Закрыть камеру' : '📷 Открыть камеру (Сканер QR)'}
+                              </button>
+                              <label style="padding: 11px 14px; border-radius: 100px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.35); font-weight: 700; font-size: 12px; cursor: pointer; display: flex; align-items: center;">
+                                  🖼 Из галереи
+                                  <input type="file" accept="image/*" style="display: none;" on:change={handleScanQRFile} />
+                              </label>
+                          </div>
+                          {#if qrStatusMsg}
+                              <div style="font-size: 12px; color: #8AB4F8; text-align: center;">{qrStatusMsg}</div>
+                          {/if}
+                          {#if isLiveScanningQR}
+                              <div style="position: relative; width: 100%; max-width: 260px; height: 260px; margin: 6px auto; border-radius: 20px; overflow: hidden; border: 2px solid #8AB4F8; background: #000;">
+                                  <video bind:this={qrVideoEl} autoplay playsinline muted style="width: 100%; height: 100%; object-fit: cover;"></video>
+                                  <div style="position: absolute; inset: 36px; border: 2px dashed rgba(138,180,248,0.85); border-radius: 16px; pointer-events: none;"></div>
+                              </div>
+                          {/if}
+                      </div>"""
+
+              if "startLiveQRScanner" in md and "Открыть камеру (Сканер QR)" not in md:
+                  md = md.replace(old_qr_ui, new_qr_ui, 1)
+
+              with open(modals_path, "w", encoding="utf-8") as f:
+                  f.write(md)
+              print("[OK] Modals.svelte: встроен живой видео-сканер QR-кодов напрямую с камеры")
+
+          # 7. Sidebar.svelte:
+          #    Встраиваем ЖИВУЮ КАМЕРУ в Сторис на 24 часа (снятие фото ИЛИ запись живого видео-сторис с камеры + выбор из галереи)!
           sidebar_path = "frontend/src/components/Sidebar.svelte"
           if os.path.exists(sidebar_path):
               with open(sidebar_path, "r", encoding="utf-8") as f:
                   sb = f.read()
 
-              both_story_picker = """                      <label style="display: block; width: 100%; text-align: center; padding: 12px; border-radius: 100px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.35); font-weight: 700; cursor: pointer; margin-bottom: 10px;">
-                          📷 Выбрать фото / картинку из Галереи
-                          <input type="file" accept="image/*" style="display: none;" on:change={handleStoryFile} />
-                      </label>"""
-              sb = re.sub(
-                  r'<button type="button" on:click=\{pickNativeStoryImage\}[\s\S]*?</button>',
-                  lambda _: both_story_picker,
-                  sb
-              )
-              if "STORY-FILE" not in sb:
-                  sb = sb.replace(
-                      "const reader = new FileReader();",
-                      "if (window.__addHydraLog) window.__addHydraLog('STORY-FILE', 'Выбрана картинка для Сторис: ' + file.name + ' (' + file.size + ' байт, тип=' + file.type + ')');\n        const reader = new FileReader();"
-                  )
+              s1_marker = "// === ЭТАП 4: СТОРИС НА 24 ЧАСА ==="
+              s2_marker = "</script>"
+              idx1 = sb.find(s1_marker)
+              idx2 = sb.find(s2_marker, idx1) if idx1 != -1 else -1
+
+              if idx1 != -1 and idx2 != -1:
+                  live_story_js = """// === ЭТАП 4: СТОРИС НА 24 ЧАСА (ФОТО + ЖИВОЕ ВИДЕО С КАМЕРЫ) ===
+              let hydraStories = [];
+              let activeStoryModal = null;
+              let showCreateStoryModal = false;
+              let newStoryText = '';
+              let newStoryImage = '';
+              let newStoryVideo = '';
+
+              let isStoryCameraOpen = false;
+              let storyCameraStream = null;
+              let storyVideoEl = null;
+              let isRecordingStoryVideo = false;
+              let storyMediaRecorder = null;
+              let storyRecordedChunks = [];
+              let storyFacingMode = 'user';
+
+              function loadHydraStories() {
+                  try {
+                      const raw = JSON.parse(localStorage.getItem('hydra_stories_v1') || '[]');
+                      const now = Date.now();
+                      hydraStories = raw.filter(s => (now - s.createdAt) < 86400000);
+                      localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
+                  } catch (e) {
+                      hydraStories = [];
+                  }
+              }
+              loadHydraStories();
+
+              async function toggleStoryCamera(switchCam = false) {
+                  if (isStoryCameraOpen && !switchCam) {
+                      stopStoryCamera();
+                      return;
+                  }
+                  if (switchCam) {
+                      storyFacingMode = storyFacingMode === 'user' ? 'environment' : 'user';
+                      stopStoryCamera();
+                  }
+                  if (window.__addHydraLog) window.__addHydraLog('STORY-CAM', 'Запуск живой камеры для Сторис (' + storyFacingMode + ')');
+                  try {
+                      storyCameraStream = await navigator.mediaDevices.getUserMedia({
+                          video: { facingMode: storyFacingMode, width: { ideal: 480 }, height: { ideal: 640 } },
+                          audio: true
+                      });
+                      isStoryCameraOpen = true;
+                      setTimeout(() => {
+                          if (storyVideoEl && storyCameraStream) {
+                              storyVideoEl.srcObject = storyCameraStream;
+                              storyVideoEl.play().catch(() => {});
+                          }
+                      }, 100);
+                  } catch (err) {
+                      alert('Не удалось открыть камеру для Сторис: ' + err);
+                      if (window.__addHydraLog) window.__addHydraLog('STORY-CAM-ERR', String(err));
+                  }
+              }
+
+              function stopStoryCamera() {
+                  if (storyMediaRecorder && isRecordingStoryVideo) {
+                      storyMediaRecorder.stop();
+                      isRecordingStoryVideo = false;
+                  }
+                  if (storyCameraStream) {
+                      storyCameraStream.getTracks().forEach(t => t.stop());
+                      storyCameraStream = null;
+                  }
+                  isStoryCameraOpen = false;
+              }
+
+              function captureStoryPhotoFromCam() {
+                  if (!storyVideoEl) return;
+                  const canvas = document.createElement('canvas');
+                  canvas.width = storyVideoEl.videoWidth || 480;
+                  canvas.height = storyVideoEl.videoHeight || 640;
+                  canvas.getContext('2d').drawImage(storyVideoEl, 0, 0, canvas.width, canvas.height);
+                  newStoryImage = canvas.toDataURL('image/jpeg', 0.85);
+                  newStoryVideo = '';
+                  if (window.__addHydraLog) window.__addHydraLog('STORY-SNAP', 'Снято живое фото с камеры для Сторис');
+                  stopStoryCamera();
+              }
+
+              function toggleRecordStoryVideo() {
+                  if (!storyCameraStream) return;
+                  if (isRecordingStoryVideo && storyMediaRecorder) {
+                      storyMediaRecorder.stop();
+                      isRecordingStoryVideo = false;
+                      return;
+                  }
+                  storyRecordedChunks = [];
+                  try {
+                      storyMediaRecorder = new MediaRecorder(storyCameraStream, { videoBitsPerSecond: 250000, audioBitsPerSecond: 32000 });
+                  } catch (e) {
+                      storyMediaRecorder = new MediaRecorder(storyCameraStream);
+                  }
+                  storyMediaRecorder.ondataavailable = (ev) => {
+                      if (ev.data && ev.data.size > 0) storyRecordedChunks.push(ev.data);
+                  };
+                  storyMediaRecorder.onstop = () => {
+                      const blob = new Blob(storyRecordedChunks, { type: 'video/webm' });
+                      const reader = new FileReader();
+                      reader.onloadend = () => {
+                          newStoryVideo = reader.result;
+                          newStoryImage = '';
+                          if (window.__addHydraLog) window.__addHydraLog('STORY-VID-OK', 'Записано видео-сторис (' + blob.size + ' байт)');
+                          stopStoryCamera();
+                      };
+                      reader.readAsDataURL(blob);
+                  };
+                  storyMediaRecorder.start(250);
+                  isRecordingStoryVideo = true;
+                  if (window.__addHydraLog) window.__addHydraLog('STORY-VID-REC', 'Начата запись видео-сторис с камеры');
+              }
+
+              function handleStoryFile(e) {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  if (window.__addHydraLog) window.__addHydraLog('STORY-FILE', 'Выбран файл для Сторис: ' + file.name + ' (' + file.type + ')');
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                      if (file.type && file.type.startsWith('video/')) {
+                          newStoryVideo = reader.result;
+                          newStoryImage = '';
+                      } else {
+                          newStoryImage = reader.result;
+                          newStoryVideo = '';
+                      }
+                  };
+                  reader.readAsDataURL(file);
+              }
+
+              function publishHydraStory() {
+                  if (!newStoryText.trim() && !newStoryImage && !newStoryVideo) return;
+                  stopStoryCamera();
+                  loadHydraStories();
+                  hydraStories = [{
+                      id: 'st_' + Date.now(),
+                      author: 'Моя история',
+                      text: newStoryText.trim(),
+                      image: newStoryImage,
+                      video: newStoryVideo,
+                      createdAt: Date.now(),
+                      openViews: [],
+                      anonViews: 0
+                  }, ...hydraStories];
+                  localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
+                  if (window.__addHydraLog) window.__addHydraLog('STORY-PUB', 'Опубликована новая история на 24 часа');
+                  newStoryText = '';
+                  newStoryImage = '';
+                  newStoryVideo = '';
+                  showCreateStoryModal = false;
+              }
+
+              function openHydraStory(st) {
+                  const isAnon = localStorage.getItem('hydra_anon_stories') === '1';
+                  if (isAnon) {
+                      st.anonViews = (st.anonViews || 0) + 1;
+                  } else {
+                      if (!st.openViews) st.openViews = [];
+                      if (!st.openViews.includes('Вы (Открыто)')) st.openViews.push('Вы (Открыто)');
+                  }
+                  localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
+                  activeStoryModal = st;
+              }
+          """
+                  sb = sb[:idx1] + live_story_js + "</script>" + sb[idx2 + len(s2_marker):]
+
+              # Обновляем модалки showCreateStoryModal и activeStoryModal внизу Sidebar.svelte для поддержки живой камеры и видео!
+              m1_story = "{#if showCreateStoryModal}"
+              m2_story = "<style>"
+              mi1 = sb.find(m1_story)
+              mi2 = sb.find(m2_story, mi1) if mi1 != -1 else -1
+
+              if mi1 != -1 and mi2 != -1:
+                  new_story_modals_html = """{#if showCreateStoryModal}
+              <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.88); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+                  <div style="background: #1E1F22; border: 1px solid rgba(138,180,248,0.25); border-radius: 24px; padding: 18px; width: 100%; max-width: 380px; max-height: 90vh; overflow-y: auto;">
+                      <h3 style="margin: 0 0 4px; color: #E3E3E3;">📸 Новая история (на 24 часа)</h3>
+                      <p style="margin: 0 0 12px; font-size: 11px; color: #9AA0A6;">Снимите фото или видео напрямую с камеры или выберите из галереи.</p>
+
+                      {#if isStoryCameraOpen}
+                          <div style="position: relative; width: 100%; height: 280px; border-radius: 18px; overflow: hidden; background: #000; border: 2px solid #8AB4F8; margin-bottom: 10px;">
+                              <video bind:this={storyVideoEl} autoplay playsinline muted style="width: 100%; height: 100%; object-fit: cover;"></video>
+                              <div style="position: absolute; bottom: 10px; left: 0; right: 0; display: flex; justify-content: center; gap: 10px; padding: 0 10px;">
+                                  <button type="button" on:click={captureStoryPhotoFromCam} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 8px 14px; font-weight: 700; font-size: 12px;">📸 Фото</button>
+                                  <button type="button" on:click={toggleRecordStoryVideo} style="background: {isRecordingStoryVideo ? '#ff4757' : '#E3E3E3'}; color: {isRecordingStoryVideo ? '#fff' : '#121212'}; border: none; border-radius: 100px; padding: 8px 14px; font-weight: 700; font-size: 12px;">
+                                      {isRecordingStoryVideo ? '⏹ Стоп видео' : '🔴 Записать видео'}
+                                  </button>
+                                  <button type="button" on:click={() => toggleStoryCamera(true)} style="background: rgba(0,0,0,0.6); color: #fff; border: 1px solid rgba(255,255,255,0.3); border-radius: 100px; padding: 8px 12px; font-size: 12px;">🔄</button>
+                              </div>
+                          </div>
+                      {/if}
+
+                      {#if newStoryImage}
+                          <img src={newStoryImage} alt="preview" style="width: 100%; max-height: 220px; object-fit: cover; border-radius: 16px; margin-bottom: 10px;" />
+                      {/if}
+                      {#if newStoryVideo}
+                          <video controls playsinline src={newStoryVideo} style="width: 100%; max-height: 220px; border-radius: 16px; margin-bottom: 10px; background: #000;"></video>
+                      {/if}
+
+                      <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                          <button type="button" on:click={() => toggleStoryCamera(false)} style="flex: 1; padding: 11px; border-radius: 100px; background: {isStoryCameraOpen ? '#ff4757' : '#8AB4F8'}; color: {isStoryCameraOpen ? '#fff' : '#062E6F'}; border: none; font-weight: 700; font-size: 12px; cursor: pointer;">
+                              {isStoryCameraOpen ? '✕ Закрыть камеру' : '📹 Открыть камеру (Фото/Видео)'}
+                          </button>
+                          <label style="padding: 11px 14px; border-radius: 100px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.35); font-weight: 700; font-size: 12px; cursor: pointer; display: flex; align-items: center;">
+                              🖼 Галерея
+                              <input type="file" accept="image/*,video/*" style="display: none;" on:change={handleStoryFile} />
+                          </label>
+                      </div>
+
+                      <input type="text" placeholder="Текст или подпись к истории..." bind:value={newStoryText} style="width: 100%; padding: 12px; border-radius: 14px; background: #121212; color: #E3E3E3; border: 1px solid rgba(255,255,255,0.1); margin-bottom: 14px;" />
+                      <div style="display: flex; gap: 8px;">
+                          <button type="button" on:click={() => { stopStoryCamera(); showCreateStoryModal = false; }} style="flex: 1; padding: 12px; border-radius: 100px; background: #28292D; color: #E3E3E3; border: none; font-weight: 600;">Отмена</button>
+                          <button type="button" on:click={publishHydraStory} style="flex: 1; padding: 12px; border-radius: 100px; background: #8AB4F8; color: #062E6F; font-weight: 700; border: none;">Опубликовать</button>
+                      </div>
+                  </div>
+              </div>
+          {/if}
+
+          {#if activeStoryModal}
+              <div on:click={() => activeStoryModal = null} style="position: fixed; inset: 0; background: rgba(18,18,18,0.96); z-index: 99999; display: flex; flex-direction: column; justify-content: space-between; padding: 24px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; padding-top: env(safe-area-inset-top, 10px);">
+                      <div>
+                          <div style="font-weight: 700; color: #E3E3E3; font-size: 16px;">{activeStoryModal.author}</div>
+                          <div style="font-size: 12px; color: #8AB4F8;">⏱ Активна 24 часа • Защищено E2EE</div>
+                      </div>
+                      <button type="button" style="background: #28292D; color: #fff; border: none; border-radius: 50%; width: 38px; height: 38px; font-size: 16px;">✕</button>
+                  </div>
+                  <div style="text-align: center; margin: auto 0;" on:click|stopPropagation>
+                      {#if activeStoryModal.video}
+                          <video controls autoplay playsinline src={activeStoryModal.video} style="max-width: 100%; max-height: 58vh; border-radius: 20px; background: #000;"></video>
+                      {:else if activeStoryModal.image}
+                          <img src={activeStoryModal.image} alt="story" style="max-width: 100%; max-height: 58vh; border-radius: 20px;" />
+                      {/if}
+                      {#if activeStoryModal.text}
+                          <div style="margin-top: 16px; font-size: 20px; color: #E3E3E3; font-weight: 600;">{activeStoryModal.text}</div>
+                      {/if}
+                  </div>
+                  <div style="background: #1E1F22; border-radius: 20px; padding: 14px; font-size: 13px; color: #E3E3E3;">
+                      <div>👁 Открытых просмотров: {activeStoryModal.openViews?.length || 0} {activeStoryModal.openViews?.length ? '(' + activeStoryModal.openViews.join(', ') + ')' : ''}</div>
+                      <div style="color: #8AB4F8; margin-top: 4px;">🕵️ Анонимных просмотров (Невидимка): {activeStoryModal.anonViews || 0}</div>
+                  </div>
+              </div>
+          {/if}
+          """
+                  sb = sb[:mi1] + new_story_modals_html + "\n<style>" + sb[mi2 + len(m2_story):]
+
               with open(sidebar_path, "w", encoding="utf-8") as f:
                   f.write(sb)
-              print("[OK] Sidebar.svelte обновлён")
-
-          # 6. frontend/index.html: убираем фоновый спам GetNetworkStatus из логов и увеличиваем длину логов до 600 символов
-          index_html_path = "frontend/index.html"
-          if os.path.exists(index_html_path):
-              with open(index_html_path, "r", encoding="utf-8") as f:
-                  ih = f.read()
-              ih = ih.replace(".slice(0, 140)", ".slice(0, 600)")
-              ih = ih.replace(".slice(0, 100)", ".slice(0, 600)")
-              ih = ih.replace(
-                  "if (u.indexOf('/api/') !== -1 && u.indexOf('/api/events') === -1 && u.indexOf('AppendDebugLog') === -1)",
-                  "if (u.indexOf('/api/') !== -1 && u.indexOf('/api/events') === -1 && u.indexOf('AppendDebugLog') === -1 && u.indexOf('GetNetworkStatus') === -1)"
-              )
-              with open(index_html_path, "w", encoding="utf-8") as f:
-                  f.write(ih)
-              print("[OK] frontend/index.html обновлён")
+              print("[OK] Sidebar.svelte: добавлена живая камера для снятия фото и записи видео в Сторис на 24ч")
           PYEOF
-          python3 apply_hardware_clean.py
-          rm -f apply_hardware_clean.py
+          python3 apply_stage5_fixes.py
+          rm -f apply_stage5_fixes.py
           gofmt -w internal/ mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -833,13 +859,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Hardware Biometrics & FileChooser Fixes
+      - name: Commit Live Camera, Instant Lock, Startup Visualizer & Settings Logger
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Add real Android BiometricPrompt scanner, WebView onShowFileChooser & clean Auth/Settings [skip ci]"
+            git commit -m "Add live camera QR & video Stories, instant onPause lock, startup security visualizer & Settings log viewer [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
