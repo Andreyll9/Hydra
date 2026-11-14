@@ -121,17 +121,13 @@
     
     if (typeof window !== 'undefined') {
         window.__lockHydraNow = () => {
-            if (typeof isLoggedIn !== 'undefined' && isLoggedIn) {
-                isLoggedIn = false;
+            if (screen === 'main') {
+                screen = 'login';
                 showSettings = false;
-                if (window.__addHydraLog) window.__addHydraLog('SECURITY-LOCK', '🔒 Приложение свёрнуто — сессия мгновенно заблокирована!');
+                if (window.__setHydraBlur) window.__setHydraBlur(true);
+                if (window.__addHydraLog) window.__addHydraLog('SECURITY-LOCK', '🔒 Приложение свёрнуто — включён экран блокировки и матовый фильтр!');
             }
         };
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'hidden') {
-                window.__lockHydraNow();
-            }
-        });
     }
     
     onMount(async () => {
@@ -156,6 +152,7 @@
             console.log("[App] Found existing session, skipping login to:", myInfo.Nickname);
             await loadMyInfo();
             screen = 'main';
+          if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
             loadContacts();
         }
     } catch (e) { console.log("[App] No active session on startup"); }
@@ -312,6 +309,7 @@
       try {
           await loadMyInfo();
           screen = 'main';
+          if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
           networkStatus = await AppActions.GetNetworkStatus();
           mobileView.set('list');
           
@@ -334,6 +332,7 @@
           console.error("[App] onLoginSuccess failed:", err);
           showToast("Ошибка при загрузке данных: " + err, 'error');
           screen = 'main';
+          if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
       } finally {
           isInitializing = false;
       }
@@ -989,7 +988,7 @@
                 {:else if $mobileView === 'settings'}
                      <div class="content-area">
                         <Settings 
-                            {profileNickname} {profileBio} {profileAvatar} {routerSettings} 
+                            bind:profileNickname={profileNickname} bind:profileBio={profileBio} bind:profileAvatar={profileAvatar} {routerSettings} 
                             settingsCategories={[
                                 {id: 'profile', name: 'Профиль', icon: Icons.User},
                                 {id: 'privacy', name: 'Приватность', icon: Icons.Lock},

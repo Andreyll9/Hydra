@@ -64,9 +64,13 @@
     };
     document.addEventListener('visibilitychange', function() {
       if (document.visibilityState === 'hidden') {
+        if (window.__lockHydraNow) window.__lockHydraNow();
         window.__setHydraBlur(true);
       } else {
-        setTimeout(function() { window.__setHydraBlur(false); }, 350);
+        setTimeout(function() {
+          window.__setHydraBlur(false);
+          if (window.__onHydraAppResume) window.__onHydraAppResume();
+        }, 250);
       }
     });
     

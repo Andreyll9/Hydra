@@ -56,16 +56,26 @@
     let isPingingServer = false;
     async function verifyHydraConnection() {
         isPingingServer = true;
-        pingStatusText = '⏳ Проверка канала через ядро Go...';
+        pingStatusText = '⏳ Пинг сервера 191.223.137.164:8085...';
+        const t0 = Date.now();
+        try {
+            const r = await fetch('http://191.223.137.164:8085/health?pub=' + encodeURIComponent(myDestination || 'ping'), { cache: 'no-store' });
+            const d = await r.json();
+            const rtt = Date.now() - t0;
+            if (d && d.status === 'ok') {
+                pingStatusText = `✅ Канал E2EE активен! Отклик: ${rtt} мс (онлайн: ${d.online_peers ?? 1})`;
+                return;
+            }
+        } catch (e) {}
         try {
             const info = await AppActions.GetAppAboutInfo();
-            if (info && info.i2p_version && info.i2p_version.includes('✅')) {
+            if (info && info.i2p_version) {
                 pingStatusText = info.i2p_version;
             } else {
-                pingStatusText = '❌ VPS 191.223.137.164:8085 не откликнулся. Проверьте на VPS: ufw allow 8085/tcp';
+                pingStatusText = '❌ Узел 191.223.137.164:8085 не ответил';
             }
         } catch (e) {
-            pingStatusText = '❌ Ошибка проверки сокета: ' + String(e);
+            pingStatusText = '❌ Ошибка проверки: ' + String(e);
         } finally {
             isPingingServer = false;
         }
@@ -405,7 +415,7 @@
             </div>
                 {:else if activeSettingsTab === 'network'}
             <div class="settings-section animate-fade-in" style="max-width: 100%; box-sizing: border-box;">
-                {#if !isMobile}
+                {#if false}
                     <h2 class="section-title">Сеть и Сервер</h2>
                     <p class="section-desc">Параметры шифрования и локального ускорения</p>
                 {/if}
@@ -417,8 +427,8 @@
                         <span class="summary-hint">(нажмите, чтобы развернуть)</span>
                     </summary>
                     <div class="destination-box" style="word-break: break-all;">
-                        <p class="dest-text">{identity}</p>
-                        <button type="button" class="btn-small btn-primary" on:click={onCopyDestination}>Скопировать ключ</button>
+                        <p class="dest-text">{myDestination}</p>
+                        <button type="button" class="btn-small btn-primary" on:click={() => { AppActions.CopyToClipboard(myDestination); alert("✅ Ключ скопирован"); }}>Скопировать ключ</button>
                     </div>
                 </details>
 
@@ -457,8 +467,8 @@
                     </button>
 
                     <div class="setting-item bg-box" style="margin-top: 14px; display: flex; flex-direction: column; gap: 10px; max-width: 100%; box-sizing: border-box;">
-                        <button type="button" class="btn-primary" on:click={verifyHydraConnection} disabled={isCheckingPing} style="width: 100%; background: #8AB4F8; color: #062E6F; font-weight: 700; border-radius: 100px; padding: 12px; border: none; cursor: pointer; box-sizing: border-box;">
-                            {isCheckingPing ? '⏳ Проверка связи...' : '⚡ Проверить соединение с сервером'}
+                        <button type="button" class="btn-primary" on:click={verifyHydraConnection} disabled={isPingingServer} style="width: 100%; background: #8AB4F8; color: #062E6F; font-weight: 700; border-radius: 100px; padding: 12px; border: none; cursor: pointer; box-sizing: border-box;">
+                            {isPingingServer ? '⏳ Проверка связи...' : '⚡ Проверить соединение с сервером'}
                         </button>
                         {#if pingStatusText}
                             <div style="font-size: 13px; color: #E3E3E3; text-align: center;">{pingStatusText}</div>
@@ -485,13 +495,23 @@
                                 </div>
                             </div>
 
-                            <div class="info-item-fancy">
+                            <div class="info-item-fancy" role="button" tabindex="0" on:click={handleLicenseTap} on:keydown={(e) => e.key === 'Enter' && handleLicenseTap()} style="cursor: pointer; user-select: none; border: 1px solid rgba(138,180,248,0.25);">
                                 <div class="info-icon">{@html Icons.File}</div>
                                 <div class="info-content">
-                                    <span class="info-label-fancy">Лицензия</span>
+                                    <span class="info-label-fancy">Лицензия {licenseTapCount > 0 ? `(ещё ${6 - licenseTapCount} наж. до меню разработчика)` : ''}</span>
                                     <span class="info-value-fancy">{aboutInfo.license || 'MIT / Open Source'}</span>
                                 </div>
                             </div>
+
+                            {#if devMenuUnlocked}
+                                <div class="update-action-row" role="button" tabindex="0" on:click={() => { refreshSettingsLogs(); refreshLanWifiInfo(); showSecretDevModal = true; }} on:keydown={(e) => e.key === 'Enter' && (showSecretDevModal = true)} style="background: rgba(138,180,248,0.14); border: 1.5px solid #8AB4F8;">
+                                    <div class="info-icon accent">🛠️</div>
+                                    <div class="info-content">
+                                        <span class="info-value-fancy accent">Меню разработчика (Логи и Тест потоков)</span>
+                                    </div>
+                                    <div class="chevron">{@html Icons.ChevronRight}</div>
+                                </div>
+                            {/if}
 
                             <div class="info-item-fancy">
                                 <div class="info-icon">{@html Icons.Globe}</div>

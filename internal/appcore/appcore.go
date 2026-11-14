@@ -284,18 +284,31 @@ func (a *AppCore) UpdateMyProfile(nickname, bio, avatar string) error {
 			"pub_key":   pub,
 			"signature": base64.StdEncoding.EncodeToString(sig),
 		})
-		client := &http.Client{Timeout: 6 * time.Second}
+		client := &http.Client{Timeout: 12 * time.Second}
 		resp, err := client.Post("http://191.223.137.164:8085/nick/register", "application/json", bytes.NewReader(reqBody))
 		if err != nil {
-			return fmt.Errorf("нет связи с сервером никнеймов (191.223.137.164:8085): %v", err)
-		}
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode == http.StatusConflict {
-			return fmt.Errorf("никнейм @%s уже занят другим аккаунтом (ответ VPS: %s)", cleanNick, strings.TrimSpace(string(bodyBytes)))
-		}
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("сервер отклонил никнейм @%s (код %d: %s)", cleanNick, resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+			log.Printf("[AppCore] Warning: nickname server unreachable (%v), saving locally", err)
+		} else {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusConflict {
+				// Проверяем, не принадлежит ли этот ник уже нашему собственному ключу
+				chkResp, chkErr := client.Get("http://191.223.137.164:8085/nick/resolve?nick=" + cleanNick)
+				alreadyOurs := false
+				if chkErr == nil && chkResp != nil {
+					var resolved map[string]string
+					_ = json.NewDecoder(chkResp.Body).Decode(&resolved)
+					chkResp.Body.Close()
+					if resolved["pub_key"] == pub {
+						alreadyOurs = true
+					}
+				}
+				if !alreadyOurs {
+					return fmt.Errorf("никнейм @%s уже закреплён за другим пользователем", cleanNick)
+				}
+			} else if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("сервер отклонил никнейм @%s (код %d: %s)", cleanNick, resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+			}
 		}
 	}
 	log.Printf("[AppCore] Updating profile: nickname=%s, bio=%s, avatarLen=%d", nickname, bio, len(avatar))
