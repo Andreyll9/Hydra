@@ -38,9 +38,9 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply All 8 Fixes (Network Handshake, Save Logs, Gallery Lock, Live QR, Round Video & UI)
+      - name: Apply All 8 Fixes Safely Without Breaking Braces in messages.go
         run: |
-          cat << 'PYEOF' > fix_all.py
+          cat << 'PYEOF' > fix_all_safe.py
           import os, re
 
           # 1. MainActivity.kt: пропуск блокировки при открытии Галереи + сохранение логов в файл Downloads
@@ -137,7 +137,8 @@ jobs:
                   f.write(kt)
               print("[OK] 1. MainActivity.kt обновлён")
 
-          # 2. Сетевой движок Go: убираем 60-сек handshake timeout и копируем I2PAddress -> PublicKey
+          # 2. Сетевой движок Go (internal/appcore/messages.go и contacts.go) БЕЗ слома скобок!
+          #    Вместо удаления блоков if/else просто подставляем PublicKey = I2PAddress ДО проверки!
           for root, _, files in os.walk("internal"):
               for fn in files:
                   if not fn.endswith(".go"):
@@ -146,20 +147,27 @@ jobs:
                   with open(fp, "r", encoding="utf-8") as f:
                       gc = f.read()
                   orig = gc
-                  if "recipient did not respond with public key" in gc:
-                      gc = re.sub(
-                          r'if\s+([a-zA-Z0-9_\.]+)\.PublicKey\s*==\s*""\s*\{[\s\S]*?recipient did not respond with public key[\s\S]*?\n\s*\}',
-                          r'if \1.PublicKey == "" {\n\t\t\1.PublicKey = \1.I2PAddress\n\t}',
-                          gc
-                      )
-                      gc = gc.replace('return fmt.Errorf("handshake timeout: recipient did not respond with public key")', 'return nil')
+
+                  # Безопасная однострочная подстановка: если PublicKey пуст, сразу копируем в него I2PAddress ПЕРЕД проверкой!
+                  gc = gc.replace(
+                      'if contact.PublicKey == "" {',
+                      'if contact.PublicKey == "" && contact.I2PAddress != "" { contact.PublicKey = contact.I2PAddress }\n\tif contact.PublicKey == "" {'
+                  )
+                  gc = gc.replace(
+                      'if c.PublicKey == "" {',
+                      'if c.PublicKey == "" && c.I2PAddress != "" { c.PublicKey = c.I2PAddress }\n\tif c.PublicKey == "" {'
+                  )
+                  # И сокращаем ожидание с 60 секунд до 2 секунд на случай резервного пути
+                  gc = gc.replace("60 * time.Second", "2 * time.Second")
+
                   if "func (a *AppCore) AddContact(" in gc:
                       gc = gc.replace('PublicKey:  "",', 'PublicKey:  cleanDest,')
                       gc = re.sub(r'(I2PAddress:\s*([a-zA-Z0-9_]+),\s*\n\s*PublicKey:\s*)""', r'\1\2', gc)
+
                   if gc != orig:
                       with open(fp, "w", encoding="utf-8") as f:
                           f.write(gc)
-                      print("[OK] 2. Сетевой движок обновлён:", fp)
+                      print("[OK] 2. Безопасно обновлён сетевой модуль:", fp)
 
           # 3. App.svelte: чиним ReferenceError: isAuthenticated is not defined
           app_path = "frontend/src/App.svelte"
@@ -329,8 +337,8 @@ jobs:
                   f.write(ch)
               print("[OK] 7. Chat.svelte обновлён")
           PYEOF
-          python3 fix_all.py
-          rm -f fix_all.py
+          python3 fix_all_safe.py
+          rm -f fix_all_safe.py
           gofmt -w internal/ mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -346,7 +354,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Fix handshake timeout, save logs to file, skip lock on gallery, live QR camera & round video circles [skip ci]"
+            git commit -m "Safely fix handshake timeout in messages.go, save logs to file, skip lock on gallery, live QR camera & round video circles [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
