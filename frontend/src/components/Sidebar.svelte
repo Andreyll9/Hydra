@@ -98,18 +98,26 @@
         }
     }
 
-    // === ЭТАП 4: СТОРИС НА 24 ЧАСА ===
+    // === ЭТАП 4: СТОРИС НА 24 ЧАСА (ФОТО + ЖИВОЕ ВИДЕО С КАМЕРЫ) ===
     let hydraStories = [];
     let activeStoryModal = null;
     let showCreateStoryModal = false;
     let newStoryText = '';
     let newStoryImage = '';
+    let newStoryVideo = '';
+
+    let isStoryCameraOpen = false;
+    let storyCameraStream = null;
+    let storyVideoEl = null;
+    let isRecordingStoryVideo = false;
+    let storyMediaRecorder = null;
+    let storyRecordedChunks = [];
+    let storyFacingMode = 'user';
 
     function loadHydraStories() {
         try {
             const raw = JSON.parse(localStorage.getItem('hydra_stories_v1') || '[]');
             const now = Date.now();
-            // Очищаем истории старше 24 часов (86400000 мс)
             hydraStories = raw.filter(s => (now - s.createdAt) < 86400000);
             localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
         } catch (e) {
@@ -118,45 +126,126 @@
     }
     loadHydraStories();
 
-    async function pickNativeStoryImage() {
-        if (window.__addHydraLog) window.__addHydraLog('STORY', 'Открытие галереи для выбора фото в Сторис...');
+    async function toggleStoryCamera(switchCam = false) {
+        if (isStoryCameraOpen && !switchCam) {
+            stopStoryCamera();
+            return;
+        }
+        if (switchCam) {
+            storyFacingMode = storyFacingMode === 'user' ? 'environment' : 'user';
+            stopStoryCamera();
+        }
+        if (window.__addHydraLog) window.__addHydraLog('STORY-CAM', 'Запуск живой камеры для Сторис (' + storyFacingMode + ')');
         try {
-            const path = await AppActions.SelectImage();
-            if (path) {
-                const b64 = await AppActions.GetFileBase64(path);
-                if (b64) {
-                    newStoryImage = 'data:image/jpeg;base64,' + b64;
-                    if (window.__addHydraLog) window.__addHydraLog('STORY-OK', 'Фото загружено в Сторис (' + b64.length + ' симв.)');
+            storyCameraStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: storyFacingMode, width: { ideal: 480 }, height: { ideal: 640 } },
+                audio: true
+            });
+            isStoryCameraOpen = true;
+            setTimeout(() => {
+                if (storyVideoEl && storyCameraStream) {
+                    storyVideoEl.srcObject = storyCameraStream;
+                    storyVideoEl.play().catch(() => {});
                 }
-            }
+            }, 100);
         } catch (err) {
-            if (window.__addHydraLog) window.__addHydraLog('STORY-ERR', 'Ошибка выбора фото: ' + err);
+            alert('Не удалось открыть камеру для Сторис: ' + err);
+            if (window.__addHydraLog) window.__addHydraLog('STORY-CAM-ERR', String(err));
         }
     }
+
+    function stopStoryCamera() {
+        if (storyMediaRecorder && isRecordingStoryVideo) {
+            storyMediaRecorder.stop();
+            isRecordingStoryVideo = false;
+        }
+        if (storyCameraStream) {
+            storyCameraStream.getTracks().forEach(t => t.stop());
+            storyCameraStream = null;
+        }
+        isStoryCameraOpen = false;
+    }
+
+    function captureStoryPhotoFromCam() {
+        if (!storyVideoEl) return;
+        const canvas = document.createElement('canvas');
+        canvas.width = storyVideoEl.videoWidth || 480;
+        canvas.height = storyVideoEl.videoHeight || 640;
+        canvas.getContext('2d').drawImage(storyVideoEl, 0, 0, canvas.width, canvas.height);
+        newStoryImage = canvas.toDataURL('image/jpeg', 0.85);
+        newStoryVideo = '';
+        if (window.__addHydraLog) window.__addHydraLog('STORY-SNAP', 'Снято живое фото с камеры для Сторис');
+        stopStoryCamera();
+    }
+
+    function toggleRecordStoryVideo() {
+        if (!storyCameraStream) return;
+        if (isRecordingStoryVideo && storyMediaRecorder) {
+            storyMediaRecorder.stop();
+            isRecordingStoryVideo = false;
+            return;
+        }
+        storyRecordedChunks = [];
+        try {
+            storyMediaRecorder = new MediaRecorder(storyCameraStream, { videoBitsPerSecond: 250000, audioBitsPerSecond: 32000 });
+        } catch (e) {
+            storyMediaRecorder = new MediaRecorder(storyCameraStream);
+        }
+        storyMediaRecorder.ondataavailable = (ev) => {
+            if (ev.data && ev.data.size > 0) storyRecordedChunks.push(ev.data);
+        };
+        storyMediaRecorder.onstop = () => {
+            const blob = new Blob(storyRecordedChunks, { type: 'video/webm' });
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                newStoryVideo = reader.result;
+                newStoryImage = '';
+                if (window.__addHydraLog) window.__addHydraLog('STORY-VID-OK', 'Записано видео-сторис (' + blob.size + ' байт)');
+                stopStoryCamera();
+            };
+            reader.readAsDataURL(blob);
+        };
+        storyMediaRecorder.start(250);
+        isRecordingStoryVideo = true;
+        if (window.__addHydraLog) window.__addHydraLog('STORY-VID-REC', 'Начата запись видео-сторис с камеры');
+    }
+
     function handleStoryFile(e) {
         const file = e.target.files?.[0];
         if (!file) return;
-        if (window.__addHydraLog) window.__addHydraLog('STORY-FILE', 'Выбрана картинка для Сторис: ' + file.name + ' (' + file.size + ' байт, тип=' + file.type + ')');
+        if (window.__addHydraLog) window.__addHydraLog('STORY-FILE', 'Выбран файл для Сторис: ' + file.name + ' (' + file.type + ')');
         const reader = new FileReader();
-        reader.onload = () => { newStoryImage = reader.result; };
+        reader.onload = () => {
+            if (file.type && file.type.startsWith('video/')) {
+                newStoryVideo = reader.result;
+                newStoryImage = '';
+            } else {
+                newStoryImage = reader.result;
+                newStoryVideo = '';
+            }
+        };
         reader.readAsDataURL(file);
     }
 
     function publishHydraStory() {
-        if (!newStoryText.trim() && !newStoryImage) return;
+        if (!newStoryText.trim() && !newStoryImage && !newStoryVideo) return;
+        stopStoryCamera();
         loadHydraStories();
         hydraStories = [{
             id: 'st_' + Date.now(),
             author: 'Моя история',
             text: newStoryText.trim(),
             image: newStoryImage,
+            video: newStoryVideo,
             createdAt: Date.now(),
             openViews: [],
             anonViews: 0
         }, ...hydraStories];
         localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
+        if (window.__addHydraLog) window.__addHydraLog('STORY-PUB', 'Опубликована новая история на 24 часа');
         newStoryText = '';
         newStoryImage = '';
+        newStoryVideo = '';
         showCreateStoryModal = false;
     }
 
@@ -171,7 +260,6 @@
         localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
         activeStoryModal = st;
     }
-    
 </script>
 
 {#if !isMobile}
@@ -488,20 +576,44 @@
 
 
 {#if showCreateStoryModal}
-    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 20px;">
-        <div style="background: #1E1F22; border: 1px solid rgba(138,180,248,0.25); border-radius: 24px; padding: 20px; width: 100%; max-width: 360px;">
-            <h3 style="margin: 0 0 6px; color: #E3E3E3;">📸 Выложить историю (на 24 часа)</h3>
-            <p style="margin: 0 0 14px; font-size: 12px; color: #9AA0A6;">История автоматически удалится ровно через 24 часа после публикации.</p>
+    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.88); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+        <div style="background: #1E1F22; border: 1px solid rgba(138,180,248,0.25); border-radius: 24px; padding: 18px; width: 100%; max-width: 380px; max-height: 90vh; overflow-y: auto;">
+            <h3 style="margin: 0 0 4px; color: #E3E3E3;">📸 Новая история (на 24 часа)</h3>
+            <p style="margin: 0 0 12px; font-size: 11px; color: #9AA0A6;">Снимите фото или видео напрямую с камеры или выберите из галереи.</p>
+
+            {#if isStoryCameraOpen}
+                <div style="position: relative; width: 100%; height: 280px; border-radius: 18px; overflow: hidden; background: #000; border: 2px solid #8AB4F8; margin-bottom: 10px;">
+                    <video bind:this={storyVideoEl} autoplay playsinline muted style="width: 100%; height: 100%; object-fit: cover;"></video>
+                    <div style="position: absolute; bottom: 10px; left: 0; right: 0; display: flex; justify-content: center; gap: 10px; padding: 0 10px;">
+                        <button type="button" on:click={captureStoryPhotoFromCam} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 8px 14px; font-weight: 700; font-size: 12px;">📸 Фото</button>
+                        <button type="button" on:click={toggleRecordStoryVideo} style="background: {isRecordingStoryVideo ? '#ff4757' : '#E3E3E3'}; color: {isRecordingStoryVideo ? '#fff' : '#121212'}; border: none; border-radius: 100px; padding: 8px 14px; font-weight: 700; font-size: 12px;">
+                            {isRecordingStoryVideo ? '⏹ Стоп видео' : '🔴 Записать видео'}
+                        </button>
+                        <button type="button" on:click={() => toggleStoryCamera(true)} style="background: rgba(0,0,0,0.6); color: #fff; border: 1px solid rgba(255,255,255,0.3); border-radius: 100px; padding: 8px 12px; font-size: 12px;">🔄</button>
+                    </div>
+                </div>
+            {/if}
+
             {#if newStoryImage}
                 <img src={newStoryImage} alt="preview" style="width: 100%; max-height: 220px; object-fit: cover; border-radius: 16px; margin-bottom: 10px;" />
             {/if}
-            <label style="display: block; text-align: center; padding: 12px; border-radius: 100px; background: #28292D; color: #8AB4F8; font-weight: 700; cursor: pointer; margin-bottom: 10px;">
-                📷 Выбрать фото / Снять с камеры
-                <input type="file" accept="image/*" style="display: none;" on:change={handleStoryFile} />
-            </label>
+            {#if newStoryVideo}
+                <video controls playsinline src={newStoryVideo} style="width: 100%; max-height: 220px; border-radius: 16px; margin-bottom: 10px; background: #000;"></video>
+            {/if}
+
+            <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                <button type="button" on:click={() => toggleStoryCamera(false)} style="flex: 1; padding: 11px; border-radius: 100px; background: {isStoryCameraOpen ? '#ff4757' : '#8AB4F8'}; color: {isStoryCameraOpen ? '#fff' : '#062E6F'}; border: none; font-weight: 700; font-size: 12px; cursor: pointer;">
+                    {isStoryCameraOpen ? '✕ Закрыть камеру' : '📹 Открыть камеру (Фото/Видео)'}
+                </button>
+                <label style="padding: 11px 14px; border-radius: 100px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.35); font-weight: 700; font-size: 12px; cursor: pointer; display: flex; align-items: center;">
+                    🖼 Галерея
+                    <input type="file" accept="image/*,video/*" style="display: none;" on:change={handleStoryFile} />
+                </label>
+            </div>
+
             <input type="text" placeholder="Текст или подпись к истории..." bind:value={newStoryText} style="width: 100%; padding: 12px; border-radius: 14px; background: #121212; color: #E3E3E3; border: 1px solid rgba(255,255,255,0.1); margin-bottom: 14px;" />
             <div style="display: flex; gap: 8px;">
-                <button type="button" on:click={() => showCreateStoryModal = false} style="flex: 1; padding: 12px; border-radius: 100px; background: #28292D; color: #E3E3E3; border: none; font-weight: 600;">Отмена</button>
+                <button type="button" on:click={() => { stopStoryCamera(); showCreateStoryModal = false; }} style="flex: 1; padding: 12px; border-radius: 100px; background: #28292D; color: #E3E3E3; border: none; font-weight: 600;">Отмена</button>
                 <button type="button" on:click={publishHydraStory} style="flex: 1; padding: 12px; border-radius: 100px; background: #8AB4F8; color: #062E6F; font-weight: 700; border: none;">Опубликовать</button>
             </div>
         </div>
@@ -517,8 +629,10 @@
             </div>
             <button type="button" style="background: #28292D; color: #fff; border: none; border-radius: 50%; width: 38px; height: 38px; font-size: 16px;">✕</button>
         </div>
-        <div style="text-align: center; margin: auto 0;">
-            {#if activeStoryModal.image}
+        <div style="text-align: center; margin: auto 0;" on:click|stopPropagation>
+            {#if activeStoryModal.video}
+                <video controls autoplay playsinline src={activeStoryModal.video} style="max-width: 100%; max-height: 58vh; border-radius: 20px; background: #000;"></video>
+            {:else if activeStoryModal.image}
                 <img src={activeStoryModal.image} alt="story" style="max-width: 100%; max-height: 58vh; border-radius: 20px;" />
             {/if}
             {#if activeStoryModal.text}

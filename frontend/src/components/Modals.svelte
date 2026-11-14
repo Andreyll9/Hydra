@@ -69,38 +69,113 @@
     // Close I2P when contact profile closes
     $: if (!showContactProfile) showFullAddress = false;
 
+    let isLiveScanningQR = false;
+    let qrVideoStream = null;
+    let qrScanTimer = null;
+    let qrVideoEl = null;
+    let qrStatusMsg = '';
+
+    async function startLiveQRScanner() {
+        if (isLiveScanningQR) {
+            stopLiveQRScanner();
+            return;
+        }
+        qrStatusMsg = '⏳ Запуск камеры для сканирования QR...';
+        if (window.__addHydraLog) window.__addHydraLog('QR-CAM', 'Открытие прямой камеры для сканирования QR-кода...');
+        try {
+            if (window.HydraNative?.requestMissingPermissions) {
+                window.HydraNative.requestMissingPermissions();
+            }
+            qrVideoStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 640 } },
+                audio: false
+            });
+            isLiveScanningQR = true;
+            qrStatusMsg = '🎯 Наведите камеру на QR-код друга...';
+            setTimeout(() => {
+                if (qrVideoEl && qrVideoStream) {
+                    qrVideoEl.srcObject = qrVideoStream;
+                    qrVideoEl.play().catch(() => {});
+                }
+            }, 100);
+
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            qrScanTimer = setInterval(() => {
+                if (!qrVideoEl || qrVideoEl.readyState !== qrVideoEl.HAVE_ENOUGH_DATA) return;
+                canvas.width = qrVideoEl.videoWidth || 480;
+                canvas.height = qrVideoEl.videoHeight || 480;
+                ctx.drawImage(qrVideoEl, 0, 0, canvas.width, canvas.height);
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const code = jsQR(imageData.data, imageData.width, imageData.height);
+                if (code && code.data) {
+                    addContactAddress = code.data.trim();
+                    if (!addContactName.trim()) addContactName = 'Контакт ' + addContactAddress.slice(0, 6);
+                    qrStatusMsg = '✅ QR-код успешно считан камерой!';
+                    if (window.__addHydraLog) window.__addHydraLog('QR-CAM-OK', 'Считан QR с живой камеры: ' + addContactAddress);
+                    stopLiveQRScanner();
+                }
+            }, 220);
+        } catch (err) {
+            qrStatusMsg = '❌ Не удалось открыть камеру: ' + err;
+            if (window.__addHydraLog) window.__addHydraLog('QR-CAM-ERR', String(err));
+        }
+    }
+
+    function stopLiveQRScanner() {
+        if (qrScanTimer) {
+            clearInterval(qrScanTimer);
+            qrScanTimer = null;
+        }
+        if (qrVideoStream) {
+            qrVideoStream.getTracks().forEach(t => t.stop());
+            qrVideoStream = null;
+        }
+        isLiveScanningQR = false;
+    }
+
+    $: if (!showAddContact && isLiveScanningQR) {
+        stopLiveQRScanner();
+    }
+
     async function handleScanQRFile(e) {
         const file = e.target.files?.[0];
         if (!file) return;
+        if (window.__addHydraLog) window.__addHydraLog('QR-FILE', 'Выбран файл QR из галереи: ' + file.name);
         try {
-            if ('BarcodeDetector' in window) {
-                const bitmap = await createImageBitmap(file);
-                const detector = new BarcodeDetector({ formats: ['qr_code'] });
-                const codes = await detector.detect(bitmap);
-                if (codes.length > 0 && codes[0].rawValue) {
-                    addContactAddress = codes[0].rawValue.trim();
-                    return;
-                }
+            const img = new Image();
+            const url = URL.createObjectURL(file);
+            await new Promise((resolve, reject) => {
+                img.onload = resolve;
+                img.onerror = reject;
+                img.src = url;
+            });
+            const canvas = document.createElement('canvas');
+            const maxDim = 1024;
+            let w = img.width, h = img.height;
+            if (w > maxDim || h > maxDim) {
+                if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+                else { w = Math.round((w * maxDim) / h); h = maxDim; }
             }
-            alert('На этом устройстве отсканируйте QR камерой и нажмите Вставить');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, w, h);
+            const imageData = ctx.getImageData(0, 0, w, h);
+            URL.revokeObjectURL(url);
+            const code = jsQR(imageData.data, imageData.width, imageData.height);
+            if (code && code.data) {
+                addContactAddress = code.data.trim();
+                if (!addContactName.trim()) addContactName = 'Контакт ' + addContactAddress.slice(0, 6);
+                qrStatusMsg = '✅ QR-код распознан из картинки!';
+                if (window.__addHydraLog) window.__addHydraLog('QR-FILE-OK', 'Распознан адрес: ' + addContactAddress);
+                return;
+            }
+            qrStatusMsg = '⚠️ QR-код не найден на картинке';
         } catch (err) {
-            console.error(err);
+            qrStatusMsg = '❌ Ошибка чтения файла: ' + err;
         }
     }
-
-
-    function formatHydraKey(raw) {
-        if (!raw) return '';
-        const clean = String(raw).trim();
-        if (clean.startsWith('HYDRA-KEY-')) return clean;
-        try {
-            return 'HYDRA-KEY-' + btoa(unescape(encodeURIComponent(clean))).replace(/=/g, '');
-        } catch (e) {
-            return 'HYDRA-KEY-' + clean.split(' ').join('-');
-        }
-    }
-    let createEntityType = 'folder'; // 'folder' | 'group' | 'channel'
-    
 </script>
 
 <!-- Custom Confirm Modal -->

@@ -118,6 +118,22 @@
         });
     }
 
+    
+    if (typeof window !== 'undefined') {
+        window.__lockHydraNow = () => {
+            if (isAuthenticated) {
+                isAuthenticated = false;
+                showSettings = false;
+                if (window.__addHydraLog) window.__addHydraLog('SECURITY-LOCK', '🔒 Приложение свёрнуто — сессия мгновенно заблокирована!');
+            }
+        };
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                window.__lockHydraNow();
+            }
+        });
+    }
+    
     onMount(async () => {
     updateIsMobile();
     window.addEventListener('resize', updateIsMobile);

@@ -267,48 +267,80 @@
         return clean;
     }
 
-    let systemPermStatus = null;
+    let systemPermStatus = {
+        device: 'Android Device',
+        camera: false,
+        microphone: false,
+        biometricBound: false,
+        serverOnline: false,
+        serverPingMs: 0,
+        checkingServer: true
+    };
     let bioPromptStatus = '';
 
     if (typeof window !== 'undefined') {
         window.__onBiometricAuthResult = async (success, decryptedPin, message) => {
             if (success && decryptedPin) {
-                bioPromptStatus = '✅ Отпечаток распознан! Вход...';
+                bioPromptStatus = '✅ Отпечаток распознан аппаратно! Выполняется вход...';
                 pinInput = decryptedPin;
                 await handleUnlock();
             } else {
                 bioPromptStatus = message ? ('ℹ️ ' + message) : '';
             }
         };
+        window.__onHydraAppResume = () => {
+            runStartupDiagnostics(selectedProfile?.id || (allProfiles[0]?.id) || 'default');
+            if (authScreen === 'pin' && selectedProfile) {
+                setTimeout(() => triggerBiometricUnlock(), 250);
+            }
+        };
     }
 
-    function checkDevicePermissionsAndBio(profId) {
+    async function runStartupDiagnostics(profId) {
+        const targetProf = profId || selectedProfile?.id || (allProfiles[0]?.id) || 'default';
         if (window.HydraNative && typeof window.HydraNative.checkSystemStatus === 'function') {
             try {
-                const raw = window.HydraNative.checkSystemStatus(profId || 'default');
-                systemPermStatus = JSON.parse(raw);
+                const raw = window.HydraNative.checkSystemStatus(targetProf);
+                const parsed = JSON.parse(raw);
+                systemPermStatus = { ...systemPermStatus, ...parsed };
             } catch (e) {
                 if (window.__addHydraLog) window.__addHydraLog('SYS-CHECK-ERR', String(e));
             }
         }
+        systemPermStatus.checkingServer = true;
+        const t0 = Date.now();
+        try {
+            const resp = await fetch('http://191.223.137.164:8085/health?pub=startup', { cache: 'no-store' });
+            const data = await resp.json();
+            const rtt = Date.now() - t0;
+            systemPermStatus.serverOnline = (data && data.status === 'ok');
+            systemPermStatus.serverPingMs = rtt;
+            if (window.__addHydraLog) window.__addHydraLog('STARTUP-NET', `Связь с узлом Hydra: ОНЛАЙН (${rtt} мс)`);
+        } catch (e) {
+            systemPermStatus.serverOnline = false;
+            systemPermStatus.serverPingMs = 0;
+            if (window.__addHydraLog) window.__addHydraLog('STARTUP-NET', 'Узел Hydra недоступен при старте');
+        } finally {
+            systemPermStatus.checkingServer = false;
+            systemPermStatus = { ...systemPermStatus };
+        }
     }
 
     async function triggerBiometricUnlock() {
-        const profId = selectedProfile?.id || 'default';
-        checkDevicePermissionsAndBio(profId);
-        if (localStorage.getItem('hydra_biometric') === '0') {
-            if (window.__addHydraLog) window.__addHydraLog('BIO-SKIP', 'Биометрия отключена переключателем в настройках');
-            return;
-        }
+        const profId = selectedProfile?.id || (allProfiles[0]?.id) || 'default';
+        await runStartupDiagnostics(profId);
+        if (localStorage.getItem('hydra_biometric') === '0') return;
         if (window.HydraNative && typeof window.HydraNative.authenticateBiometric === 'function') {
-            if (systemPermStatus && !systemPermStatus.biometricBound) {
-                bioPromptStatus = 'ℹ️ Отпечаток ещё не привязан (введите ПИН вручную и привяжите его в Настройки → Приватность)';
+            if (!systemPermStatus.biometricBound) {
+                bioPromptStatus = 'ℹ️ Отпечаток ещё не привязан (введите ПИН и привяжите его в Настройки → Приватность)';
                 return;
             }
             bioPromptStatus = '👆 Приложите палец к сканеру...';
             window.HydraNative.authenticateBiometric(profId);
         }
     }
+
+    setTimeout(() => runStartupDiagnostics('default'), 150);
 </script>
 
 <div class="login-screen bg-animated" in:fade={{duration: 400}} on:click={hideContextMenu}>
@@ -321,6 +353,41 @@
     </div>
     
     <h1 class="login-title" style="font-size: 32px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 8px; background: linear-gradient(to right, #fff, #a29bfe); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Hydra</h1>
+
+    <!-- КРАСИВАЯ ВИЗУАЛИЗАЦИЯ ДИАГНОСТИКИ РАЗРЕШЕНИЙ И СЕТИ ПРИ ЗАПУСКЕ -->
+    <div style="margin: 0 auto 20px; padding: 12px 14px; border-radius: 18px; background: rgba(18, 19, 26, 0.85); border: 1px solid rgba(138, 180, 248, 0.22); text-align: left; box-shadow: 0 8px 24px rgba(0,0,0,0.35);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span style="font-size: 11px; font-weight: 800; color: #8AB4F8; letter-spacing: 0.4px; text-transform: uppercase;">🛡️ Диагностика при запуске • {systemPermStatus.device}</span>
+            <button type="button" on:click={() => runStartupDiagnostics(selectedProfile?.id || 'default')} style="background: transparent; border: none; color: #8AB4F8; font-size: 11px; cursor: pointer; padding: 0;">🔄</button>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 11px;">
+            <div style="padding: 6px 8px; border-radius: 10px; background: rgba(255,255,255,0.03); display: flex; align-items: center; gap: 6px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: {systemPermStatus.serverOnline ? '#4CAF50' : (systemPermStatus.checkingServer ? '#FFC107' : '#F44336')}; display: inline-block;"></span>
+                <span style="color: #E3E3E3;">Сервер: <b>{systemPermStatus.checkingServer ? 'Пинг...' : (systemPermStatus.serverOnline ? systemPermStatus.serverPingMs + ' мс' : 'Офлайн')}</b></span>
+            </div>
+            <div style="padding: 6px 8px; border-radius: 10px; background: rgba(255,255,255,0.03); display: flex; align-items: center; gap: 6px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: {systemPermStatus.biometricBound ? '#4CAF50' : '#9E9E9E'}; display: inline-block;"></span>
+                <span style="color: #E3E3E3;">Отпечаток: <b>{systemPermStatus.biometricBound ? 'Активен' : 'Не задан'}</b></span>
+            </div>
+            <div style="padding: 6px 8px; border-radius: 10px; background: rgba(255,255,255,0.03); display: flex; align-items: center; gap: 6px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: {systemPermStatus.camera ? '#4CAF50' : '#F44336'}; display: inline-block;"></span>
+                <span style="color: #E3E3E3;">Камера: <b>{systemPermStatus.camera ? 'ОК' : 'Нет'}</b></span>
+            </div>
+            <div style="padding: 6px 8px; border-radius: 10px; background: rgba(255,255,255,0.03); display: flex; align-items: center; gap: 6px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: {systemPermStatus.microphone ? '#4CAF50' : '#F44336'}; display: inline-block;"></span>
+                <span style="color: #E3E3E3;">Микрофон: <b>{systemPermStatus.microphone ? 'ОК' : 'Нет'}</b></span>
+            </div>
+        </div>
+        {#if !systemPermStatus.camera || !systemPermStatus.microphone}
+            <button type="button" on:click={() => { window.HydraNative?.requestMissingPermissions(); setTimeout(() => runStartupDiagnostics(selectedProfile?.id || 'default'), 1500); }} style="margin-top: 8px; width: 100%; background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 6px; font-size: 11px; font-weight: 700; cursor: pointer;">
+                🔓 Разрешить доступ к Камере и Микрофону
+            </button>
+        {/if}
+        {#if bioPromptStatus}
+            <div style="margin-top: 8px; font-size: 11px; color: #8AB4F8; text-align: center; font-weight: 600;">{bioPromptStatus}</div>
+        {/if}
+    </div>
+    
 
     {#if !profilesLoaded}
       <div style="padding: 60px 0; text-align: center;" out:fade>
@@ -393,19 +460,7 @@
             </div>
             <p class="login-subtitle">Введите ПИН для <b>{selectedProfile?.display_name}</b></p>
             
-    {#if systemPermStatus}
-        <div style="margin-bottom: 12px; padding: 10px 12px; border-radius: 14px; background: rgba(138,180,248,0.08); border: 1px solid rgba(138,180,248,0.2); font-size: 11px; color: #E3E3E3; text-align: left;">
-            <div style="font-weight: 700; color: #8AB4F8; margin-bottom: 4px;">🛡️ Проверка безопасности ({systemPermStatus.device}):</div>
-            <div>📷 Камера: {systemPermStatus.camera ? '✅ Разрешено' : '⚠️ Нет доступа'} | 🎤 Микрофон: {systemPermStatus.microphone ? '✅ Разрешено' : '⚠️ Нет доступа'}</div>
-            <div>👆 Биометрия: {systemPermStatus.biometricBound ? '✅ Отпечаток привязан (активен)' : '⚪ Не привязан (вход по ПИН)'}</div>
-            {#if !systemPermStatus.camera || !systemPermStatus.microphone}
-                <button type="button" on:click={() => window.HydraNative?.requestMissingPermissions()} style="margin-top: 6px; background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 700;">Выдать разрешения</button>
-            {/if}
-        </div>
-    {/if}
-    {#if bioPromptStatus}
-        <div style="margin-bottom: 10px; font-size: 12px; color: #8AB4F8; font-weight: 600;">{bioPromptStatus}</div>
-    {/if}
+    
     
             <div class="pin-entry-box">
               <input 

@@ -150,6 +150,26 @@
         if (typeof showToast === 'function') showToast('✅ Ложный ПИН-код сохранён', 'success');
     }
 
+
+    let settingsLogLines = typeof window !== 'undefined' ? (window.__hydraLogList || []) : [];
+    if (typeof window !== 'undefined') {
+        window.addEventListener('hydra-log-updated', () => {
+            settingsLogLines = [...(window.__hydraLogList || [])];
+        });
+    }
+    function refreshSettingsLogs() {
+        settingsLogLines = [...(window.__hydraLogList || [])];
+    }
+    function clearSettingsLogs() {
+        if (typeof window !== 'undefined') window.__hydraLogList = [];
+        settingsLogLines = [];
+    }
+    function copySettingsLogs() {
+        const text = (settingsLogLines || []).join('\n');
+        AppActions.ClipboardSet(text);
+        alert('✅ Скопировано записей журнала: ' + settingsLogLines.length);
+    }
+    
 </script>
 
 <div class="settings-panel animate-fade-in">
@@ -318,13 +338,36 @@
                                     <option value={4}>Strict Contacts-Only Mode</option>
                                 </select>
                             </div>
-                            <div class="setting-item flex-row bg-box">
+                            <div class="setting-item flex-row bg-box" on:click={() => { routerSettings.logToFile = !routerSettings.logToFile; refreshSettingsLogs(); }} style="cursor: pointer;">
                                 <div>
-                                    <span class="label">Логирование в файл</span>
-                                    <p class="hint">Локальная диагностика сокета</p>
+                                    <span class="label" style="font-weight: 700; color: #E3E3E3;">🐞 Логирование и диагностика сокета</span>
+                                    <p class="hint" style="margin: 2px 0 0;">Нажмите, чтобы открыть живой системный журнал ({settingsLogLines.length} записей)</p>
                                 </div>
-                                <input type="checkbox" bind:checked={routerSettings.logToFile} />
+                                <input type="checkbox" bind:checked={routerSettings.logToFile} on:change={refreshSettingsLogs} on:click|stopPropagation style="width: 20px; height: 20px; accent-color: #8AB4F8;" />
                             </div>
+
+                            {#if routerSettings.logToFile}
+                                <div style="margin-top: 10px; background: #09090D; border: 1px solid rgba(138,180,248,0.3); border-radius: 16px; padding: 12px;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 6px; flex-wrap: wrap;">
+                                        <span style="font-size: 12px; font-weight: 800; color: #8AB4F8;">🐞 Живой системный журнал ({settingsLogLines.length})</span>
+                                        <div style="display: flex; gap: 6px;">
+                                            <button type="button" on:click={refreshSettingsLogs} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 10px; font-size: 11px;">🔄 Обновить</button>
+                                            <button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700;">📋 Копировать всё</button>
+                                            <button type="button" on:click={clearSettingsLogs} style="background: rgba(255,71,87,0.2); color: #ff6b6b; border: none; border-radius: 100px; padding: 5px 10px; font-size: 11px;">Очистить</button>
+                                        </div>
+                                    </div>
+                                    <div style="max-height: 260px; overflow-y: auto; font-family: monospace; font-size: 11px; line-height: 1.45; padding-right: 4px;">
+                                        {#if settingsLogLines.length === 0}
+                                            <div style="color: #9AA0A6; padding: 8px 0;">Журнал пуст. Выполните любое действие для записи...</div>
+                                        {/if}
+                                        {#each settingsLogLines as line}
+                                            <div style="padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05); word-break: break-all; color: {line.includes('ERR') || line.includes('ОШИБКА') ? '#ff6b6b' : (line.includes('RPC-OK') || line.includes('BIO-OK') ? '#69db7c' : (line.includes('CLICK') ? '#ffd43b' : '#E3E3E3'))};">
+                                                {line}
+                                            </div>
+                                        {/each}
+                                    </div>
+                                </div>
+                            {/if}
                             <button class="btn-primary full-width" on:click={onSaveRouterSettings} style="margin-top: 10px;">💾 Сохранить и применить</button>
         <div style="margin-top: 14px; padding: 14px; background: #1E1F22; border-radius: 20px;">
             <button type="button" class="btn-primary" style="width: 100%; border-radius: 100px; background: #8AB4F8; color: #062E6F; font-weight: 700; padding: 12px; border: none; cursor: pointer;" on:click={verifyHydraConnection} disabled={isPingingServer}>

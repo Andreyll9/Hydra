@@ -12,6 +12,7 @@
 <body>
     <div id="app"></div>
     <script src="./src/main.js" type="module"></script>
+
 <!-- HYDRA_LOGGER_START -->
 <style>
   html, body, #app {
@@ -25,35 +26,6 @@
     overflow: hidden !important;
     overscroll-behavior: none !important;
   }
-  #hydra-debug-btn {
-    position: fixed;
-    top: calc(10px + env(safe-area-inset-top, 0px));
-    right: 58px;
-    z-index: 2147483646;
-    background: #18191C;
-    color: #8AB4F8;
-    border: 1.5px solid #8AB4F8;
-    border-radius: 100px;
-    padding: 5px 11px;
-    font-family: monospace;
-    font-size: 11px;
-    font-weight: 700;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.6);
-    cursor: pointer;
-    user-select: none;
-  }
-  #hydra-debug-panel {
-    position: fixed;
-    inset: 0;
-    background: rgba(10, 10, 14, 0.96);
-    z-index: 2147483647;
-    display: none;
-    flex-direction: column;
-    padding: 14px;
-    padding-top: calc(14px + env(safe-area-inset-top, 10px));
-    font-family: monospace;
-    color: #E3E3E3;
-  }
 </style>
 <script>
   (function() {
@@ -61,110 +33,21 @@
     window.__hydraGlobalLoggerReady = true;
     window.__hydraLogList = [];
 
-    function updateBtnCount() {
-      var btn = document.getElementById('hydra-debug-btn');
-      if (btn) btn.textContent = '🐞 Логи (' + window.__hydraLogList.length + ')';
-    }
-
-    function renderLogList() {
-      var box = document.getElementById('hydra-debug-list');
-      if (!box) return;
-      box.innerHTML = '';
-      for (var i = 0; i < window.__hydraLogList.length; i++) {
-        var item = window.__hydraLogList[i];
-        var div = document.createElement('div');
-        div.style.cssText = 'padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06);word-break:break-all;font-size:11px;line-height:1.4;';
-        if (item.indexOf('[RPC-ERR]') !== -1 || item.indexOf('[ERR]') !== -1 || item.indexOf('Ошибка') !== -1) {
-          div.style.color = '#ff6b6b';
-        } else if (item.indexOf('[RPC-OK]') !== -1 || item.indexOf('[OK]') !== -1) {
-          div.style.color = '#69db7c';
-        } else if (item.indexOf('[CLICK]') !== -1) {
-          div.style.color = '#ffd43b';
-        } else {
-          div.style.color = '#E3E3E3';
-        }
-        div.textContent = item;
-        box.appendChild(div);
-      }
-    }
-
     window.__addHydraLog = function(tag, msg) {
       var d = new Date();
       var t = d.toTimeString().split(' ')[0] + '.' + String(d.getMilliseconds()).padStart(3, '0');
       var line = '[' + t + '] [' + tag + '] ' + msg;
       window.__hydraLogList.unshift(line);
-      if (window.__hydraLogList.length > 400) window.__hydraLogList.pop();
-      updateBtnCount();
-      var panel = document.getElementById('hydra-debug-panel');
-      if (panel && panel.style.display === 'flex') renderLogList();
+      if (window.__hydraLogList.length > 500) window.__hydraLogList.pop();
+      window.dispatchEvent(new CustomEvent('hydra-log-updated'));
     };
-
-    function mountLoggerButton() {
-      if (document.getElementById('hydra-debug-btn')) return;
-      var btn = document.createElement('button');
-      btn.id = 'hydra-debug-btn';
-      btn.type = 'button';
-      btn.textContent = '🐞 Логи (' + window.__hydraLogList.length + ')';
-
-      var panel = document.createElement('div');
-      panel.id = 'hydra-debug-panel';
-      panel.innerHTML =
-        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:6px;">' +
-          '<div style="font-weight:800;color:#8AB4F8;font-size:14px;">🐞 Системный журнал Hydra</div>' +
-          '<div style="display:flex;gap:6px;">' +
-            '<button id="hydra-log-copy" type="button" style="background:#8AB4F8;color:#062E6F;border:none;border-radius:100px;padding:6px 12px;font-weight:700;font-size:11px;">📋 Скопировать</button>' +
-            '<button id="hydra-log-clear" type="button" style="background:#28292D;color:#E3E3E3;border:none;border-radius:100px;padding:6px 10px;font-size:11px;">Очистить</button>' +
-            '<button id="hydra-log-close" type="button" style="background:#ff4757;color:#fff;border:none;border-radius:50%;width:30px;height:30px;font-weight:700;">✕</button>' +
-          '</div>' +
-        '</div>' +
-        '<div id="hydra-debug-list" style="flex:1;overflow-y:auto;background:#070709;border:1px solid rgba(138,180,248,0.25);border-radius:14px;padding:10px;"></div>';
-
-      document.body.appendChild(btn);
-      document.body.appendChild(panel);
-
-      btn.addEventListener('click', function(e) {
-        e.stopPropagation();
-        panel.style.display = 'flex';
-        renderLogList();
-      });
-      document.getElementById('hydra-log-close').addEventListener('click', function(e) {
-        e.stopPropagation();
-        panel.style.display = 'none';
-      });
-      document.getElementById('hydra-log-clear').addEventListener('click', function(e) {
-        e.stopPropagation();
-        window.__hydraLogList = [];
-        updateBtnCount();
-        renderLogList();
-      });
-      document.getElementById('hydra-log-copy').addEventListener('click', function(e) {
-        e.stopPropagation();
-        var allText = window.__hydraLogList.join('\n');
-        fetch('/api/ClipboardSet', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({args: [allText]})
-        }).catch(function(){});
-        if (navigator.clipboard) navigator.clipboard.writeText(allText).catch(function(){});
-        alert('✅ Скопировано строк лога: ' + window.__hydraLogList.length);
-      });
-
-      window.__addHydraLog('INIT', 'Интерфейс загружен, экран=' + window.innerWidth + 'x' + window.innerHeight);
-    }
-
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', mountLoggerButton);
-    } else {
-      mountLoggerButton();
-    }
-    setTimeout(mountLoggerButton, 1000);
 
     document.addEventListener('click', function(e) {
       var t = e.target;
-      if (!t || (t.id && t.id.indexOf('hydra-') === 0)) return;
+      if (!t) return;
       var el = t.closest ? (t.closest('button, a, input, label, select, [role="button"]') || t) : t;
-      var txt = (el.innerText || el.placeholder || el.value || el.className || '').toString().replace(/\s+/g, ' ').trim().slice(0, 45);
-      window.__addHydraLog('CLICK', '<' + (el.tagName || 'EL') + '> "' + txt + '"');
+      var txt = (el.innerText || el.placeholder || el.value || el.className || '').toString().replace(/\s+/g, ' ').trim().slice(0, 50);
+      window.__addHydraLog('UI-CLICK', '<' + (el.tagName || 'EL') + '> "' + txt + '"');
     }, true);
 
     var origFetch = window.fetch.bind(window);
@@ -173,9 +56,9 @@
       if (u.indexOf('/api/') !== -1 && u.indexOf('/api/events') === -1 && u.indexOf('AppendDebugLog') === -1 && u.indexOf('GetNetworkStatus') === -1) {
         var mName = u.split('/api/')[1];
         var bodyStr = '';
-        try { bodyStr = (opts && opts.body ? String(opts.body) : '').slice(0, 600); } catch(e){}
+        try { bodyStr = (opts && opts.body ? String(opts.body) : '').slice(0, 300); } catch(e){}
         var t0 = Date.now();
-        window.__addHydraLog('RPC-REQ', mName + ' ' + bodyStr);
+        window.__addHydraLog('RPC-REQ', mName + ' -> ' + (bodyStr || '{}'));
         try {
           var resp = await origFetch(url, opts);
           var clone = resp.clone();
@@ -183,19 +66,21 @@
           var dt = Date.now() - t0;
           if (!resp.ok || data.error) {
             var errMsg = data.error || resp.statusText || ('HTTP ' + resp.status);
-            window.__addHydraLog('RPC-ERR', mName + ' (' + dt + 'ms) -> ' + errMsg);
+            window.__addHydraLog('RPC-ERR', mName + ' (' + dt + ' мс) ❌ ОШИБКА: ' + errMsg);
             return new Response(JSON.stringify({ result: null, error: errMsg }), {
               status: 200,
               headers: { 'Content-Type': 'application/json' }
             });
           } else {
-            var resStr = '';
-            try { resStr = JSON.stringify(data.result).slice(0, 600); } catch(e){}
-            window.__addHydraLog('RPC-OK', mName + ' (' + dt + 'ms) -> ' + resStr);
+            var resFormatted = '✅ Выполнено успешно (OK)';
+            if (data.result !== null && data.result !== undefined && data.result !== '') {
+              try { resFormatted = JSON.stringify(data.result).slice(0, 400); } catch(e){}
+            }
+            window.__addHydraLog('RPC-OK', mName + ' (' + dt + ' мс) -> ' + resFormatted);
           }
           return resp;
         } catch (err) {
-          window.__addHydraLog('RPC-ERR', mName + ' NETWORK FAIL: ' + err);
+          window.__addHydraLog('RPC-ERR', mName + ' ❌ СБОЙ СЕТИ: ' + err);
           throw err;
         }
       }
@@ -203,10 +88,10 @@
     };
 
     window.addEventListener('error', function(e) {
-      window.__addHydraLog('ERR', e.message + ' @ ' + (e.filename || '') + ':' + (e.lineno || ''));
+      window.__addHydraLog('JS-ERR', e.message + ' @ ' + (e.filename || '') + ':' + (e.lineno || ''));
     });
     window.addEventListener('unhandledrejection', function(e) {
-      window.__addHydraLog('ERR', 'Promise: ' + String(e.reason));
+      window.__addHydraLog('PROMISE-ERR', String(e.reason));
     });
   })();
 </script>

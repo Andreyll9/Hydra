@@ -570,9 +570,13 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
         super.onResume()
         webView.onResume()
         mobile.Mobile.setPlatformBridge(this)
+        pushNativeLog("LIFECYCLE", "Приложение развёрнуто (onResume) — проверка безопасности и биометрии")
+        webView.evaluateJavascript("if(window.__onHydraAppResume) window.__onHydraAppResume();", null)
     }
 
     override fun onPause() {
+        pushNativeLog("LIFECYCLE", "Приложение свёрнуто (onPause) — мгновенная блокировка сессии!")
+        webView.evaluateJavascript("if(window.__lockHydraNow) window.__lockHydraNow();", null)
         webView.onPause()
         super.onPause()
     }
