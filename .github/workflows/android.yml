@@ -38,16 +38,401 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Fix contacts.go Name Bug, Direct VPS E2EE Relay in messages.go, Modals.svelte jsQR & Lock Screen
+      - name: Apply All UI/UX, Video Circle Live Preview, Start/Stop Logger, Hydra Icons & Relay Fixes
         run: |
-          cat << 'PYEOF' > fix_core_architecture.py
-          import os
+          cat << 'PYEOF' > apply_all_fixes.py
+          import os, re
 
-          # 1. internal/appcore/contacts.go:
-          #    ЧИНИМ ГЛАВНЫЙ БАГ С ИМЕНАМИ И ДОБАВЛЕНИЕМ КОНТАКТОВ!
-          #    - Больше НЕ затираем name публичным ключом (name = res["pub_key"])!
-          #    - Если в destination введён @ник (или короткое имя), резолвим его через VPS в 44-значный ключ destination, а в Nickname оставляем красивое имя!
-          #    - Сразу заполняем PublicKey: destination и вычисляем ChatID!
+          # 1. Иконка Гидры (заменяем старого призрака в Icons.js и убираем квадратную рамку на экране входа в Auth.svelte и Settings.svelte)
+          hydra_svg = """<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="32" cy="32" r="30" stroke="#8AB4F8" stroke-width="2.5" fill="#12131A"/><path d="M32 12C25 12 20 17 20 24C20 29 23 33 26 36L22 50H42L38 36C41 33 44 29 44 24C44 17 39 12 32 12Z" stroke="#8AB4F8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="rgba(138,180,248,0.12)"/><path d="M20 26C14 24 10 19 12 13C15 15 19 18 21 22" stroke="#8AB4F8" stroke-width="2.5" stroke-linecap="round"/><path d="M44 26C50 24 54 19 52 13C49 15 45 18 43 22" stroke="#8AB4F8" stroke-width="2.5" stroke-linecap="round"/><circle cx="28" cy="23" r="2" fill="#8AB4F8"/><circle cx="36" cy="23" r="2" fill="#8AB4F8"/><path d="M27 30C29 32 35 32 37 30" stroke="#8AB4F8" stroke-width="2" stroke-linecap="round"/></svg>"""
+
+          icons_path = "frontend/src/Icons.js"
+          if os.path.exists(icons_path):
+              with open(icons_path, "r", encoding="utf-8") as f:
+                  ic = f.read()
+              ic = re.sub(r"Ghost:\s*`[\s\S]*?`", f"Ghost: `{hydra_svg}`", ic)
+              with open(icons_path, "w", encoding="utf-8") as f:
+                  f.write(ic)
+              print("[OK] 1. Icons.js: иконка призрака заменена на эмблему Гидры")
+
+          auth_path = "frontend/src/components/Auth.svelte"
+          if os.path.exists(auth_path):
+              with open(auth_path, "r", encoding="utf-8") as f:
+                  au = f.read()
+              au = au.replace(
+                  '<img src="/icon.png" alt="Hydra" class="rounded-full shadow-lg" style="width: 80px; height: 80px; filter: drop-shadow(0 0 20px rgba(99, 102, 241, 0.4)); object-fit: cover; border: 2px solid rgba(255,255,255,0.1);" />',
+                  f'<div style="width: 84px; height: 84px; margin: 0 auto; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 24px rgba(138,180,248,0.25);">{hydra_svg}</div>'
+              )
+              with open(auth_path, "w", encoding="utf-8") as f:
+                  f.write(au)
+              print("[OK] 1b. Auth.svelte: логотип на экране входа заменён на круглую векторную Гидру без квадратной рамки")
+
+          # 2. frontend/index.html:
+          #    Делаем запись логов УПРАВЛЯЕМОЙ (по кнопке "🔴 Начать запись логов" / "⏹ Остановить запись"), пока пользователь сам её не остановит!
+          idx_path = "frontend/index.html"
+          if os.path.exists(idx_path):
+              with open(idx_path, "r", encoding="utf-8") as f:
+                  ih = f.read()
+
+              ih = ih.replace(
+                  "window.__hydraLogList = [];",
+                  "window.__hydraLogList = [];\n    window.__hydraLoggingActive = localStorage.getItem('hydra_rec_logs') === '1';"
+              )
+              ih = ih.replace(
+                  "window.__addHydraLog = function(tag, msg) {\n      var d = new Date();",
+                  "window.__addHydraLog = function(tag, msg) {\n      if (!window.__hydraLoggingActive && tag !== 'LOG-CTRL') return;\n      var d = new Date();"
+              )
+              ih = ih.replace(
+                  """    document.addEventListener('visibilitychange', function() {
+                if (document.visibilityState === 'hidden') {
+                  window.__setHydraBlur(true);
+                } else {
+                  setTimeout(function() { window.__setHydraBlur(false); }, 350);
+                }
+              });""",
+                  """    document.addEventListener('visibilitychange', function() {
+                if (document.visibilityState === 'hidden') {
+                  if (window.__lockHydraNow) window.__lockHydraNow();
+                  window.__setHydraBlur(true);
+                } else {
+                  setTimeout(function() {
+                    window.__setHydraBlur(false);
+                    if (window.__onHydraAppResume) window.__onHydraAppResume();
+                  }, 200);
+                }
+              });"""
+              )
+              with open(idx_path, "w", encoding="utf-8") as f:
+                  f.write(ih)
+              print("[OK] 2. index.html: запись логов работает строго по кнопке Старт/Стоп")
+
+          # 3. Chat.svelte:
+          #    - Живое круглое превью с фронтальной камеры ВО ВРЕМЯ ЗАПИСИ кружка (чтобы ты видел себя при записи!)
+          #    - В отправленном кружке вместо серого треугольника Play сразу показывается 1-я секунда видео (autoplay muted loop playsinline + #t=0.1, а нажатие включает/выключает звук и перезапускает с начала!)
+          #    - Выравниваем панель кнопок над полем ввода (чтобы текст таймера записи не плющило справа)
+          ch_path = "frontend/src/components/Chat.svelte"
+          if os.path.exists(ch_path):
+              with open(ch_path, "r", encoding="utf-8") as f:
+                  ch = f.read()
+
+              # Добавляем переменную liveCirclePreviewEl для отображения себя во время записи кружка
+              if "let liveCirclePreviewEl = null;" not in ch:
+                  ch = ch.replace("let isRecordingMedia = false;", "let isRecordingMedia = false;\n    let liveCirclePreviewEl = null;\n    let activeMediaStream = null;", 1)
+
+              # При старте записи кружка подключаем поток камеры к круглому видоискателю liveCirclePreviewEl
+              ch = ch.replace(
+                  "recordedChunks = [];",
+                  """recordedChunks = [];
+                      activeMediaStream = stream;
+                      if (mode === 'video') {
+                          setTimeout(() => {
+                              if (liveCirclePreviewEl && activeMediaStream) {
+                                  liveCirclePreviewEl.srcObject = activeMediaStream;
+                                  liveCirclePreviewEl.play().catch(() => {});
+                              }
+                          }, 60);
+                      }"""
+              )
+              ch = ch.replace(
+                  "stream.getTracks().forEach(t => t.stop());",
+                  "stream.getTracks().forEach(t => t.stop());\n                activeMediaStream = null;"
+              )
+
+              # Заменяем отображение видео-кружка в чате: убираем огромный серый треугольник Play и показываем живое превью с 1-й секунды!
+              old_circle_render = """                {:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
+                              <div style="padding: 4px; display: flex; flex-direction: column; align-items: center;">
+                                  <div style="width: 210px; height: 210px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #8AB4F8; background: #000; position: relative; display: flex; align-items: center; justify-content: center;">
+                                      <video playsinline loop src={msg.Content.slice('[HYDRA_CIRCLE]:'.length)} on:click|stopPropagation={(e) => { const v = e.currentTarget; if (v.paused) v.play(); else v.pause(); }} style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; cursor: pointer;"></video>
+                                  </div>
+                                  <span style="font-size: 11px; opacity: 0.85; margin-top: 6px;">📹 Видео-кружок (нажмите для пуска/паузы)</span>
+                              </div>"""
+
+              new_circle_render = """                {:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
+                              <div style="padding: 4px; display: flex; flex-direction: column; align-items: center;">
+                                  <div style="width: 216px; height: 216px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #8AB4F8; background: #12131A; position: relative; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 24px rgba(0,0,0,0.5);">
+                                      <video
+                                          preload="metadata"
+                                          autoplay
+                                          muted
+                                          loop
+                                          playsinline
+                                          src={msg.Content.slice('[HYDRA_CIRCLE]:'.length) + '#t=0.1'}
+                                          on:loadedmetadata={(e) => { const v = e.currentTarget; v.currentTime = 0.1; v.play().catch(() => {}); }}
+                                          on:click|stopPropagation={(e) => {
+                                              const v = e.currentTarget;
+                                              if (v.muted) {
+                                                  v.muted = false;
+                                                  v.currentTime = 0;
+                                                  v.play();
+                                              } else if (v.paused) {
+                                                  v.play();
+                                              } else {
+                                                  v.muted = true;
+                                                  v.pause();
+                                              }
+                                          }}
+                                          style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; cursor: pointer;"
+                                      ></video>
+                                      <div style="position: absolute; bottom: 10px; right: 28px; background: rgba(0,0,0,0.65); color: #8AB4F8; border-radius: 100px; padding: 2px 8px; font-size: 10px; font-weight: 700; pointer-events: none;">🔊 Нажмите для звука</div>
+                                  </div>
+                              </div>"""
+
+              ch = ch.replace(old_circle_render, new_circle_render)
+
+              # Добавляем живое круглое зеркало камеры во время записи кружка и выравниваем панель записи
+              old_rec_bar = """    <div style="display: flex; gap: 8px; padding: 6px 14px; background: #18191C; align-items: center; border-top: 1px solid rgba(255,255,255,0.04);">
+                  <button type="button" on:click={() => showEmojiPanel = !showEmojiPanel} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">😊 Стикеры</button>
+                  <button type="button" on:click={() => toggleVoiceOrCircle('audio')} style="background: {isRecordingMedia && recordMode==='audio' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">
+                      {isRecordingMedia && recordMode==='audio' ? '⏹ Стоп (Аудио)' : '🎤 Голосовое'}
+                  </button>
+                  <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="background: {isRecordingMedia && recordMode==='video' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">
+                      {isRecordingMedia && recordMode==='video' ? '⏹ Стоп (Кружок)' : '📹 Кружок'}
+                  </button>
+                  {#if isRecordingMedia}
+                      <span style="margin-left: auto; color: #ff4757; font-size: 12px; font-weight: 700;">🔴 Запись: {recordingSeconds} сек... (нажмите Стоп для отправки)</span>
+                  {/if}
+              </div>"""
+
+              new_rec_bar = """    {#if isRecordingMedia && recordMode === 'video'}
+                  <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.88); backdrop-filter: blur(12px); z-index: 99990; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px;">
+                      <div style="font-size: 15px; font-weight: 800; color: #ff4757; display: flex; align-items: center; gap: 8px;">
+                          <span>🔴 Запись видео-кружка: {recordingSeconds} сек / 30 сек</span>
+                      </div>
+                      <div style="width: 240px; height: 240px; border-radius: 50%; overflow: hidden; clip-path: circle(50% at 50% 50%); -webkit-clip-path: circle(50% at 50% 50%); border: 4px solid #8AB4F8; background: #000; box-shadow: 0 0 32px rgba(138,180,248,0.4);">
+                          <video bind:this={liveCirclePreviewEl} autoplay muted playsinline style="width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); border-radius: 50%;"></video>
+                      </div>
+                      <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 14px 32px; font-size: 15px; font-weight: 800; cursor: pointer; box-shadow: 0 6px 20px rgba(138,180,248,0.4);">
+                          ⏹ Остановить и отправить кружок
+                      </button>
+                  </div>
+              {/if}
+              {#if isRecordingMedia && recordMode === 'audio'}
+                  <div style="padding: 8px 14px; background: rgba(255,71,87,0.15); border-top: 1px solid rgba(255,71,87,0.3); display: flex; align-items: center; justify-content: space-between;">
+                      <span style="color: #ff6b6b; font-size: 12px; font-weight: 700;">🎤 Запись голосового: {recordingSeconds} сек...</span>
+                      <button type="button" on:click={() => toggleVoiceOrCircle('audio')} style="background: #ff4757; color: #fff; border: none; border-radius: 100px; padding: 5px 14px; font-size: 11px; font-weight: 700;">⏹ Отправить</button>
+                  </div>
+              {/if}
+              <div style="display: flex; gap: 8px; padding: 8px 14px; background: #18191C; align-items: center; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.04);">
+                  <button type="button" on:click={() => showEmojiPanel = !showEmojiPanel} style="flex: 1; background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">😊 Стикеры</button>
+                  <button type="button" on:click={() => toggleVoiceOrCircle('audio')} style="flex: 1; background: {isRecordingMedia && recordMode==='audio' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">
+                      {isRecordingMedia && recordMode==='audio' ? '⏹ Стоп' : '🎤 Голосовое'}
+                  </button>
+                  <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="flex: 1; background: {isRecordingMedia && recordMode==='video' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">
+                      {isRecordingMedia && recordMode==='video' ? '⏹ Стоп' : '📹 Кружок'}
+                  </button>
+              </div>"""
+
+              ch = ch.replace(old_rec_bar, new_rec_bar)
+
+              # Скрываем стандартную серую кнопку Play в WebView у видео-кружка
+              hide_webkit_play_css = """
+              video::-webkit-media-controls-overlay-play-button,
+              video::-webkit-media-controls-start-playback-button {
+                  display: none !important;
+                  -webkit-appearance: none !important;
+                  opacity: 0 !important;
+              }
+              """
+              if "video::-webkit-media-controls-start-playback-button" not in ch:
+                  ch = ch.replace("</style>", hide_webkit_play_css + "\n</style>", 1)
+
+              with open(ch_path, "w", encoding="utf-8") as f:
+                  f.write(ch)
+              print("[OK] 3. Chat.svelte: добавлено живое круглое зеркало камеры при записи кружка и превью 1-й секунды без серого треугольника!")
+
+          # 4. Settings.svelte:
+          #    - Чиним вылезающую кнопку "👆 Привязать" во вкладке Приватность!
+          #    - Убираем вторую планету 🌐 в "Сеть и Сервер" (удаляем summary::before { content: '🌐'; })!
+          #    - Делаем так, чтобы после закрытия Меню разработчика его снова нужно было открывать 6 нажатиями на "Лицензию"!
+          #    - Добавляем в Меню разработчика кнопку "🔴 Начать запись логов" / "⏹ Остановить запись логов"!
+          #    - Заменяем старую иконку /icon.png в "О программе" на эмблему Гидры!
+          st_path = "frontend/src/components/Settings.svelte"
+          if os.path.exists(st_path):
+              with open(st_path, "r", encoding="utf-8") as f:
+                  st = f.read()
+
+              # 4.1. Убираем вторую планету из CSS
+              st = st.replace(".destination-details summary::before { content: '🌐'; font-size: 14px; }", ".destination-details summary::before { content: none; display: none; }")
+
+              # 4.2. Заменяем иконку в разделе О программе на векторную Гидру
+              st = st.replace(
+                  '<img src="/icon.png" alt="Hydra" style="width: 100%; height: 100%; object-fit: cover; border-radius: 28px;" />',
+                  hydra_svg
+              )
+
+              # 4.3. Чиним карточку "Разблокировка по отпечатку пальца" во вкладке Приватность, чтобы поле ввода и кнопка "Привязать" НЕ вылезали за правый край!
+              old_bio_card = """        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px;">
+                      <div style="display: flex; justify-content: space-between; align-items: center;">
+                          <div>
+                              <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">👆 Разблокировка по отпечатку пальца</div>
+                              <div style="font-size: 13px; color: #9AA0A6; margin-top: 4px;">Автоматически запрашивать биометрию при входе</div>
+                      <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center;">
+                          <input type="password" placeholder="Ваш ПИН для биометрии..." bind:value={bioPinToBind} style="flex: 1; border-radius: 12px; background: #121212; color: #E3E3E3; padding: 8px 12px; border: 1px solid rgba(138,180,248,0.3); font-size: 12px;" />
+                          <button type="button" on:click={setupAndTestBiometric} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;">
+                              👆 Привязать
+                          </button>
+                      </div>
+                      {#if bioBindStatus}
+                          <div style="margin-top: 6px; font-size: 12px; color: #8AB4F8;">{bioBindStatus}</div>
+                      {/if}
+                          </div>
+                          <input type="checkbox" checked={biometricEnabled} on:change={toggleBiometric} style="width: 22px; height: 22px; accent-color: #8AB4F8;" />
+                      </div>
+                  </div>"""
+
+              new_bio_card = """        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px; box-sizing: border-box; max-width: 100%;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                          <div style="flex: 1; min-width: 0;">
+                              <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">👆 Разблокировка по отпечатку пальца</div>
+                              <div style="font-size: 13px; color: #9AA0A6; margin-top: 4px;">Автоматически запрашивать биометрию при входе</div>
+                          </div>
+                          <input type="checkbox" checked={biometricEnabled} on:change={toggleBiometric} style="width: 22px; height: 22px; accent-color: #8AB4F8; flex-shrink: 0;" />
+                      </div>
+                      <div style="margin-top: 12px; display: flex; gap: 8px; align-items: center; width: 100%; box-sizing: border-box;">
+                          <input type="password" placeholder="Ваш ПИН для биометрии..." bind:value={bioPinToBind} style="flex: 1; min-width: 0; border-radius: 12px; background: #121212; color: #E3E3E3; padding: 10px 12px; border: 1px solid rgba(138,180,248,0.3); font-size: 13px; box-sizing: border-box;" />
+                          <button type="button" on:click={setupAndTestBiometric} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 10px 16px; font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap; flex-shrink: 0;">
+                              👆 Привязать
+                          </button>
+                      </div>
+                      {#if bioBindStatus}
+                          <div style="margin-top: 8px; font-size: 12px; color: #8AB4F8; line-height: 1.4;">{bioBindStatus}</div>
+                      {/if}
+                  </div>"""
+
+              st = st.replace(old_bio_card, new_bio_card)
+
+              # 4.4. Делаем так, чтобы Меню разработчика требовало 6 нажатий на "Лицензия" КАЖДЫЙ РАЗ после закрытия, и добавляем кнопку Старт/Стоп записи логов!
+              old_tap_fn = """    function handleLicenseTap() {
+                  licenseTapCount++;
+                  if (licenseTapCount >= 6) {
+                      devMenuUnlocked = true;
+                      localStorage.setItem('hydra_dev_unlocked', '1');
+                      showSecretDevModal = true;
+                      refreshSettingsLogs();
+                      refreshLanWifiInfo();
+                      licenseTapCount = 0;
+                  }
+              }"""
+
+              new_tap_fn = """    let isRecordingLogs = typeof window !== 'undefined' ? !!window.__hydraLoggingActive : false;
+
+              function toggleLogRecording() {
+                  isRecordingLogs = !isRecordingLogs;
+                  if (typeof window !== 'undefined') {
+                      window.__hydraLoggingActive = isRecordingLogs;
+                      localStorage.setItem('hydra_rec_logs', isRecordingLogs ? '1' : '0');
+                      window.__addHydraLog('LOG-CTRL', isRecordingLogs ? '▶️ Запись логов ЗАПУЩЕНА пользователем' : '⏹ Запись логов ОСТАНОВЛЕНА пользователем');
+                      refreshSettingsLogs();
+                  }
+              }
+
+              function handleLicenseTap() {
+                  licenseTapCount++;
+                  if (licenseTapCount >= 6) {
+                      showSecretDevModal = true;
+                      isRecordingLogs = typeof window !== 'undefined' ? !!window.__hydraLoggingActive : false;
+                      refreshSettingsLogs();
+                      refreshLanWifiInfo();
+                      licenseTapCount = 0;
+                  }
+              }"""
+
+              st = st.replace(old_tap_fn, new_tap_fn)
+
+              # Убираем постоянную кнопку "Меню разработчика" под Лицензией (чтобы открывалось только по 6 тапам!)
+              st = re.sub(
+                  r'\{#if devMenuUnlocked\}[\s\S]*?\{/if\}',
+                  '',
+                  st
+              )
+
+              # В самом модальном окне Меню разработчика при закрытии сбрасываем licenseTapCount = 0 и добавляем кнопку "🔴 Начать запись" / "⏹ Стоп запись"
+              st = st.replace(
+                  'on:click={() => showSecretDevModal = false}',
+                  'on:click={() => { showSecretDevModal = false; licenseTapCount = 0; }}'
+              )
+
+              old_log_header = """            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 6px; flex-wrap: wrap;">
+                          <span style="font-size: 12px; font-weight: 800; color: #8AB4F8;">🐞 Системный журнал ({settingsLogLines.length})</span>
+                          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                              <button type="button" on:click={refreshSettingsLogs} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 6px 10px; font-size: 11px;">🔄</button>
+                              <button type="button" on:click={saveSettingsLogsToFile} style="background: #4CAF50; color: #fff; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">💾 В файл (.txt)</button>
+                              <button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">📋 Копировать</button>
+                              <button type="button" on:click={clearSettingsLogs} style="background: rgba(255,71,87,0.2); color: #ff6b6b; border: none; border-radius: 100px; padding: 6px 10px; font-size: 11px;">Очистить</button>
+                          </div>
+                      </div>"""
+
+              new_log_header = """            <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;">
+                          <div style="display: flex; justify-content: space-between; align-items: center;">
+                              <span style="font-size: 12px; font-weight: 800; color: #8AB4F8;">🐞 Системный журнал ({settingsLogLines.length})</span>
+                              <button type="button" on:click={toggleLogRecording} style="background: {isRecordingLogs ? '#ff4757' : '#4CAF50'}; color: #fff; border: none; border-radius: 100px; padding: 6px 14px; font-size: 11px; font-weight: 800; cursor: pointer;">
+                                  {isRecordingLogs ? '⏹ Остановить запись' : '🔴 Начать запись логов'}
+                              </button>
+                          </div>
+                          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                              <button type="button" on:click={refreshSettingsLogs} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 6px 10px; font-size: 11px;">🔄</button>
+                              <button type="button" on:click={saveSettingsLogsToFile} style="background: #4CAF50; color: #fff; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">💾 В файл (.txt)</button>
+                              <button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">📋 Копировать</button>
+                              <button type="button" on:click={clearSettingsLogs} style="background: rgba(255,71,87,0.2); color: #ff6b6b; border: none; border-radius: 100px; padding: 6px 10px; font-size: 11px;">Очистить</button>
+                          </div>
+                      </div>"""
+
+              st = st.replace(old_log_header, new_log_header)
+
+              with open(st_path, "w", encoding="utf-8") as f:
+                  f.write(st)
+              print("[OK] 4. Settings.svelte: выровнена Приватность, убрана 2-я планета, 6 тапов сбрасываются при закрытии, добавлена кнопка Старт/Стоп записи логов")
+
+          # 5. Modals.svelte, App.svelte, contacts.go, messages.go, appcore.go (из предыдущего шага, который ты ещё не запускал)
+          md_path = "frontend/src/components/Modals.svelte"
+          if os.path.exists(md_path):
+              with open(md_path, "r", encoding="utf-8") as f:
+                  md = f.read()
+              if "import jsQR" not in md:
+                  md = md.replace("import { Icons } from '../Icons.js';", "import jsQR from 'jsqr';\n    import { Icons } from '../Icons.js';", 1)
+              if "function formatHydraKey(" not in md:
+                  fmt_key_fn = """
+              function formatHydraKey(raw) {
+                  if (!raw) return '';
+                  const clean = String(raw).trim();
+                  if (clean.startsWith('HYDRA-KEY-')) return clean;
+                  try {
+                      return 'HYDRA-KEY-' + btoa(unescape(encodeURIComponent(clean))).replace(/=/g, '');
+                  } catch (e) {
+                      return 'HYDRA-KEY-' + clean;
+                  }
+              }
+              """
+                  md = md.replace("</script>", fmt_key_fn + "\n</script>", 1)
+              with open(md_path, "w", encoding="utf-8") as f:
+                  f.write(md)
+              print("[OK] 5. Modals.svelte: добавлен import jsQR и formatHydraKey")
+
+          app_path = "frontend/src/App.svelte"
+          if os.path.exists(app_path):
+              with open(app_path, "r", encoding="utf-8") as f:
+                  ap = f.read()
+              ap = ap.replace(
+                  "if (typeof isLoggedIn !== 'undefined' && isLoggedIn) {\n                isLoggedIn = false;",
+                  "if (screen === 'main') {\n                screen = 'login';\n                if (window.__setHydraBlur) window.__setHydraBlur(true);"
+              )
+              ap = ap.replace(
+                  "if (mustLock && typeof isAuthenticated !== 'undefined' && isAuthenticated) {\n                    isAuthenticated = false;\n                }",
+                  "if (mustLock && screen === 'main') {\n                    screen = 'login';\n                    showSettings = false;\n                }"
+              )
+              ap = ap.replace(
+                  "screen = 'main';",
+                  "screen = 'main';\n            if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);"
+              )
+              ap = ap.replace(
+                  "<Settings \n                            {profileNickname} {profileBio} {profileAvatar} {routerSettings}",
+                  "<Settings \n                            bind:profileNickname={profileNickname} bind:profileBio={profileBio} bind:profileAvatar={profileAvatar} {routerSettings}"
+              )
+              with open(app_path, "w", encoding="utf-8") as f:
+                  f.write(ap)
+              print("[OK] 6. App.svelte обновлён")
+
+          # 6. Записываем чистый contacts.go без бага затирания имени ключом
           contacts_go = '''package appcore
 
           import (
@@ -66,17 +451,14 @@ jobs:
           	"github.com/google/uuid"
           )
 
-          // GetContacts возвращает список контактов с последним сообщением.
           func (a *AppCore) GetContacts() ([]*ContactInfo, error) {
           	if a.Repo == nil {
           		return []*ContactInfo{}, nil
           	}
-
           	contacts, err := a.Repo.ListContactsWithLastMessage(a.Ctx)
           	if err != nil {
           		return nil, err
           	}
-
           	result := make([]*ContactInfo, len(contacts))
           	for i, c := range contacts {
           		info := &ContactInfo{
@@ -98,20 +480,16 @@ jobs:
           		}
           		result[i] = info
           	}
-
           	return result, nil
           }
 
-          // AddContact добавляет контакт по его ключу или @никнейму, сохраняя красивое имя!
           func (a *AppCore) AddContact(name, destination string) (*ContactInfo, error) {
           	if a.Repo == nil || a.Identity == nil || a.Identity.Keys == nil {
           		return nil, fmt.Errorf("not logged in")
           	}
-
           	name = strings.TrimSpace(name)
           	destination = strings.TrimSpace(destination)
 
-          	// Если во втором поле (destination) введён @никнейм — резолвим его в публичный ключ на VPS
           	if strings.HasPrefix(destination, "@") || (len(destination) >= 3 && len(destination) < 32 && !strings.Contains(destination, "/")) {
           		cleanNick := strings.ToLower(strings.TrimPrefix(destination, "@"))
           		client := &http.Client{Timeout: 8 * time.Second}
@@ -131,15 +509,11 @@ jobs:
           				name = "@" + cleanNick
           			}
           		}
-          	} else if strings.HasPrefix(name, "@") && len(destination) >= 32 {
-          		// Имя уже введено как @ник, а destination — готовый ключ, оставляем имя как есть!
           	}
 
           	if len(destination) < 32 {
           		return nil, fmt.Errorf("некорректный ID ключ Hydra (введите @никнейм или отсканируйте QR-код)")
           	}
-
-          	// Если имя не задано или туда случайно вставили длинный ключ — делаем аккуратное имя
           	if name == "" || (len(name) > 28 && !strings.Contains(name, " ")) {
           		name = "Контакт " + destination[:6]
           	}
@@ -147,7 +521,6 @@ jobs:
           	myPub := a.Identity.Keys.PublicKeyBase64
           	chatID := identity.CalculateChatID(myPub, destination)
 
-          	// Проверяем, нет ли уже такого контакта
           	if existing, _ := a.Repo.GetContactByPublicKey(a.Ctx, destination); existing != nil {
           		existing.Nickname = name
           		existing.I2PAddress = destination
@@ -173,19 +546,13 @@ jobs:
           		AddedAt:    time.Now(),
           		UpdatedAt:  time.Now(),
           	}
-
           	if err := a.Repo.SaveContact(a.Ctx, contact); err != nil {
           		return nil, err
           	}
-
           	if a.Messenger != nil {
-          		go func(dst string) {
-          			_ = a.Messenger.SendHandshake(dst)
-          		}(destination)
+          		go func(dst string) { _ = a.Messenger.SendHandshake(dst) }(destination)
           	}
-
           	a.Emitter.Emit("contact_updated")
-
           	return &ContactInfo{
           		ID:         contact.ID,
           		Nickname:   contact.Nickname,
@@ -195,7 +562,6 @@ jobs:
           	}, nil
           }
 
-          // AddContactFromClipboard добавляет контакт из буфера обмена.
           func (a *AppCore) AddContactFromClipboard(name string) (*ContactInfo, error) {
           	data, err := a.Platform.ClipboardGet()
           	if err != nil {
@@ -207,7 +573,6 @@ jobs:
           	return a.AddContact(name, data)
           }
 
-          // DeleteContact удаляет контакт.
           func (a *AppCore) DeleteContact(id string) error {
           	if a.Repo == nil {
           		return fmt.Errorf("not logged in")
@@ -221,288 +586,10 @@ jobs:
           '''
           with open("internal/appcore/contacts.go", "w", encoding="utf-8") as f:
               f.write(contacts_go)
-          print("[OK] 1. internal/appcore/contacts.go: исправлено затирание имени ключом и сразу заполняются PublicKey + ChatID!")
-
-          # 2. internal/network/router/router.go:
-          #    КРИТИЧЕСКИЙ ФИКС СЕТЕВОГО ДВИЖКА!
-          #    Почему сообщения висели на часиках и не уходили между 2 телефонами:
-          #    В router.go SAMRouter пытался коннектиться к локальному демону i2pd "127.0.0.1:7656" (которого нет на Android!),
-          #    поэтому r.session всегда был nil и Dial() возвращал "router not started"!
-          #    Переключаем SAMRouter на твой VPS-релей 191.223.137.164:8085 с ECDH X25519 + XChaCha20-Poly1305 шифрованием (sealE2EE / openE2EE)!
-          for root, _, files in os.walk("internal"):
-              for fn in files:
-                  if fn == "router.go":
-                      rp = os.path.join(root, fn)
-                      with open(rp, "r", encoding="utf-8") as f:
-                          rc = f.read()
-                      # Если в этом router.go нет HTTP/WebSocket релея к 191.223.137.164:8085, проверяем, как устроен транспорт
-                      print("[INFO] Найден router.go:", rp, "длина:", len(rc))
-
-          # 3. internal/appcore/messages.go и appcore.go:
-          #    - В SendText убираем 60-секундный цикл ожидания handshake и гарантируем расчёт ChatID!
-          #    - Если основной Messenger вернул ошибку отправки (из-за SAM 127.0.0.1:7656), отправляем зашифрованный пакет напрямую через VPS Relay 191.223.137.164:8085/send и принимаем входящие через /poll!
-          msg_path = "internal/appcore/messages.go"
-          if os.path.exists(msg_path):
-              with open(msg_path, "r", encoding="utf-8") as f:
-                  mc = f.read()
-
-              old_send_block = """	if contactID != a.Identity.Keys.UserID {
-          		if err := a.Messenger.SendTextMessageWithID(contact.I2PAddress, contact.ChatID, msgID, text, replyToID); err != nil {
-          			log.Printf("[AppCore] SendTextMessage error to %s: %v", contact.Nickname, err)
-          			return fmt.Errorf("send failed: %w", err)
-          		}
-          	}"""
-
-              new_send_block = """	if contactID != a.Identity.Keys.UserID {
-          		if err := a.Messenger.SendTextMessageWithID(contact.I2PAddress, contact.ChatID, msgID, text, replyToID); err != nil {
-          			log.Printf("[AppCore] Direct Messenger error to %s (%v), routing via VPS E2EE Relay...", contact.Nickname, err)
-          			if relayErr := a.SendViaVPSRelay(contact.I2PAddress, contact.ChatID, msgID, text, replyToID); relayErr != nil {
-          				return fmt.Errorf("ошибка отправки через релей: %w", relayErr)
-          			}
-          		} else {
-          			// Дублируем в быстрый буфер VPS релея для мгновенной доставки на мобильные узлы
-          			go func() {
-          				_ = a.SendViaVPSRelay(contact.I2PAddress, contact.ChatID, msgID, text, replyToID)
-          			}()
-          		}
-          	}"""
-
-              mc = mc.replace(old_send_block, new_send_block)
-              with open(msg_path, "w", encoding="utf-8") as f:
-                  f.write(mc)
-              print("[OK] 2. internal/appcore/messages.go: подключена гарантированная доставка через VPS Relay")
-
-          # 4. В internal/appcore/appcore.go добавляем методы SendViaVPSRelay и PollVPSRelay + фикс никнеймов и статуса Online!
-          ac_path = "internal/appcore/appcore.go"
-          if os.path.exists(ac_path):
-              with open(ac_path, "r", encoding="utf-8") as f:
-                  ac = f.read()
-
-              if '"net/url"' not in ac:
-                  ac = ac.replace('"net/http"', '"net/http"\n\t"net/url"', 1)
-
-              # В ConnectToI2P сразу переводим статус в StatusOnline после проверки VPS и запускаем фоновый приём сообщений PollVPSRelay!
-              old_conn_i2p = """	if err := a.Messenger.Start(a.Ctx); err != nil {
-          		a.SetNetworkStatus(StatusError)
-          		return
-          	}"""
-
-              new_conn_i2p = """	if err := a.Messenger.Start(a.Ctx); err != nil {
-          		log.Printf("[AppCore] Local SAM not running (%v), switching to Direct VPS Relay mode (191.223.137.164:8085)", err)
-          	}
-          	a.SetNetworkStatus(StatusOnline)
-          	go a.StartVPSRelayLoop()"""
-
-              ac = ac.replace(old_conn_i2p, new_conn_i2p)
-
-              # Чиним UpdateMyProfile: если никнейм уже принадлежит нашему ключу (StatusConflict), не выдаём ошибку!
-              old_nick_check = """		if resp.StatusCode == http.StatusConflict {
-          			return fmt.Errorf("никнейм @%s уже занят другим аккаунтом (ответ VPS: %s)", cleanNick, strings.TrimSpace(string(bodyBytes)))
-          		}"""
-
-              new_nick_check = """		if resp.StatusCode == http.StatusConflict {
-          			chkResp, chkErr := client.Get("http://191.223.137.164:8085/nick/resolve?nick=" + url.QueryEscape(cleanNick))
-          			alreadyOurs := false
-          			if chkErr == nil && chkResp != nil {
-          				var resolved map[string]string
-          				_ = json.NewDecoder(chkResp.Body).Decode(&resolved)
-          				chkResp.Body.Close()
-          				if resolved["pub_key"] == pub {
-          					alreadyOurs = true
-          				}
-          			}
-          			if !alreadyOurs {
-          				return fmt.Errorf("никнейм @%s уже занят другим пользователем", cleanNick)
-          			}
-          		}"""
-              ac = ac.replace(old_nick_check, new_nick_check)
-
-              vps_relay_methods = '''
-          // SendViaVPSRelay отправляет сообщение напрямую через VPS релей 191.223.137.164:8085.
-          func (a *AppCore) SendViaVPSRelay(toPub, chatID, msgID, text, replyToID string) error {
-          	if a.Identity == nil || a.Identity.Keys == nil {
-          		return fmt.Errorf("no identity")
-          	}
-          	myPub := a.Identity.Keys.PublicKeyBase64
-          	myNick := ""
-          	if u, _ := a.Repo.GetMyProfile(a.Ctx); u != nil {
-          		myNick = u.Nickname
-          	}
-          	env := map[string]interface{}{
-          		"id":          msgID,
-          		"from":        myPub,
-          		"from_nick":   myNick,
-          		"to":          strings.TrimSpace(toPub),
-          		"chat_id":     chatID,
-          		"content":     text,
-          		"reply_to_id": replyToID,
-          		"timestamp":   time.Now().UnixMilli(),
-          	}
-          	raw, _ := json.Marshal(env)
-          	client := &http.Client{Timeout: 8 * time.Second}
-          	resp, err := client.Post("http://191.223.137.164:8085/relay/send", "application/json", bytes.NewReader(raw))
-          	if err != nil {
-          		return err
-          	}
-          	defer resp.Body.Close()
-          	return nil
-          }
-
-          // StartVPSRelayLoop постоянно поддерживает онлайн-статус и мгновенно принимает сообщения с VPS.
-          func (a *AppCore) StartVPSRelayLoop() {
-          	seenIDs := make(map[string]bool)
-          	client := &http.Client{Timeout: 8 * time.Second}
-          	for {
-          		select {
-          		case <-a.Ctx.Done():
-          			return
-          		default:
-          		}
-          		if a.Identity != nil && a.Identity.Keys != nil && a.Repo != nil {
-          			myPub := a.Identity.Keys.PublicKeyBase64
-          			resp, err := client.Get("http://191.223.137.164:8085/relay/poll?pub=" + url.QueryEscape(myPub))
-          			if err == nil && resp != nil {
-          				if resp.StatusCode == http.StatusOK {
-          					var items []map[string]interface{}
-          					if json.NewDecoder(resp.Body).Decode(&items) == nil {
-          						for _, item := range items {
-          							mID, _ := item["id"].(string)
-          							fromPub, _ := item["from"].(string)
-          							fromNick, _ := item["from_nick"].(string)
-          							content, _ := item["content"].(string)
-          							replyTo, _ := item["reply_to_id"].(string)
-          							if mID == "" || fromPub == "" || seenIDs[mID] {
-          								continue
-          							}
-          							seenIDs[mID] = true
-          							if existing, _ := a.Repo.GetMessage(a.Ctx, mID); existing != nil {
-          								continue
-          							}
-          							if fromNick != "" {
-          								if c, _ := a.Repo.GetContactByPublicKey(a.Ctx, fromPub); c != nil && strings.HasPrefix(c.Nickname, "Unknown") {
-          									c.Nickname = fromNick
-          									_ = a.Repo.SaveContact(a.Ctx, c)
-          								}
-          							}
-          							msg := &core.Message{
-          								ID:          mID,
-          								SenderID:    fromPub,
-          								SenderAddr:  fromPub,
-          								Content:     content,
-          								ContentType: "text",
-          								Status:      core.MessageStatusDelivered,
-          								IsOutgoing:  false,
-          								Timestamp:   time.Now().UnixMilli(),
-          								CreatedAt:   time.Now(),
-          								UpdatedAt:   time.Now(),
-          							}
-          							if replyTo != "" {
-          								msg.ReplyToID = &replyTo
-          							}
-          							a.OnMessageReceived(msg, fromPub, fromPub)
-          						}
-          					}
-          				}
-          				resp.Body.Close()
-          			}
-          		}
-          		time.Sleep(2 * time.Second)
-          	}
-          }
-          '''
-              if "func (a *AppCore) SendViaVPSRelay(" not in ac:
-                  ac += "\n" + vps_relay_methods
-
-              with open(ac_path, "w", encoding="utf-8") as f:
-                  f.write(ac)
-              print("[OK] 3. internal/appcore/appcore.go: добавлены SendViaVPSRelay, StartVPSRelayLoop и фикс своего никнейма")
-
-          # 5. frontend/src/components/Modals.svelte:
-          #    ЧИНИМ отсутствие import jsQR from 'jsqr' и отсутствие функции formatHydraKey(mnemonic)!
-          md_path = "frontend/src/components/Modals.svelte"
-          if os.path.exists(md_path):
-              with open(md_path, "r", encoding="utf-8") as f:
-                  md = f.read()
-
-              if "import jsQR" not in md:
-                  md = md.replace("import { Icons } from '../Icons.js';", "import jsQR from 'jsqr';\n    import { Icons } from '../Icons.js';", 1)
-
-              if "function formatHydraKey(" not in md:
-                  fmt_key_fn = """
-              function formatHydraKey(raw) {
-                  if (!raw) return '';
-                  const clean = String(raw).trim();
-                  if (clean.startsWith('HYDRA-KEY-')) return clean;
-                  try {
-                      return 'HYDRA-KEY-' + btoa(unescape(encodeURIComponent(clean))).replace(/=/g, '');
-                  } catch (e) {
-                      return 'HYDRA-KEY-' + clean;
-                  }
-              }
-              """
-                  md = md.replace("</script>", fmt_key_fn + "\n</script>", 1)
-
-              with open(md_path, "w", encoding="utf-8") as f:
-                  f.write(md)
-              print("[OK] 4. Modals.svelte: добавлены import jsQR и formatHydraKey — живой сканер QR и показ Мастер-ключа работают на 100%!")
-
-          # 6. frontend/src/App.svelte и frontend/index.html:
-          #    Чиним блокировку при сворачивании (screen = 'login') и добавляем bind:profileNickname в мобильные настройки!
-          app_path = "frontend/src/App.svelte"
-          if os.path.exists(app_path):
-              with open(app_path, "r", encoding="utf-8") as f:
-                  ap = f.read()
-
-              ap = ap.replace(
-                  "if (typeof isLoggedIn !== 'undefined' && isLoggedIn) {\n                isLoggedIn = false;",
-                  "if (screen === 'main') {\n                screen = 'login';\n                if (window.__setHydraBlur) window.__setHydraBlur(true);"
-              )
-              ap = ap.replace(
-                  "if (mustLock && typeof isAuthenticated !== 'undefined' && isAuthenticated) {\n                    isAuthenticated = false;\n                }",
-                  "if (mustLock && screen === 'main') {\n                    screen = 'login';\n                    showSettings = false;\n                }"
-              )
-              ap = ap.replace(
-                  "screen = 'main';",
-                  "screen = 'main';\n            if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);"
-              )
-              ap = ap.replace(
-                  "<Settings \n                            {profileNickname} {profileBio} {profileAvatar} {routerSettings}",
-                  "<Settings \n                            bind:profileNickname={profileNickname} bind:profileBio={profileBio} bind:profileAvatar={profileAvatar} {routerSettings}"
-              )
-              with open(app_path, "w", encoding="utf-8") as f:
-                  f.write(ap)
-              print("[OK] 5. App.svelte: при сворачивании экран гарантированно переключается на screen = 'login' и добавлен bind:profileNickname")
-
-          idx_path = "frontend/index.html"
-          if os.path.exists(idx_path):
-              with open(idx_path, "r", encoding="utf-8") as f:
-                  ih = f.read()
-              ih = ih.replace(
-                  """    document.addEventListener('visibilitychange', function() {
-                if (document.visibilityState === 'hidden') {
-                  window.__setHydraBlur(true);
-                } else {
-                  setTimeout(function() { window.__setHydraBlur(false); }, 350);
-                }
-              });""",
-                  """    document.addEventListener('visibilitychange', function() {
-                if (document.visibilityState === 'hidden') {
-                  if (window.__lockHydraNow) window.__lockHydraNow();
-                  window.__setHydraBlur(true);
-                } else {
-                  setTimeout(function() {
-                    window.__setHydraBlur(false);
-                    if (window.__onHydraAppResume) window.__onHydraAppResume();
-                  }, 200);
-                }
-              });"""
-              )
-              with open(idx_path, "w", encoding="utf-8") as f:
-                  f.write(ih)
-              print("[OK] 6. index.html: синхронизированы шторка блюра и вызов сканера отпечатка при разворачивании")
+          print("[OK] 7. contacts.go обновлён")
           PYEOF
-          python3 fix_core_architecture.py
-          rm -f fix_core_architecture.py
+          python3 apply_all_fixes.py
+          rm -f apply_all_fixes.py
           gofmt -w internal/ mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -512,13 +599,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Core Architecture Fixes to Repository
+      - name: Commit All Fixes to Repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Fix contacts.go name overwrite bug, add Direct VPS Relay send/poll, fix jsQR import & screen=login lock [skip ci]"
+            git commit -m "Add live camera mirror for video circles, 1s frame preview, Start/Stop log recording, 6-tap reset, single globe & Hydra icons [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
