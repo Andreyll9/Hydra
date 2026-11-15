@@ -38,558 +38,136 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply All UI/UX, Video Circle Live Preview, Start/Stop Logger, Hydra Icons & Relay Fixes
+      - name: Fix unused log in contacts.go, Bump Version to 2.5.0-hydra & Apply Dark Blue + Dark Grey Theme
         run: |
-          cat << 'PYEOF' > apply_all_fixes.py
+          cat << 'PYEOF' > apply_darkblue_and_fix.py
           import os, re
 
-          # 1. Иконка Гидры (заменяем старого призрака в Icons.js и убираем квадратную рамку на экране входа в Auth.svelte и Settings.svelte)
-          hydra_svg = """<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="32" cy="32" r="30" stroke="#8AB4F8" stroke-width="2.5" fill="#12131A"/><path d="M32 12C25 12 20 17 20 24C20 29 23 33 26 36L22 50H42L38 36C41 33 44 29 44 24C44 17 39 12 32 12Z" stroke="#8AB4F8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="rgba(138,180,248,0.12)"/><path d="M20 26C14 24 10 19 12 13C15 15 19 18 21 22" stroke="#8AB4F8" stroke-width="2.5" stroke-linecap="round"/><path d="M44 26C50 24 54 19 52 13C49 15 45 18 43 22" stroke="#8AB4F8" stroke-width="2.5" stroke-linecap="round"/><circle cx="28" cy="23" r="2" fill="#8AB4F8"/><circle cx="36" cy="23" r="2" fill="#8AB4F8"/><path d="M27 30C29 32 35 32 37 30" stroke="#8AB4F8" stroke-width="2" stroke-linecap="round"/></svg>"""
+          # 1. Чиним ошибку компиляции Go: убираем неиспользуемый "log" в internal/appcore/contacts.go
+          c_path = "internal/appcore/contacts.go"
+          if os.path.exists(c_path):
+              with open(c_path, "r", encoding="utf-8") as f:
+                  cc = f.read()
+              cc = cc.replace('\t"log"\n', '')
+              with open(c_path, "w", encoding="utf-8") as f:
+                  f.write(cc)
+              print("[OK] 1. internal/appcore/contacts.go: удалён неиспользуемый импорт 'log'")
 
-          icons_path = "frontend/src/Icons.js"
-          if os.path.exists(icons_path):
-              with open(icons_path, "r", encoding="utf-8") as f:
-                  ic = f.read()
-              ic = re.sub(r"Ghost:\s*`[\s\S]*?`", f"Ghost: `{hydra_svg}`", ic)
-              with open(icons_path, "w", encoding="utf-8") as f:
-                  f.write(ic)
-              print("[OK] 1. Icons.js: иконка призрака заменена на эмблему Гидры")
+          # 2. Обновляем версию до 2.5.0-hydra в Go-ядре и в android/app/build.gradle
+          for root, _, files in os.walk("internal"):
+              for fn in files:
+                  if fn.endswith(".go"):
+                      fp = os.path.join(root, fn)
+                      with open(fp, "r", encoding="utf-8") as f:
+                          gc = f.read()
+                      orig = gc
+                      gc = gc.replace('"2.0.0-hydra"', '"2.5.0-hydra"')
+                      gc = gc.replace('"1.0.2-beta"', '"2.5.0-hydra"')
+                      if gc != orig:
+                          with open(fp, "w", encoding="utf-8") as f:
+                              f.write(gc)
+                          print("[OK] 2a. Версия в Go обновлена до 2.5.0-hydra:", fp)
 
-          auth_path = "frontend/src/components/Auth.svelte"
-          if os.path.exists(auth_path):
-              with open(auth_path, "r", encoding="utf-8") as f:
-                  au = f.read()
-              au = au.replace(
-                  '<img src="/icon.png" alt="Hydra" class="rounded-full shadow-lg" style="width: 80px; height: 80px; filter: drop-shadow(0 0 20px rgba(99, 102, 241, 0.4)); object-fit: cover; border: 2px solid rgba(255,255,255,0.1);" />',
-                  f'<div style="width: 84px; height: 84px; margin: 0 auto; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 24px rgba(138,180,248,0.25);">{hydra_svg}</div>'
-              )
-              with open(auth_path, "w", encoding="utf-8") as f:
-                  f.write(au)
-              print("[OK] 1b. Auth.svelte: логотип на экране входа заменён на круглую векторную Гидру без квадратной рамки")
+          gradle_path = "android/app/build.gradle"
+          if os.path.exists(gradle_path):
+              with open(gradle_path, "r", encoding="utf-8") as f:
+                  bg = f.read()
+              bg = re.sub(r'versionCode\s+\d+', 'versionCode 25', bg)
+              bg = re.sub(r'versionName\s+"[^"]+"', 'versionName "2.5.0-hydra"', bg)
+              with open(gradle_path, "w", encoding="utf-8") as f:
+                  f.write(bg)
+              print("[OK] 2b. android/app/build.gradle: версия обновлена до 2.5.0-hydra (versionCode 25)")
 
-          # 2. frontend/index.html:
-          #    Делаем запись логов УПРАВЛЯЕМОЙ (по кнопке "🔴 Начать запись логов" / "⏹ Остановить запись"), пока пользователь сам её не остановит!
-          idx_path = "frontend/index.html"
-          if os.path.exists(idx_path):
-              with open(idx_path, "r", encoding="utf-8") as f:
-                  ih = f.read()
+          # 3. Заменяем ВЕСЬ фиолетовый цвет во всём фронтенде на строгую ТЁМНО-СИНЮЮ + ТЁМНО-СЕРУЮ тему!
+          purple_to_darkblue = [
+              # Основные фиолетовые HEX-коды -> Тёмно-синие
+              ("#6366f1", "#1D4ED8"),
+              ("#6c5ce7", "#1E40AF"),
+              ("#5a4fcf", "#1E3A8A"),
+              ("#a29bfe", "#60A5FA"),
+              ("#a78bfa", "#3B82F6"),
+              ("#1a1a2e", "#16181D"),
+              ("#1e1e2e", "#1A1C20"),
+              ("#11111b", "#141619"),
+              ("#0c0c14", "#121316"),
+              # Фиолетовые RGBA -> Тёмно-синие RGBA
+              ("rgba(99, 102, 241,", "rgba(29, 78, 216,"),
+              ("rgba(99,102,241,", "rgba(29,78,216,"),
+              ("rgba(108, 92, 231,", "rgba(30, 64, 175,"),
+              ("rgba(162, 155, 254,", "rgba(59, 130, 246,"),
+              # Обновление запасной строки версии в Settings.svelte
+              ("'1.0.2-beta'", "'2.5.0-hydra'"),
+          ]
 
-              ih = ih.replace(
-                  "window.__hydraLogList = [];",
-                  "window.__hydraLogList = [];\n    window.__hydraLoggingActive = localStorage.getItem('hydra_rec_logs') === '1';"
-              )
-              ih = ih.replace(
-                  "window.__addHydraLog = function(tag, msg) {\n      var d = new Date();",
-                  "window.__addHydraLog = function(tag, msg) {\n      if (!window.__hydraLoggingActive && tag !== 'LOG-CTRL') return;\n      var d = new Date();"
-              )
-              ih = ih.replace(
-                  """    document.addEventListener('visibilitychange', function() {
-                if (document.visibilityState === 'hidden') {
-                  window.__setHydraBlur(true);
-                } else {
-                  setTimeout(function() { window.__setHydraBlur(false); }, 350);
-                }
-              });""",
-                  """    document.addEventListener('visibilitychange', function() {
-                if (document.visibilityState === 'hidden') {
-                  if (window.__lockHydraNow) window.__lockHydraNow();
-                  window.__setHydraBlur(true);
-                } else {
-                  setTimeout(function() {
-                    window.__setHydraBlur(false);
-                    if (window.__onHydraAppResume) window.__onHydraAppResume();
-                  }, 200);
-                }
-              });"""
-              )
-              with open(idx_path, "w", encoding="utf-8") as f:
-                  f.write(ih)
-              print("[OK] 2. index.html: запись логов работает строго по кнопке Старт/Стоп")
+          for root, _, files in os.walk("frontend/src"):
+              for fn in files:
+                  if fn.endswith((".svelte", ".js", ".css")):
+                      fp = os.path.join(root, fn)
+                      with open(fp, "r", encoding="utf-8") as f:
+                          content = f.read()
+                      orig = content
+                      for old_val, new_val in purple_to_darkblue:
+                          content = content.replace(old_val, new_val)
 
-          # 3. Chat.svelte:
-          #    - Живое круглое превью с фронтальной камеры ВО ВРЕМЯ ЗАПИСИ кружка (чтобы ты видел себя при записи!)
-          #    - В отправленном кружке вместо серого треугольника Play сразу показывается 1-я секунда видео (autoplay muted loop playsinline + #t=0.1, а нажатие включает/выключает звук и перезапускает с начала!)
-          #    - Выравниваем панель кнопок над полем ввода (чтобы текст таймера записи не плющило справа)
-          ch_path = "frontend/src/components/Chat.svelte"
-          if os.path.exists(ch_path):
-              with open(ch_path, "r", encoding="utf-8") as f:
-                  ch = f.read()
+                      # Если это utils.js — меняем градиенты аватарок с фиолетовых на благородные тёмно-синие и графитовые
+                      if fn == "utils.js":
+                          content = re.sub(
+                              r"#667eea|#764ba2|#6B73FF|#000DFF|#8E2DE2|#4A00E0|#c471f5|#fa71cd",
+                              "#1E3A8A",
+                              content
+                          )
 
-              # Добавляем переменную liveCirclePreviewEl для отображения себя во время записи кружка
-              if "let liveCirclePreviewEl = null;" not in ch:
-                  ch = ch.replace("let isRecordingMedia = false;", "let isRecordingMedia = false;\n    let liveCirclePreviewEl = null;\n    let activeMediaStream = null;", 1)
+                      if content != orig:
+                          with open(fp, "w", encoding="utf-8") as f:
+                              f.write(content)
+                          print("[OK] 3. Перекрашен в тёмно-синий + тёмно-серый:", fp)
 
-              # При старте записи кружка подключаем поток камеры к круглому видоискателю liveCirclePreviewEl
-              ch = ch.replace(
-                  "recordedChunks = [];",
-                  """recordedChunks = [];
-                      activeMediaStream = stream;
-                      if (mode === 'video') {
-                          setTimeout(() => {
-                              if (liveCirclePreviewEl && activeMediaStream) {
-                                  liveCirclePreviewEl.srcObject = activeMediaStream;
-                                  liveCirclePreviewEl.play().catch(() => {});
-                              }
-                          }, 60);
-                      }"""
-              )
-              ch = ch.replace(
-                  "stream.getTracks().forEach(t => t.stop());",
-                  "stream.getTracks().forEach(t => t.stop());\n                activeMediaStream = null;"
-              )
-
-              # Заменяем отображение видео-кружка в чате: убираем огромный серый треугольник Play и показываем живое превью с 1-й секунды!
-              old_circle_render = """                {:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
-                              <div style="padding: 4px; display: flex; flex-direction: column; align-items: center;">
-                                  <div style="width: 210px; height: 210px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #8AB4F8; background: #000; position: relative; display: flex; align-items: center; justify-content: center;">
-                                      <video playsinline loop src={msg.Content.slice('[HYDRA_CIRCLE]:'.length)} on:click|stopPropagation={(e) => { const v = e.currentTarget; if (v.paused) v.play(); else v.pause(); }} style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; cursor: pointer;"></video>
-                                  </div>
-                                  <span style="font-size: 11px; opacity: 0.85; margin-top: 6px;">📹 Видео-кружок (нажмите для пуска/паузы)</span>
-                              </div>"""
-
-              new_circle_render = """                {:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
-                              <div style="padding: 4px; display: flex; flex-direction: column; align-items: center;">
-                                  <div style="width: 216px; height: 216px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #8AB4F8; background: #12131A; position: relative; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 24px rgba(0,0,0,0.5);">
-                                      <video
-                                          preload="metadata"
-                                          autoplay
-                                          muted
-                                          loop
-                                          playsinline
-                                          src={msg.Content.slice('[HYDRA_CIRCLE]:'.length) + '#t=0.1'}
-                                          on:loadedmetadata={(e) => { const v = e.currentTarget; v.currentTime = 0.1; v.play().catch(() => {}); }}
-                                          on:click|stopPropagation={(e) => {
-                                              const v = e.currentTarget;
-                                              if (v.muted) {
-                                                  v.muted = false;
-                                                  v.currentTime = 0;
-                                                  v.play();
-                                              } else if (v.paused) {
-                                                  v.play();
-                                              } else {
-                                                  v.muted = true;
-                                                  v.pause();
-                                              }
-                                          }}
-                                          style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; cursor: pointer;"
-                                      ></video>
-                                      <div style="position: absolute; bottom: 10px; right: 28px; background: rgba(0,0,0,0.65); color: #8AB4F8; border-radius: 100px; padding: 2px 8px; font-size: 10px; font-weight: 700; pointer-events: none;">🔊 Нажмите для звука</div>
-                                  </div>
-                              </div>"""
-
-              ch = ch.replace(old_circle_render, new_circle_render)
-
-              # Добавляем живое круглое зеркало камеры во время записи кружка и выравниваем панель записи
-              old_rec_bar = """    <div style="display: flex; gap: 8px; padding: 6px 14px; background: #18191C; align-items: center; border-top: 1px solid rgba(255,255,255,0.04);">
-                  <button type="button" on:click={() => showEmojiPanel = !showEmojiPanel} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">😊 Стикеры</button>
-                  <button type="button" on:click={() => toggleVoiceOrCircle('audio')} style="background: {isRecordingMedia && recordMode==='audio' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">
-                      {isRecordingMedia && recordMode==='audio' ? '⏹ Стоп (Аудио)' : '🎤 Голосовое'}
-                  </button>
-                  <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="background: {isRecordingMedia && recordMode==='video' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">
-                      {isRecordingMedia && recordMode==='video' ? '⏹ Стоп (Кружок)' : '📹 Кружок'}
-                  </button>
-                  {#if isRecordingMedia}
-                      <span style="margin-left: auto; color: #ff4757; font-size: 12px; font-weight: 700;">🔴 Запись: {recordingSeconds} сек... (нажмите Стоп для отправки)</span>
-                  {/if}
-              </div>"""
-
-              new_rec_bar = """    {#if isRecordingMedia && recordMode === 'video'}
-                  <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.88); backdrop-filter: blur(12px); z-index: 99990; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px;">
-                      <div style="font-size: 15px; font-weight: 800; color: #ff4757; display: flex; align-items: center; gap: 8px;">
-                          <span>🔴 Запись видео-кружка: {recordingSeconds} сек / 30 сек</span>
-                      </div>
-                      <div style="width: 240px; height: 240px; border-radius: 50%; overflow: hidden; clip-path: circle(50% at 50% 50%); -webkit-clip-path: circle(50% at 50% 50%); border: 4px solid #8AB4F8; background: #000; box-shadow: 0 0 32px rgba(138,180,248,0.4);">
-                          <video bind:this={liveCirclePreviewEl} autoplay muted playsinline style="width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); border-radius: 50%;"></video>
-                      </div>
-                      <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 14px 32px; font-size: 15px; font-weight: 800; cursor: pointer; box-shadow: 0 6px 20px rgba(138,180,248,0.4);">
-                          ⏹ Остановить и отправить кружок
-                      </button>
-                  </div>
-              {/if}
-              {#if isRecordingMedia && recordMode === 'audio'}
-                  <div style="padding: 8px 14px; background: rgba(255,71,87,0.15); border-top: 1px solid rgba(255,71,87,0.3); display: flex; align-items: center; justify-content: space-between;">
-                      <span style="color: #ff6b6b; font-size: 12px; font-weight: 700;">🎤 Запись голосового: {recordingSeconds} сек...</span>
-                      <button type="button" on:click={() => toggleVoiceOrCircle('audio')} style="background: #ff4757; color: #fff; border: none; border-radius: 100px; padding: 5px 14px; font-size: 11px; font-weight: 700;">⏹ Отправить</button>
-                  </div>
-              {/if}
-              <div style="display: flex; gap: 8px; padding: 8px 14px; background: #18191C; align-items: center; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.04);">
-                  <button type="button" on:click={() => showEmojiPanel = !showEmojiPanel} style="flex: 1; background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">😊 Стикеры</button>
-                  <button type="button" on:click={() => toggleVoiceOrCircle('audio')} style="flex: 1; background: {isRecordingMedia && recordMode==='audio' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">
-                      {isRecordingMedia && recordMode==='audio' ? '⏹ Стоп' : '🎤 Голосовое'}
-                  </button>
-                  <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="flex: 1; background: {isRecordingMedia && recordMode==='video' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">
-                      {isRecordingMedia && recordMode==='video' ? '⏹ Стоп' : '📹 Кружок'}
-                  </button>
-              </div>"""
-
-              ch = ch.replace(old_rec_bar, new_rec_bar)
-
-              # Скрываем стандартную серую кнопку Play в WebView у видео-кружка
-              hide_webkit_play_css = """
-              video::-webkit-media-controls-overlay-play-button,
-              video::-webkit-media-controls-start-playback-button {
-                  display: none !important;
-                  -webkit-appearance: none !important;
-                  opacity: 0 !important;
-              }
-              """
-              if "video::-webkit-media-controls-start-playback-button" not in ch:
-                  ch = ch.replace("</style>", hide_webkit_play_css + "\n</style>", 1)
-
-              with open(ch_path, "w", encoding="utf-8") as f:
-                  f.write(ch)
-              print("[OK] 3. Chat.svelte: добавлено живое круглое зеркало камеры при записи кружка и превью 1-й секунды без серого треугольника!")
-
-          # 4. Settings.svelte:
-          #    - Чиним вылезающую кнопку "👆 Привязать" во вкладке Приватность!
-          #    - Убираем вторую планету 🌐 в "Сеть и Сервер" (удаляем summary::before { content: '🌐'; })!
-          #    - Делаем так, чтобы после закрытия Меню разработчика его снова нужно было открывать 6 нажатиями на "Лицензию"!
-          #    - Добавляем в Меню разработчика кнопку "🔴 Начать запись логов" / "⏹ Остановить запись логов"!
-          #    - Заменяем старую иконку /icon.png в "О программе" на эмблему Гидры!
-          st_path = "frontend/src/components/Settings.svelte"
-          if os.path.exists(st_path):
-              with open(st_path, "r", encoding="utf-8") as f:
-                  st = f.read()
-
-              # 4.1. Убираем вторую планету из CSS
-              st = st.replace(".destination-details summary::before { content: '🌐'; font-size: 14px; }", ".destination-details summary::before { content: none; display: none; }")
-
-              # 4.2. Заменяем иконку в разделе О программе на векторную Гидру
-              st = st.replace(
-                  '<img src="/icon.png" alt="Hydra" style="width: 100%; height: 100%; object-fit: cover; border-radius: 28px;" />',
-                  hydra_svg
-              )
-
-              # 4.3. Чиним карточку "Разблокировка по отпечатку пальца" во вкладке Приватность, чтобы поле ввода и кнопка "Привязать" НЕ вылезали за правый край!
-              old_bio_card = """        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center;">
-                          <div>
-                              <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">👆 Разблокировка по отпечатку пальца</div>
-                              <div style="font-size: 13px; color: #9AA0A6; margin-top: 4px;">Автоматически запрашивать биометрию при входе</div>
-                      <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center;">
-                          <input type="password" placeholder="Ваш ПИН для биометрии..." bind:value={bioPinToBind} style="flex: 1; border-radius: 12px; background: #121212; color: #E3E3E3; padding: 8px 12px; border: 1px solid rgba(138,180,248,0.3); font-size: 12px;" />
-                          <button type="button" on:click={setupAndTestBiometric} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;">
-                              👆 Привязать
-                          </button>
-                      </div>
-                      {#if bioBindStatus}
-                          <div style="margin-top: 6px; font-size: 12px; color: #8AB4F8;">{bioBindStatus}</div>
-                      {/if}
-                          </div>
-                          <input type="checkbox" checked={biometricEnabled} on:change={toggleBiometric} style="width: 22px; height: 22px; accent-color: #8AB4F8;" />
-                      </div>
-                  </div>"""
-
-              new_bio_card = """        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px; box-sizing: border-box; max-width: 100%;">
-                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
-                          <div style="flex: 1; min-width: 0;">
-                              <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">👆 Разблокировка по отпечатку пальца</div>
-                              <div style="font-size: 13px; color: #9AA0A6; margin-top: 4px;">Автоматически запрашивать биометрию при входе</div>
-                          </div>
-                          <input type="checkbox" checked={biometricEnabled} on:change={toggleBiometric} style="width: 22px; height: 22px; accent-color: #8AB4F8; flex-shrink: 0;" />
-                      </div>
-                      <div style="margin-top: 12px; display: flex; gap: 8px; align-items: center; width: 100%; box-sizing: border-box;">
-                          <input type="password" placeholder="Ваш ПИН для биометрии..." bind:value={bioPinToBind} style="flex: 1; min-width: 0; border-radius: 12px; background: #121212; color: #E3E3E3; padding: 10px 12px; border: 1px solid rgba(138,180,248,0.3); font-size: 13px; box-sizing: border-box;" />
-                          <button type="button" on:click={setupAndTestBiometric} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 10px 16px; font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap; flex-shrink: 0;">
-                              👆 Привязать
-                          </button>
-                      </div>
-                      {#if bioBindStatus}
-                          <div style="margin-top: 8px; font-size: 12px; color: #8AB4F8; line-height: 1.4;">{bioBindStatus}</div>
-                      {/if}
-                  </div>"""
-
-              st = st.replace(old_bio_card, new_bio_card)
-
-              # 4.4. Делаем так, чтобы Меню разработчика требовало 6 нажатий на "Лицензия" КАЖДЫЙ РАЗ после закрытия, и добавляем кнопку Старт/Стоп записи логов!
-              old_tap_fn = """    function handleLicenseTap() {
-                  licenseTapCount++;
-                  if (licenseTapCount >= 6) {
-                      devMenuUnlocked = true;
-                      localStorage.setItem('hydra_dev_unlocked', '1');
-                      showSecretDevModal = true;
-                      refreshSettingsLogs();
-                      refreshLanWifiInfo();
-                      licenseTapCount = 0;
-                  }
-              }"""
-
-              new_tap_fn = """    let isRecordingLogs = typeof window !== 'undefined' ? !!window.__hydraLoggingActive : false;
-
-              function toggleLogRecording() {
-                  isRecordingLogs = !isRecordingLogs;
-                  if (typeof window !== 'undefined') {
-                      window.__hydraLoggingActive = isRecordingLogs;
-                      localStorage.setItem('hydra_rec_logs', isRecordingLogs ? '1' : '0');
-                      window.__addHydraLog('LOG-CTRL', isRecordingLogs ? '▶️ Запись логов ЗАПУЩЕНА пользователем' : '⏹ Запись логов ОСТАНОВЛЕНА пользователем');
-                      refreshSettingsLogs();
-                  }
-              }
-
-              function handleLicenseTap() {
-                  licenseTapCount++;
-                  if (licenseTapCount >= 6) {
-                      showSecretDevModal = true;
-                      isRecordingLogs = typeof window !== 'undefined' ? !!window.__hydraLoggingActive : false;
-                      refreshSettingsLogs();
-                      refreshLanWifiInfo();
-                      licenseTapCount = 0;
-                  }
-              }"""
-
-              st = st.replace(old_tap_fn, new_tap_fn)
-
-              # Убираем постоянную кнопку "Меню разработчика" под Лицензией (чтобы открывалось только по 6 тапам!)
-              st = re.sub(
-                  r'\{#if devMenuUnlocked\}[\s\S]*?\{/if\}',
-                  '',
-                  st
-              )
-
-              # В самом модальном окне Меню разработчика при закрытии сбрасываем licenseTapCount = 0 и добавляем кнопку "🔴 Начать запись" / "⏹ Стоп запись"
-              st = st.replace(
-                  'on:click={() => showSecretDevModal = false}',
-                  'on:click={() => { showSecretDevModal = false; licenseTapCount = 0; }}'
-              )
-
-              old_log_header = """            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 6px; flex-wrap: wrap;">
-                          <span style="font-size: 12px; font-weight: 800; color: #8AB4F8;">🐞 Системный журнал ({settingsLogLines.length})</span>
-                          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                              <button type="button" on:click={refreshSettingsLogs} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 6px 10px; font-size: 11px;">🔄</button>
-                              <button type="button" on:click={saveSettingsLogsToFile} style="background: #4CAF50; color: #fff; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">💾 В файл (.txt)</button>
-                              <button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">📋 Копировать</button>
-                              <button type="button" on:click={clearSettingsLogs} style="background: rgba(255,71,87,0.2); color: #ff6b6b; border: none; border-radius: 100px; padding: 6px 10px; font-size: 11px;">Очистить</button>
-                          </div>
-                      </div>"""
-
-              new_log_header = """            <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;">
-                          <div style="display: flex; justify-content: space-between; align-items: center;">
-                              <span style="font-size: 12px; font-weight: 800; color: #8AB4F8;">🐞 Системный журнал ({settingsLogLines.length})</span>
-                              <button type="button" on:click={toggleLogRecording} style="background: {isRecordingLogs ? '#ff4757' : '#4CAF50'}; color: #fff; border: none; border-radius: 100px; padding: 6px 14px; font-size: 11px; font-weight: 800; cursor: pointer;">
-                                  {isRecordingLogs ? '⏹ Остановить запись' : '🔴 Начать запись логов'}
-                              </button>
-                          </div>
-                          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                              <button type="button" on:click={refreshSettingsLogs} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 6px 10px; font-size: 11px;">🔄</button>
-                              <button type="button" on:click={saveSettingsLogsToFile} style="background: #4CAF50; color: #fff; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">💾 В файл (.txt)</button>
-                              <button type="button" on:click={copySettingsLogs} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">📋 Копировать</button>
-                              <button type="button" on:click={clearSettingsLogs} style="background: rgba(255,71,87,0.2); color: #ff6b6b; border: none; border-radius: 100px; padding: 6px 10px; font-size: 11px;">Очистить</button>
-                          </div>
-                      </div>"""
-
-              st = st.replace(old_log_header, new_log_header)
-
-              with open(st_path, "w", encoding="utf-8") as f:
-                  f.write(st)
-              print("[OK] 4. Settings.svelte: выровнена Приватность, убрана 2-я планета, 6 тапов сбрасываются при закрытии, добавлена кнопка Старт/Стоп записи логов")
-
-          # 5. Modals.svelte, App.svelte, contacts.go, messages.go, appcore.go (из предыдущего шага, который ты ещё не запускал)
-          md_path = "frontend/src/components/Modals.svelte"
-          if os.path.exists(md_path):
-              with open(md_path, "r", encoding="utf-8") as f:
-                  md = f.read()
-              if "import jsQR" not in md:
-                  md = md.replace("import { Icons } from '../Icons.js';", "import jsQR from 'jsqr';\n    import { Icons } from '../Icons.js';", 1)
-              if "function formatHydraKey(" not in md:
-                  fmt_key_fn = """
-              function formatHydraKey(raw) {
-                  if (!raw) return '';
-                  const clean = String(raw).trim();
-                  if (clean.startsWith('HYDRA-KEY-')) return clean;
-                  try {
-                      return 'HYDRA-KEY-' + btoa(unescape(encodeURIComponent(clean))).replace(/=/g, '');
-                  } catch (e) {
-                      return 'HYDRA-KEY-' + clean;
-                  }
-              }
-              """
-                  md = md.replace("</script>", fmt_key_fn + "\n</script>", 1)
-              with open(md_path, "w", encoding="utf-8") as f:
-                  f.write(md)
-              print("[OK] 5. Modals.svelte: добавлен import jsQR и formatHydraKey")
-
-          app_path = "frontend/src/App.svelte"
-          if os.path.exists(app_path):
-              with open(app_path, "r", encoding="utf-8") as f:
+          # 4. Дополнительно закрепляем глобальную Тёмно-синюю + Тёмно-серую палитру в App.svelte
+          app_svelte_path = "frontend/src/App.svelte"
+          if os.path.exists(app_svelte_path):
+              with open(app_svelte_path, "r", encoding="utf-8") as f:
                   ap = f.read()
-              ap = ap.replace(
-                  "if (typeof isLoggedIn !== 'undefined' && isLoggedIn) {\n                isLoggedIn = false;",
-                  "if (screen === 'main') {\n                screen = 'login';\n                if (window.__setHydraBlur) window.__setHydraBlur(true);"
-              )
-              ap = ap.replace(
-                  "if (mustLock && typeof isAuthenticated !== 'undefined' && isAuthenticated) {\n                    isAuthenticated = false;\n                }",
-                  "if (mustLock && screen === 'main') {\n                    screen = 'login';\n                    showSettings = false;\n                }"
-              )
-              ap = ap.replace(
-                  "screen = 'main';",
-                  "screen = 'main';\n            if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);"
-              )
-              ap = ap.replace(
-                  "<Settings \n                            {profileNickname} {profileBio} {profileAvatar} {routerSettings}",
-                  "<Settings \n                            bind:profileNickname={profileNickname} bind:profileBio={profileBio} bind:profileAvatar={profileAvatar} {routerSettings}"
-              )
-              with open(app_path, "w", encoding="utf-8") as f:
+
+              darkblue_theme_override = """
+              :global(:root) {
+                  --bg-primary: #121316 !important;
+                  --bg-secondary: #1A1C20 !important;
+                  --bg-tertiary: #22252A !important;
+                  --bg-input: #141619 !important;
+                  --accent: #1D4ED8 !important;
+                  --text-primary: #E5E7EB !important;
+                  --text-secondary: #9CA3AF !important;
+                  --border: rgba(59, 130, 246, 0.14) !important;
+              }
+              :global(body), :global(.app-container), :global(.login-screen), :global(.content-area) {
+                  background: #121316 !important;
+                  color: #E5E7EB !important;
+              }
+              :global(.sidebar), :global(.glass-panel), :global(.settings-card), :global(.modal-content) {
+                  background: #1A1C20 !important;
+                  border: 1px solid rgba(59, 130, 246, 0.14) !important;
+                  border-radius: 24px !important;
+              }
+              :global(.btn-primary), :global(.btn-primary-premium) {
+                  background: linear-gradient(135deg, #1E3A8A, #1D4ED8) !important;
+                  color: #FFFFFF !important;
+                  border: 1px solid rgba(96, 165, 250, 0.3) !important;
+                  border-radius: 100px !important;
+                  font-weight: 700 !important;
+              }
+              :global(.message.outgoing .message-bubble:not(.circle-only-bubble)) {
+                  background: linear-gradient(135deg, #172554, #1E3A8A) !important;
+                  border: 1px solid rgba(59, 130, 246, 0.25) !important;
+                  color: #F3F4F6 !important;
+              }
+              """
+              ap = ap.replace("</style>", darkblue_theme_override + "\n</style>", 1)
+              with open(app_svelte_path, "w", encoding="utf-8") as f:
                   f.write(ap)
-              print("[OK] 6. App.svelte обновлён")
-
-          # 6. Записываем чистый contacts.go без бага затирания имени ключом
-          contacts_go = '''package appcore
-
-          import (
-          	"encoding/json"
-          	"fmt"
-          	"io"
-          	"log"
-          	"net/http"
-          	"net/url"
-          	"strings"
-          	"time"
-
-          	"teleghost/internal/core"
-          	"teleghost/internal/core/identity"
-
-          	"github.com/google/uuid"
-          )
-
-          func (a *AppCore) GetContacts() ([]*ContactInfo, error) {
-          	if a.Repo == nil {
-          		return []*ContactInfo{}, nil
-          	}
-          	contacts, err := a.Repo.ListContactsWithLastMessage(a.Ctx)
-          	if err != nil {
-          		return nil, err
-          	}
-          	result := make([]*ContactInfo, len(contacts))
-          	for i, c := range contacts {
-          		info := &ContactInfo{
-          			ID:          c.ID,
-          			Nickname:    c.Nickname,
-          			Bio:         c.Bio,
-          			Avatar:      a.formatAvatarURL(c.Avatar),
-          			I2PAddress:  c.I2PAddress,
-          			PublicKey:   c.PublicKey,
-          			ChatID:      c.ChatID,
-          			IsBlocked:   c.IsBlocked,
-          			IsVerified:  c.IsVerified,
-          			UnreadCount: c.UnreadCount,
-          		}
-          		if c.LastMessage != "" {
-          			info.LastMessage = c.LastMessage
-          			tm := c.LastMessageTime
-          			info.LastMessageTime = &tm
-          		}
-          		result[i] = info
-          	}
-          	return result, nil
-          }
-
-          func (a *AppCore) AddContact(name, destination string) (*ContactInfo, error) {
-          	if a.Repo == nil || a.Identity == nil || a.Identity.Keys == nil {
-          		return nil, fmt.Errorf("not logged in")
-          	}
-          	name = strings.TrimSpace(name)
-          	destination = strings.TrimSpace(destination)
-
-          	if strings.HasPrefix(destination, "@") || (len(destination) >= 3 && len(destination) < 32 && !strings.Contains(destination, "/")) {
-          		cleanNick := strings.ToLower(strings.TrimPrefix(destination, "@"))
-          		client := &http.Client{Timeout: 8 * time.Second}
-          		resp, err := client.Get("http://191.223.137.164:8085/nick/resolve?nick=" + url.QueryEscape(cleanNick))
-          		if err != nil {
-          			return nil, fmt.Errorf("нет связи с сервером никнеймов: %v", err)
-          		}
-          		defer resp.Body.Close()
-          		if resp.StatusCode != http.StatusOK {
-          			return nil, fmt.Errorf("пользователь @%s не найден на сервере", cleanNick)
-          		}
-          		body, _ := io.ReadAll(resp.Body)
-          		var res map[string]string
-          		if json.Unmarshal(body, &res) == nil && res["pub_key"] != "" {
-          			destination = strings.TrimSpace(res["pub_key"])
-          			if name == "" || strings.HasPrefix(name, "Контакт ") {
-          				name = "@" + cleanNick
-          			}
-          		}
-          	}
-
-          	if len(destination) < 32 {
-          		return nil, fmt.Errorf("некорректный ID ключ Hydra (введите @никнейм или отсканируйте QR-код)")
-          	}
-          	if name == "" || (len(name) > 28 && !strings.Contains(name, " ")) {
-          		name = "Контакт " + destination[:6]
-          	}
-
-          	myPub := a.Identity.Keys.PublicKeyBase64
-          	chatID := identity.CalculateChatID(myPub, destination)
-
-          	if existing, _ := a.Repo.GetContactByPublicKey(a.Ctx, destination); existing != nil {
-          		existing.Nickname = name
-          		existing.I2PAddress = destination
-          		existing.PublicKey = destination
-          		existing.ChatID = chatID
-          		_ = a.Repo.SaveContact(a.Ctx, existing)
-          		a.Emitter.Emit("contact_updated")
-          		return &ContactInfo{
-          			ID:         existing.ID,
-          			Nickname:   existing.Nickname,
-          			I2PAddress: existing.I2PAddress,
-          			PublicKey:  existing.PublicKey,
-          			ChatID:     existing.ChatID,
-          		}, nil
-          	}
-
-          	contact := &core.Contact{
-          		ID:         uuid.New().String(),
-          		Nickname:   name,
-          		I2PAddress: destination,
-          		PublicKey:  destination,
-          		ChatID:     chatID,
-          		AddedAt:    time.Now(),
-          		UpdatedAt:  time.Now(),
-          	}
-          	if err := a.Repo.SaveContact(a.Ctx, contact); err != nil {
-          		return nil, err
-          	}
-          	if a.Messenger != nil {
-          		go func(dst string) { _ = a.Messenger.SendHandshake(dst) }(destination)
-          	}
-          	a.Emitter.Emit("contact_updated")
-          	return &ContactInfo{
-          		ID:         contact.ID,
-          		Nickname:   contact.Nickname,
-          		I2PAddress: contact.I2PAddress,
-          		PublicKey:  contact.PublicKey,
-          		ChatID:     contact.ChatID,
-          	}, nil
-          }
-
-          func (a *AppCore) AddContactFromClipboard(name string) (*ContactInfo, error) {
-          	data, err := a.Platform.ClipboardGet()
-          	if err != nil {
-          		return nil, fmt.Errorf("clipboard error: %w", err)
-          	}
-          	if data == "" {
-          		return nil, fmt.Errorf("clipboard is empty")
-          	}
-          	return a.AddContact(name, data)
-          }
-
-          func (a *AppCore) DeleteContact(id string) error {
-          	if a.Repo == nil {
-          		return fmt.Errorf("not logged in")
-          	}
-          	err := a.Repo.DeleteContact(a.Ctx, id)
-          	if err == nil {
-          		a.Emitter.Emit("contact_updated")
-          	}
-          	return err
-          }
-          '''
-          with open("internal/appcore/contacts.go", "w", encoding="utf-8") as f:
-              f.write(contacts_go)
-          print("[OK] 7. contacts.go обновлён")
+              print("[OK] 4. App.svelte: закреплена глобальная тёмно-синяя + тёмно-серая тема")
           PYEOF
-          python3 apply_all_fixes.py
-          rm -f apply_all_fixes.py
+          python3 apply_darkblue_and_fix.py
+          rm -f apply_darkblue_and_fix.py
           gofmt -w internal/ mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -599,13 +177,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit All Fixes to Repository
+      - name: Commit Dark Blue Theme, Version 2.5.0 & contacts.go Fix
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Add live camera mirror for video circles, 1s frame preview, Start/Stop log recording, 6-tap reset, single globe & Hydra icons [skip ci]"
+            git commit -m "Fix unused log in contacts.go, bump version to 2.5.0-hydra & apply Dark Blue + Dark Grey theme [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
