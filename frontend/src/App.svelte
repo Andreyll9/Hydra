@@ -1219,13 +1219,13 @@
 
 <style>
     :global(:root) {
-        --bg-primary: #0c0c14;
-        --bg-secondary: #1e1e2e;
-        --bg-tertiary: #11111b;
-        --bg-input: #0c0c14;
+        --bg-primary: #121316;
+        --bg-secondary: #1A1C20;
+        --bg-tertiary: #141619;
+        --bg-input: #121316;
         --text-primary: #ffffff;
         --text-secondary: #a0a0ba;
-        --accent: #6366f1;
+        --accent: #1D4ED8;
         --border: rgba(255,255,255,0.05);
     }
 
@@ -1290,7 +1290,7 @@
     .ghost-logo-wrapper {
         width: 120px;
         height: 120px;
-        background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(162, 155, 254, 0.1));
+        background: linear-gradient(135deg, rgba(29, 78, 216, 0.1), rgba(59, 130, 246, 0.1));
         border-radius: 35px;
         display: flex;
         align-items: center;
@@ -1298,7 +1298,7 @@
         color: var(--accent);
         opacity: 0.8;
         margin-bottom: 20px;
-        border: 1px solid rgba(99, 102, 241, 0.1);
+        border: 1px solid rgba(29, 78, 216, 0.1);
     }
     .icon-svg-xl { width: 64px; height: 64px; }
     .icon-svg-xl :global(svg) { width: 100%; height: 100%; }
@@ -1353,4 +1353,37 @@
         font-weight: 700 !important;
         box-shadow: none !important;
     }
+
+    :global(:root) {
+        --bg-primary: #121316 !important;
+        --bg-secondary: #1A1C20 !important;
+        --bg-tertiary: #22252A !important;
+        --bg-input: #141619 !important;
+        --accent: #1D4ED8 !important;
+        --text-primary: #E5E7EB !important;
+        --text-secondary: #9CA3AF !important;
+        --border: rgba(59, 130, 246, 0.14) !important;
+    }
+    :global(body), :global(.app-container), :global(.login-screen), :global(.content-area) {
+        background: #121316 !important;
+        color: #E5E7EB !important;
+    }
+    :global(.sidebar), :global(.glass-panel), :global(.settings-card), :global(.modal-content) {
+        background: #1A1C20 !important;
+        border: 1px solid rgba(59, 130, 246, 0.14) !important;
+        border-radius: 24px !important;
+    }
+    :global(.btn-primary), :global(.btn-primary-premium) {
+        background: linear-gradient(135deg, #1E3A8A, #1D4ED8) !important;
+        color: #FFFFFF !important;
+        border: 1px solid rgba(96, 165, 250, 0.3) !important;
+        border-radius: 100px !important;
+        font-weight: 700 !important;
+    }
+    :global(.message.outgoing .message-bubble:not(.circle-only-bubble)) {
+        background: linear-gradient(135deg, #172554, #1E3A8A) !important;
+        border: 1px solid rgba(59, 130, 246, 0.25) !important;
+        color: #F3F4F6 !important;
+    }
+    
 </style>

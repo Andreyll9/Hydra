@@ -4,23 +4,23 @@ export function getInitials(name) {
 }
 
 export function getAvatarGradient(name) {
-    if (!name) return 'linear-gradient(135deg, #6366f1, #a78bfa)';
+    if (!name) return 'linear-gradient(135deg, #1D4ED8, #3B82F6)';
     let hash = 0;
     for (let i = 0; i < name.length; i++) {
         hash = name.charCodeAt(i) + ((hash << 5) - hash);
     }
     const palettes = [
-        ['#6366f1', '#a78bfa'], // indigo → violet
+        ['#1D4ED8', '#3B82F6'], // indigo → violet
         ['#8b5cf6', '#ec4899'], // violet → pink
         ['#06b6d4', '#3b82f6'], // cyan → blue
         ['#10b981', '#06b6d4'], // emerald → cyan
         ['#f59e0b', '#ef4444'], // amber → red
         ['#ec4899', '#f97316'], // pink → orange
-        ['#14b8a6', '#a78bfa'], // teal → violet
+        ['#14b8a6', '#3B82F6'], // teal → violet
         ['#3b82f6', '#8b5cf6'], // blue → violet
         ['#f43f5e', '#fb923c'], // rose → orange
         ['#22d3ee', '#818cf8'], // cyan → indigo
-        ['#a855f7', '#6366f1'], // purple → indigo
+        ['#a855f7', '#1D4ED8'], // purple → indigo
         ['#059669', '#2dd4bf'], // emerald dark → teal
     ];
     const idx = Math.abs(hash) % palettes.length;

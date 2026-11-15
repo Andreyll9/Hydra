@@ -396,7 +396,7 @@
     on:click|self={onCloseSeed}
     on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && onCloseSeed()}
 >
-    <div class="modal-content animate-slide-down" style="max-width: 450px; background: #1a1a2e; border: 1px solid rgba(255, 100, 100, 0.2);">
+    <div class="modal-content animate-slide-down" style="max-width: 450px; background: #16181D; border: 1px solid rgba(255, 100, 100, 0.2);">
         <div class="modal-header">
             <h3 style="color: #ff6b6b;">🔐 Ваш Мастер-ключ Hydra</h3>
             <button class="btn-icon" on:click={onCloseSeed}><div class="icon-svg">{@html Icons.X}</div></button>
@@ -515,14 +515,14 @@
     
     .form-label { display: block; font-size: 14px; color: var(--text-secondary); margin-bottom: 8px; font-weight: 500; }
     .input-field { width: 100%; padding: 14px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 14px; color: white; outline: none; transition: all 0.2s; }
-    .input-field:focus { border-color: var(--accent); box-shadow: 0 0 10px rgba(99, 102, 241, 0.2); }
+    .input-field:focus { border-color: var(--accent); box-shadow: 0 0 10px rgba(29, 78, 216, 0.2); }
     
     .modal-footer { display: flex; gap: 12px; margin-top: 24px; }
     .btn-small { padding: 12px 24px; border-radius: 16px; font-weight: 600; cursor: pointer; border: none; transition: all 0.2s; font-size: 14px; }
     .btn-small:hover { opacity: 0.9; transform: translateY(-2px); }
     
     .btn-primary { background: var(--accent); color: white; flex: 1; border: none; border-radius: 16px; font-weight: 600; transition: all 0.2s; }
-    .accent-btn { background: #6366f1 !important; }
+    .accent-btn { background: #1D4ED8 !important; }
     .btn-glass { background: rgba(255,255,255,0.05); color: #a0a0ba; border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; }
     .btn-glass:hover { background: rgba(255,255,255,0.1); color: white; }
     
@@ -572,5 +572,5 @@
         transition: all 0.15s;
     }
     .emoji-btn:hover { background: rgba(255,255,255,0.1); transform: scale(1.15); }
-    .emoji-btn.selected { border-color: var(--accent); background: rgba(99, 102, 241, 0.15); }
+    .emoji-btn.selected { border-color: var(--accent); background: rgba(29, 78, 216, 0.15); }
 </style>

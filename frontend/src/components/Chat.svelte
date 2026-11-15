@@ -766,7 +766,7 @@
 </div>
 
 <style>
-    .chat-area { flex: 1; display: flex; flex-direction: column; background: var(--bg-primary, #0c0c14); overflow: hidden; overflow-x: hidden; position: relative; overscroll-behavior: contain; width: 100%; }
+    .chat-area { flex: 1; display: flex; flex-direction: column; background: var(--bg-primary, #121316); overflow: hidden; overflow-x: hidden; position: relative; overscroll-behavior: contain; width: 100%; }
     .chat-header { 
         height: auto; 
         min-height: 64px; 
@@ -776,7 +776,7 @@
         align-items: center; 
         justify-content: flex-start; 
         gap: 4px; 
-        background: var(--bg-secondary, #1e1e2e); 
+        background: var(--bg-secondary, #1A1C20); 
         border-bottom: 1px solid var(--border); 
         z-index: 10; 
         flex-shrink: 0; 
@@ -803,9 +803,9 @@
     .message.outgoing .message-bubble-wrapper { align-items: flex-end; }
 
     .message-bubble { 
-        padding: 8px 12px; border-radius: 18px; background: var(--bg-secondary, #1e1e2e); color: var(--text-primary); position: relative; box-shadow: 0 2px 5px rgba(0,0,0,0.1); width: fit-content;
+        padding: 8px 12px; border-radius: 18px; background: var(--bg-secondary, #1A1C20); color: var(--text-primary); position: relative; box-shadow: 0 2px 5px rgba(0,0,0,0.1); width: fit-content;
     }
-    .message.outgoing .message-bubble { background: var(--accent, #6366f1); color: white; border-bottom-right-radius: 4px; }
+    .message.outgoing .message-bubble { background: var(--accent, #1D4ED8); color: white; border-bottom-right-radius: 4px; }
     .message:not(.outgoing) .message-bubble { border-bottom-left-radius: 4px; }
 
     .swipe-reply-icon {
@@ -854,7 +854,7 @@
     
     .preview-actions { padding-left: 10px; border-left: 1px solid var(--border); }
     .btn-toggle-comp { background: transparent; border: none; color: var(--text-secondary); cursor: pointer; padding: 8px; border-radius: 8px; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
-    .btn-toggle-comp.active { color: var(--accent); background: rgba(99, 102, 241, 0.1); }
+    .btn-toggle-comp.active { color: var(--accent); background: rgba(29, 78, 216, 0.1); }
     .btn-toggle-comp:hover { background: rgba(255,255,255,0.1); }
 
     .file-attachment-container { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.1); border-radius: 12px; padding: 4px; overflow: hidden; }

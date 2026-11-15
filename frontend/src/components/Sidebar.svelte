@@ -367,7 +367,7 @@
                     tabindex="0"
                     role="button"
                 >
-                    <div class="contact-avatar favorites-avatar" style="background: linear-gradient(135deg, #6366f1 0%, #a78bfa 100%);">
+                    <div class="contact-avatar favorites-avatar" style="background: linear-gradient(135deg, #1D4ED8 0%, #3B82F6 100%);">
                         <div class="icon-svg-sm" style="color: white; width: 20px; height: 20px;">{@html Icons.Bookmark}</div>
                     </div>
                     <div class="contact-info">
@@ -509,7 +509,7 @@
                     tabindex="0"
                     role="button"
                 >
-                    <div class="contact-avatar favorites-avatar" style="background: linear-gradient(135deg, #6366f1 0%, #a78bfa 100%);">
+                    <div class="contact-avatar favorites-avatar" style="background: linear-gradient(135deg, #1D4ED8 0%, #3B82F6 100%);">
                         <div class="icon-svg-sm" style="color: white; width: 20px; height: 20px;">{@html Icons.Bookmark}</div>
                     </div>
                     <div class="contact-info">
@@ -658,7 +658,7 @@
     /* === Desktop Styles === */
     .folders-rail {
         width: 72px;
-        background: var(--bg-tertiary, #11111b);
+        background: var(--bg-tertiary, #141619);
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -758,15 +758,15 @@
         box-shadow: 0 2px 6px rgba(255, 71, 87, 0.4);
     }
 
-    .sidebar { background: var(--bg-secondary, #1e1e2e); border-right: 1px solid var(--border); overflow: hidden; }
-    .search-input-wrapper { background: var(--bg-input, #0c0c14); border-radius: 18px; padding: 8px 12px; display: flex; align-items: center; gap: 8px; }
+    .sidebar { background: var(--bg-secondary, #1A1C20); border-right: 1px solid var(--border); overflow: hidden; }
+    .search-input-wrapper { background: var(--bg-input, #121316); border-radius: 18px; padding: 8px 12px; display: flex; align-items: center; gap: 8px; }
     .search-input-wrapper input { background: transparent; border: none; color: white; width: 100%; font-size: 14px; outline: none; }
     
     .sidebar-actions { padding: 0 10px 10px; }
     .btn-primary { 
-        width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px; background: var(--accent, #6366f1); color: white; border: none; border-radius: 14px; cursor: pointer; font-weight: 600; transition: all 0.2s;
+        width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px; background: var(--accent, #1D4ED8); color: white; border: none; border-radius: 14px; cursor: pointer; font-weight: 600; transition: all 0.2s;
     }
-    .btn-primary:hover { transform: translateY(-1px); filter: brightness(1.1); box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3); }
+    .btn-primary:hover { transform: translateY(-1px); filter: brightness(1.1); box-shadow: 0 4px 12px rgba(29, 78, 216, 0.3); }
 
     .network-status {
         padding: 10px 16px; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-primary); margin: 0 10px 10px; border-radius: 8px;
@@ -780,7 +780,7 @@
         padding: 12px 16px; cursor: pointer; display: flex; gap: 12px; align-items: center; transition: background 0.2s; border-radius: 12px; margin: 2px 8px;
     }
     .contact-item:hover { background: rgba(255, 255, 255, 0.05); }
-    .contact-item.selected { background: rgba(108, 92, 231, 0.15); }
+    .contact-item.selected { background: rgba(30, 64, 175, 0.15); }
 
     .contact-avatar { width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; flex-shrink: 0; overflow: hidden; }
     .contact-avatar img { width: 100%; height: 100%; object-fit: cover; }
@@ -829,7 +829,7 @@
         height: 100%;
         display: flex;
         flex-direction: column;
-        background: var(--bg-primary, #0c0c14);
+        background: var(--bg-primary, #121316);
         overflow: hidden;
     }
 
@@ -839,7 +839,7 @@
         gap: 12px;
         padding: 12px 16px;
         padding-top: calc(12px + env(safe-area-inset-top));
-        background: var(--bg-secondary, #1e1e2e);
+        background: var(--bg-secondary, #1A1C20);
         border-bottom: 1px solid var(--border);
     }
 
@@ -863,7 +863,7 @@
         color: white;
         margin: 0;
         flex: 1;
-        background: linear-gradient(135deg, #6366f1, #a78bfa);
+        background: linear-gradient(135deg, #1D4ED8, #3B82F6);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
@@ -896,7 +896,7 @@
         padding: 6px 14px;
         border-radius: 20px;
         border: 1px solid var(--border);
-        background: var(--bg-secondary, #1e1e2e);
+        background: var(--bg-secondary, #1A1C20);
         color: var(--text-secondary);
         font-size: 13px;
         white-space: nowrap;
@@ -905,10 +905,10 @@
         flex-shrink: 0;
     }
     .mobile-folder-chip.active {
-        background: var(--accent, #6366f1);
+        background: var(--accent, #1D4ED8);
         color: white;
-        border-color: var(--accent, #6366f1);
-        box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+        border-color: var(--accent, #1D4ED8);
+        box-shadow: 0 2px 8px rgba(29, 78, 216, 0.3);
     }
     .mobile-folder-chip:hover { background: rgba(255,255,255,0.1); }
 
@@ -948,7 +948,7 @@
         gap: 8px;
         padding: 10px 16px;
         padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
-        background: var(--bg-secondary, #1e1e2e);
+        background: var(--bg-secondary, #1A1C20);
         border-top: 1px solid var(--border);
     }
 
@@ -968,7 +968,7 @@
         color: white;
     }
     .mobile-action-btn:first-child {
-        background: var(--accent, #6366f1);
+        background: var(--accent, #1D4ED8);
     }
     .mobile-action-btn:first-child:hover {
         filter: brightness(1.1);

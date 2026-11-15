@@ -42,7 +42,7 @@
     }
 
     .toast-info {
-        background: linear-gradient(135deg, var(--accent, #6c5ce7), #5a4fcf);
+        background: linear-gradient(135deg, var(--accent, #1E40AF), #1E3A8A);
     }
 
     @keyframes toast-enter {

@@ -148,7 +148,7 @@
         left: 0;
         right: 0;
         bottom: 0;
-        background: rgba(99, 102, 241, 0.9);
+        background: rgba(29, 78, 216, 0.9);
         border-radius: 16px;
         display: flex;
         flex-direction: column;

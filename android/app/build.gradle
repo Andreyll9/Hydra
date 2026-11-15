@@ -11,8 +11,8 @@ android {
         applicationId "com.teleghost.app"
         minSdk 24
         targetSdk 34
-        versionCode 200
-        versionName "2.0.0-hydra"
+        versionCode 25
+        versionName "2.5.0-hydra"
         ndk {
             abiFilters "armeabi-v7a", "arm64-v8a", "x86_64"
         }

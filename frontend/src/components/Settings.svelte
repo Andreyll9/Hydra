@@ -411,7 +411,7 @@
                             </div>
 
                     <div class="setting-item-box" style="margin-top: 20px;">
-                        <h4 style="color: #a29bfe;">📤 Резервное копирование</h4>
+                        <h4 style="color: #60A5FA;">📤 Резервное копирование</h4>
                         <p class="hint" style="margin-bottom: 12px;">Создайте полную копию вашего аккаунта (профиль, ключи, чаты, файлы). Сохраните архив в надежном месте.</p>
                         <button class="btn-primary full-width" on:click={async () => {
                             try {
@@ -494,7 +494,7 @@
                                 <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="32" cy="32" r="30" stroke="#8AB4F8" stroke-width="2.5" fill="#12131A"/><path d="M32 12C25 12 20 17 20 24C20 29 23 33 26 36L22 50H42L38 36C41 33 44 29 44 24C44 17 39 12 32 12Z" stroke="#8AB4F8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="rgba(138,180,248,0.12)"/><path d="M20 26C14 24 10 19 12 13C15 15 19 18 21 22" stroke="#8AB4F8" stroke-width="2.5" stroke-linecap="round"/><path d="M44 26C50 24 54 19 52 13C49 15 45 18 43 22" stroke="#8AB4F8" stroke-width="2.5" stroke-linecap="round"/><circle cx="28" cy="23" r="2" fill="#8AB4F8"/><circle cx="36" cy="23" r="2" fill="#8AB4F8"/><path d="M27 30C29 32 35 32 37 30" stroke="#8AB4F8" stroke-width="2" stroke-linecap="round"/></svg>
                             </div>
                             <h2 class="about-title">Hydra</h2>
-                            <p class="about-version">Version {aboutInfo.app_version || '1.0.2-beta'}</p>
+                            <p class="about-version">Version {aboutInfo.app_version || '2.5.0-hydra'}</p>
                         </div>
 
                         <div class="info-list">
@@ -648,14 +648,14 @@
 
     .profile-avatar-large { width: 120px; height: 120px; position: relative; margin: 0 auto 32px; }
     .profile-avatar-large img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
-    .avatar-placeholder { width: 100%; height: 100%; background: linear-gradient(135deg, #6c5ce7, #a29bfe); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 48px; color: white; }
+    .avatar-placeholder { width: 100%; height: 100%; background: linear-gradient(135deg, #1E40AF, #60A5FA); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 48px; color: white; }
     .avatar-edit-btn { position: absolute; bottom: 0; right: 0; background: var(--accent); border: 4px solid var(--bg-primary); border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: white; }
 
     .profile-fields { max-width: 500px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
     .input-field { 
         width: 100%; 
         padding: 12px 16px; 
-        background: #1a1a2e; 
+        background: #16181D; 
         border: 1px solid rgba(255,255,255,0.1); 
         border-radius: 12px; 
         color: white; 
@@ -673,22 +673,22 @@
         background-size: 16px;
         padding-right: 40px;
     }
-    select.input-field option { background: #1a1a2e; color: white; padding: 10px; }
+    select.input-field option { background: #16181D; color: white; padding: 10px; }
     
     .btn-primary { background: var(--accent); color: white; padding: 14px 24px; border: none; border-radius: 16px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
-    .btn-primary:hover { opacity: 0.9; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3); }
-    .btn-secondary { background: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.3); color: #fff; padding: 12px 20px; border-radius: 14px; cursor: pointer; font-weight: 500; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
-    .btn-secondary:hover { background: rgba(99, 102, 241, 0.2); border-color: var(--accent); transform: translateY(-1px); }
+    .btn-primary:hover { opacity: 0.9; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(29, 78, 216, 0.3); }
+    .btn-secondary { background: rgba(29, 78, 216, 0.1); border: 1px solid rgba(29, 78, 216, 0.3); color: #fff; padding: 12px 20px; border-radius: 14px; cursor: pointer; font-weight: 500; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+    .btn-secondary:hover { background: rgba(29, 78, 216, 0.2); border-color: var(--accent); transform: translateY(-1px); }
     
     .show-key-btn { 
         cursor: pointer; 
         font-weight: 700; 
         margin-top: 12px;
         width: 100%;
-        border: 1px dashed rgba(99, 102, 241, 0.5);
+        border: 1px dashed rgba(29, 78, 216, 0.5);
     }
     .show-key-btn:hover {
-        background: rgba(99, 102, 241, 0.15);
+        background: rgba(29, 78, 216, 0.15);
         border-style: solid;
     }
 
@@ -702,11 +702,11 @@
     .flex-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
     .bg-box { background: var(--bg-secondary); padding: 16px; border-radius: 12px; }
 
-    .destination-details { margin-bottom: 24px; cursor: pointer; background: rgba(99, 102, 241, 0.03); border-radius: 16px; border: 1px solid rgba(255,255,255,0.05); }
-    .destination-details[open] { background: rgba(99, 102, 241, 0.05); }
+    .destination-details { margin-bottom: 24px; cursor: pointer; background: rgba(29, 78, 216, 0.03); border-radius: 16px; border: 1px solid rgba(255,255,255,0.05); }
+    .destination-details[open] { background: rgba(29, 78, 216, 0.05); }
     .destination-details summary { 
         padding: 16px 20px; list-style: none; display: flex; align-items: center; gap: 12px; 
-        outline: none; transition: all 0.2s; font-weight: 600; color: #a29bfe;
+        outline: none; transition: all 0.2s; font-weight: 600; color: #60A5FA;
     }
     .destination-details summary:hover { background: rgba(255,255,255,0.03); color: white; }
     .destination-details summary::-webkit-details-marker { display: none; }
@@ -721,7 +721,7 @@
     .destination-code { 
         flex: 1; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12px; 
         line-height: 1.6; opacity: 0.8; word-break: break-all; white-space: pre-wrap;
-        max-height: 150px; overflow-y: auto; color: #a29bfe;
+        max-height: 150px; overflow-y: auto; color: #60A5FA;
     }
 
     .full-width { width: 100%; }
@@ -745,13 +745,13 @@
     /* Redesigned About Section */
     .about-branding { text-align: center; margin-bottom: 40px; }
     .about-logo { 
-        width: 100px; height: 100px; background: linear-gradient(135deg, #6366f1 0%, #a29bfe 100%); 
+        width: 100px; height: 100px; background: linear-gradient(135deg, #1D4ED8 0%, #60A5FA 100%); 
         border-radius: 30px; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;
-        box-shadow: 0 15px 35px rgba(99, 102, 241, 0.3); color: white;
+        box-shadow: 0 15px 35px rgba(29, 78, 216, 0.3); color: white;
     }
     .icon-svg-lg { width: 50px; height: 50px; display: flex; align-items: center; justify-content: center; }
     .icon-svg-lg :global(svg) { width: 100%; height: 100%; }
-    .about-title { font-size: 32px; font-weight: 800; margin-bottom: 8px; background: linear-gradient(90deg, #fff, #a29bfe); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .about-title { font-size: 32px; font-weight: 800; margin-bottom: 8px; background: linear-gradient(90deg, #fff, #60A5FA); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
     .about-version { color: var(--text-secondary); font-size: 14px; font-weight: 500; opacity: 0.7; }
 
     .info-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 40px; }
@@ -764,7 +764,7 @@
         display: flex; align-items: center; justify-content: center; color: var(--text-secondary);
     }
     .info-icon :global(svg) { width: 20px; height: 20px; }
-    .info-icon.accent { background: rgba(99, 102, 241, 0.1); color: var(--accent); }
+    .info-icon.accent { background: rgba(29, 78, 216, 0.1); color: var(--accent); }
     
     .info-content { display: flex; flex-direction: column; gap: 2px; flex: 1; }
     .info-label-fancy { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary); font-weight: 700; }
@@ -773,10 +773,10 @@
 
     .update-action-row { 
         display: flex; align-items: center; gap: 16px; padding: 16px 20px; 
-        background: rgba(99, 102, 241, 0.05); border: 1px solid rgba(99, 102, 241, 0.1); 
+        background: rgba(29, 78, 216, 0.05); border: 1px solid rgba(29, 78, 216, 0.1); 
         border-radius: 16px; cursor: pointer; transition: all 0.2s;
     }
-    .update-action-row:hover { background: rgba(99, 102, 241, 0.1); border-color: rgba(99, 102, 241, 0.3); transform: translateY(-2px); }
+    .update-action-row:hover { background: rgba(29, 78, 216, 0.1); border-color: rgba(29, 78, 216, 0.3); transform: translateY(-2px); }
     .chevron { color: var(--text-secondary); opacity: 0.5; }
     .chevron :global(svg) { width: 18px; height: 18px; }
 

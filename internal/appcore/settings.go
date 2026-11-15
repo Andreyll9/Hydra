@@ -84,7 +84,7 @@ func (a *AppCore) GetAppAboutInfo() *AppAboutInfo {
 	}
 
 	return &AppAboutInfo{
-		AppVersion: "2.0.0-hydra",
+		AppVersion: "2.5.0-hydra",
 		I2PVersion: netInfo,
 		I2PPath:    "Локальная зашифрованная БД (SQLite E2EE)",
 		Author:     "Andreyll9 (Hydra) | Core: TeleGhost (MIT)",

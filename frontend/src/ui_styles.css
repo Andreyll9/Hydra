@@ -32,7 +32,7 @@
 }
 
 .folder-item.active {
-    background: rgba(108, 92, 231, 0.1);
+    background: rgba(30, 64, 175, 0.1);
     color: var(--accent);
 }
 
@@ -281,7 +281,7 @@
 .settings-menu-item.active {
     background: var(--accent);
     color: white;
-    box-shadow: 0 4px 12px rgba(108, 92, 231, 0.3);
+    box-shadow: 0 4px 12px rgba(30, 64, 175, 0.3);
 }
 
 .settings-menu-item .icon {
@@ -306,9 +306,9 @@
 
 /* Settings Icon Active State in Sidebar */
 .rail-button.active {
-    background: rgba(108, 92, 231, 0.15);
+    background: rgba(30, 64, 175, 0.15);
     color: var(--accent);
-    border: 1px solid rgba(108, 92, 231, 0.3);
+    border: 1px solid rgba(30, 64, 175, 0.3);
 }
 
 .settings-menu-item .arrow {
