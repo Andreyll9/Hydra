@@ -66,11 +66,13 @@
     document.addEventListener('visibilitychange', function() {
       if (document.visibilityState === 'hidden') {
         if (window.__hydraSkipLock) return;
-        if (window.__lockHydraNow) window.__lockHydraNow();
+        window.__hiddenSince = Date.now();
         window.__setHydraBlur(true);
       } else {
         setTimeout(function() {
           window.__setHydraBlur(false);
+            if (window.__hiddenSince && (Date.now() - window.__hiddenSince >= 30000) && window.__lockHydraNow) { window.__lockHydraNow(); }
+            window.__hiddenSince = 0;
           if (window.__onHydraAppResume) window.__onHydraAppResume();
         }, 250);
       }

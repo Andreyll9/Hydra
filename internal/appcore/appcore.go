@@ -896,6 +896,33 @@ func (a *AppCore) OnMessageReceived(msg *core.Message, senderPubKey, senderAddr 
 
 	msg.ChatID = contact.ChatID
 
+	if strings.HasPrefix(msg.Content, "[HYDRA_GROUP_INVITE]:") {
+		parts := strings.SplitN(strings.TrimPrefix(msg.Content, "[HYDRA_GROUP_INVITE]:"), "|", 2)
+		if len(parts) == 2 {
+			_, _ = a.AddContact(parts[0], parts[1])
+			msg.Content = "🎟️ Вас добавили в «" + parts[0] + "»"
+		}
+	}
+
+	if strings.HasPrefix(msg.Content, "[HYDRA_CALL_ICE]:") || strings.HasPrefix(msg.Content, "[HYDRA_CALL_ANSWER]:") {
+		a.Emitter.Emit("hydra_call_signal", map[string]interface{}{
+			"from":    senderPubKey,
+			"nick":    contact.Nickname,
+			"chat_id": contact.ChatID,
+			"content": msg.Content,
+		})
+		return
+	}
+	if strings.HasPrefix(msg.Content, "[HYDRA_CALL_RING]:") || strings.HasPrefix(msg.Content, "[HYDRA_CALL_END]:") || strings.HasPrefix(msg.Content, "[HYDRA_CALL_MISSED]:") {
+		a.Emitter.Emit("hydra_call_signal", map[string]interface{}{
+			"from":       senderPubKey,
+			"contact_id": contact.ID,
+			"nick":       contact.Nickname,
+			"chat_id":    contact.ChatID,
+			"content":    msg.Content,
+		})
+	}
+
 	if err := a.Repo.SaveMessage(a.Ctx, msg); err != nil {
 		return
 	}
@@ -1076,7 +1103,21 @@ func (a *AppCore) SendNotification(senderName, content, contentType string) {
 			message = fmt.Sprintf("📷 %s", content)
 		}
 	case "text":
-		if len(message) > 100 {
+		if strings.HasPrefix(message, "[HYDRA_VOICE]:") {
+			message = "🎤 Голосовое сообщение"
+		} else if strings.HasPrefix(message, "[HYDRA_CIRCLE]:") {
+			message = "📹 Видео-кружок"
+		} else if strings.HasPrefix(message, "[HYDRA_VIDEO]:") {
+			message = "🎬 Видеозапись"
+		} else if strings.HasPrefix(message, "[HYDRA_CALL_RING]:") {
+			message = "📞 Входящий аудиовызов Hydra..."
+		} else if strings.HasPrefix(message, "[HYDRA_CALL_MISSED]:") {
+			message = "☎️ Пропущенный вызов"
+		} else if strings.HasPrefix(message, "[HYDRA_CALL_END]:") {
+			message = "📞 Звонок завершён"
+		} else if strings.HasPrefix(message, "[HYDRA_GROUP_INVITE]:") || strings.HasPrefix(message, "SFlEUkFfUk9PTV") {
+			message = "🎟️ Приглашение в группу/канал"
+		} else if len(message) > 100 {
 			message = message[:97] + "..."
 		}
 	}

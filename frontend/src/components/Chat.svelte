@@ -1,5 +1,6 @@
 <script>
     import * as AppActions from '../../wailsjs/go/main/App.js';
+    import { EventsOn } from '../../wailsjs/runtime/runtime.js';
     import { Icons } from '../Icons.js';
     import { getInitials, formatTime, parseMarkdown, getAvatarGradient } from '../utils.js';
     import { fade, fly } from 'svelte/transition';
@@ -294,26 +295,188 @@
     let recordingSeconds = 0;
     let recordingInterval = null;
     let activeCallModal = false;
+    let incomingCallOffer = null;
+    let callConnected = false;
     let callStatusText = 'Соединение по защищённому WebRTC-каналу...';
+    let hydraPeerConn = null;
+    let remoteAudioEl = null;
+    let callRingTimeout = null;
 
-    function startHydraCall() {
-        activeCallModal = true;
-        callStatusText = '🔐 Установка сквозного E2EE WebRTC-вызова...';
-        navigator.mediaDevices?.getUserMedia({ audio: true }).then((stream) => {
-            callStatusText = '🟢 Идёт вызов (' + (selectedContact?.Nickname || 'Контакт') + ')... Микрофон активен';
-            window.__hydraCallStream = stream;
-        }).catch(() => {
-            callStatusText = '🔔 Вызов отправлен собеседнику...';
-        });
+    // Зум кружка при удержании пальца 1 сек
+    let zoomedCircleMsgId = null;
+    let circleHoldTimer = null;
+    function startCircleHold(msgId) {
+        clearTimeout(circleHoldTimer);
+        circleHoldTimer = setTimeout(() => {
+            zoomedCircleMsgId = msgId;
+            if (navigator.vibrate) navigator.vibrate(35);
+        }, 750);
+    }
+    function endCircleHold() {
+        clearTimeout(circleHoldTimer);
+        zoomedCircleMsgId = null;
     }
 
-    function endHydraCall() {
+    // Выбор участников для группы из существующих контактов
+    let allExistingContactsForGroup = [];
+    async function openGroupManagementModal() {
+        showChatHeaderMenu = false;
+        showRoomSettingsModal = true;
+        try {
+            const list = await AppActions.GetContacts();
+            allExistingContactsForGroup = (list || []).filter(c => c.ID !== selectedContact?.ID && !String(c.Nickname || '').startsWith('👥') && !String(c.Nickname || '').startsWith('📢'));
+        } catch (e) { allExistingContactsForGroup = []; }
+    }
+    async function inviteContactToGroup(targetContact) {
+        if (!selectedContact || !targetContact) return;
+        const invitePayload = `[HYDRA_GROUP_INVITE]:${selectedContact.Nickname}|${selectedContact.I2PAddress}`;
+        try {
+            await AppActions.SendText(targetContact.ID, invitePayload, '');
+            alert(`✅ Приглашение в «${selectedContact.Nickname}» отправлено пользователю ${targetContact.Nickname}!`);
+        } catch (e) {
+            alert('Ошибка отправки приглашения: ' + e);
+        }
+    }
+
+    // Отправка видео с обрезкой и выбором качества (Ролик с плеером ИЛИ Исходный файл)
+    let showVideoTrimModal = false;
+    let videoFileToTrim = null;
+    let videoTrimQuality = 'compressed'; // 'compressed' | 'original'
+    let videoTrimMaxSec = 30;
+
+    function handleCustomVideoPick(e) {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        videoFileToTrim = file;
+        showVideoTrimModal = true;
+    }
+
+    async function sendTrimmedOrQualityVideo() {
+        if (!videoFileToTrim || !selectedContact) return;
+        showVideoTrimModal = false;
+        const reader = new FileReader();
+        reader.onload = async () => {
+            const b64 = reader.result;
+            if (videoTrimQuality === 'original') {
+                const tmp = await AppActions.SaveTempImage(b64, videoFileToTrim.name || 'video.mp4').catch(() => '');
+                if (tmp) await AppActions.SendFileMessage(selectedContact.ID, '', '', [tmp], true);
+            } else {
+                await AppActions.SendText(selectedContact.ID, `[HYDRA_VIDEO]:${b64}`, '');
+            }
+            videoFileToTrim = null;
+            dispatch('refresh');
+        };
+        reader.readAsDataURL(videoFileToTrim);
+    }
+
+    // Настоящий WebRTC P2P аудиовызов через VPS релей
+    async function startHydraCall() {
+        if (!selectedContact) return;
+        activeCallModal = true;
+        callConnected = false;
+        callStatusText = '🔔 Вызов ' + (selectedContact.Nickname || '') + '... Ожидание ответа';
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            window.__hydraCallStream = stream;
+            hydraPeerConn = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+            stream.getTracks().forEach(t => hydraPeerConn.addTrack(t, stream));
+            hydraPeerConn.ontrack = (ev) => {
+                if (remoteAudioEl && ev.streams[0]) {
+                    remoteAudioEl.srcObject = ev.streams[0];
+                    remoteAudioEl.play().catch(() => {});
+                }
+            };
+            const offer = await hydraPeerConn.createOffer();
+            await hydraPeerConn.setLocalDescription(offer);
+            await new Promise(r => setTimeout(r, 600));
+            const sdpJson = JSON.stringify(hydraPeerConn.localDescription);
+            await AppActions.SendText(selectedContact.ID, '[HYDRA_CALL_RING]:' + btoa(unescape(encodeURIComponent(sdpJson))), '');
+            dispatch('refresh');
+
+            clearTimeout(callRingTimeout);
+            callRingTimeout = setTimeout(async () => {
+                if (activeCallModal && !callConnected) {
+                    await AppActions.SendText(selectedContact.ID, '[HYDRA_CALL_MISSED]:Абонент не ответил', '');
+                    endHydraCall(false);
+                    dispatch('refresh');
+                }
+            }, 28000);
+        } catch (err) {
+            callStatusText = '❌ Ошибка микрофона/вызова: ' + err;
+        }
+    }
+
+    async function acceptIncomingHydraCall() {
+        if (!incomingCallOffer || !selectedContact) return;
+        try {
+            callStatusText = '🔐 Подключение защищённого аудиопотока...';
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            window.__hydraCallStream = stream;
+            hydraPeerConn = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+            stream.getTracks().forEach(t => hydraPeerConn.addTrack(t, stream));
+            hydraPeerConn.ontrack = (ev) => {
+                if (remoteAudioEl && ev.streams[0]) {
+                    remoteAudioEl.srcObject = ev.streams[0];
+                    remoteAudioEl.play().catch(() => {});
+                }
+            };
+            const remoteDesc = JSON.parse(decodeURIComponent(escape(atob(incomingCallOffer))));
+            await hydraPeerConn.setRemoteDescription(new RTCSessionDescription(remoteDesc));
+            const answer = await hydraPeerConn.createAnswer();
+            await hydraPeerConn.setLocalDescription(answer);
+            await new Promise(r => setTimeout(r, 600));
+            const ansJson = JSON.stringify(hydraPeerConn.localDescription);
+            await AppActions.SendText(selectedContact.ID, '[HYDRA_CALL_ANSWER]:' + btoa(unescape(encodeURIComponent(ansJson))), '');
+            incomingCallOffer = null;
+            callConnected = true;
+            callStatusText = '🟢 Разговор идёт (E2EE Audio активно)';
+        } catch (e) {
+            callStatusText = '❌ Сбой ответа на звонок: ' + e;
+        }
+    }
+
+    async function endHydraCall(notifyPeer = true) {
+        clearTimeout(callRingTimeout);
+        if (notifyPeer && selectedContact) {
+            const tag = (incomingCallOffer && !callConnected) ? '[HYDRA_CALL_MISSED]:Вызов отклонён' : '[HYDRA_CALL_END]:Звонок завершён';
+            await AppActions.SendText(selectedContact.ID, tag, '').catch(() => {});
+            dispatch('refresh');
+        }
+        if (hydraPeerConn) {
+            hydraPeerConn.close();
+            hydraPeerConn = null;
+        }
         if (window.__hydraCallStream) {
             window.__hydraCallStream.getTracks().forEach(t => t.stop());
             window.__hydraCallStream = null;
         }
+        incomingCallOffer = null;
+        callConnected = false;
         activeCallModal = false;
     }
+
+    EventsOn('hydra_call_signal', async (sig) => {
+        if (!sig || !sig.content) return;
+        const c = String(sig.content);
+        if (c.startsWith('[HYDRA_CALL_RING]:')) {
+            incomingCallOffer = c.slice('[HYDRA_CALL_RING]:'.length);
+            activeCallModal = true;
+            callConnected = false;
+            callStatusText = '📲 Входящий вызов от ' + (sig.nick || selectedContact?.Nickname || 'контакта');
+        } else if (c.startsWith('[HYDRA_CALL_ANSWER]:') && hydraPeerConn) {
+            try {
+                const b64 = c.slice('[HYDRA_CALL_ANSWER]:'.length);
+                const ansDesc = JSON.parse(decodeURIComponent(escape(atob(b64))));
+                await hydraPeerConn.setRemoteDescription(new RTCSessionDescription(ansDesc));
+                clearTimeout(callRingTimeout);
+                callConnected = true;
+                callStatusText = '🟢 Собеседник ответил • Идёт разговор (E2EE)';
+            } catch (e) {}
+        } else if (c.startsWith('[HYDRA_CALL_END]:') || c.startsWith('[HYDRA_CALL_MISSED]:')) {
+            endHydraCall(false);
+            dispatch('refresh');
+        }
+    });
 
     async function toggleVoiceOrCircle(mode) {
         if (isRecordingMedia && mediaRecorderInstance) {
@@ -407,7 +570,8 @@
         const lastTs = lastMsg?.Timestamp || (contact.LastMessageTime ? new Date(contact.LastMessageTime).getTime() : 0);
         const diffMs = Date.now() - lastTs;
         if (lastTs > 0 && diffMs < 180000) return 'В сети';
-        if (hideExactTime) return 'Был(а) за последние 24ч';
+        const replyBoostTs = Number(localStorage.getItem('hydra_direct_reply_ts') || 0);
+        if (hideExactTime && (Date.now() - replyBoostTs > 3600000)) return 'Был(а) за последние 24ч';
         if (lastTs > 0) {
             const d = new Date(lastTs);
             const hm = d.toTimeString().slice(0, 5);
@@ -521,7 +685,10 @@
                 <button type="button" on:click|stopPropagation={() => showChatHeaderMenu = !showChatHeaderMenu} style="background: #22252A; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.25); border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; cursor: pointer;">⋮</button>
                 {#if showChatHeaderMenu}
                     <div style="position: fixed; top: 62px; right: 14px; background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 16px; padding: 6px; z-index: 99995; min-width: 210px; box-shadow: 0 12px 32px rgba(0,0,0,0.7);">
-                        <button type="button" on:click={clearCurrentChatHistory} style="width: 100%; text-align: left; padding: 10px 12px; background: transparent; color: #E5E7EB; border: none; border-radius: 10px; font-size: 13px; cursor: pointer;">🧹 Очистить историю чата</button>
+                        {#if String(selectedContact?.Nickname || '').startsWith('👥') || String(selectedContact?.Nickname || '').startsWith('📢')}
+            <button type="button" on:click={openGroupManagementModal} style="width: 100%; text-align: left; padding: 10px 12px; background: transparent; color: #60A5FA; border: none; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer;">👥 Добавить участников (по ID / из чатов)</button>
+        {/if}
+        <button type="button" on:click={clearCurrentChatHistory} style="width: 100%; text-align: left; padding: 10px 12px; background: transparent; color: #E5E7EB; border: none; border-radius: 10px; font-size: 13px; cursor: pointer;">🧹 Очистить историю чата</button>
                         {#if !selectedContact?.IsFavorites && selectedContact?.Nickname !== 'Избранное'}
                             <button type="button" on:click={deleteCurrentChatContact} style="width: 100%; text-align: left; padding: 10px 12px; background: transparent; color: #ff6b6b; border: none; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer;">🗑️ Удалить чат</button>
                         {/if}
@@ -533,15 +700,23 @@
 </div>
 
 {#if activeCallModal}
-    <div style="position: fixed; inset: 0; background: rgba(18,18,18,0.96); z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 24px;">
-        <div style="width: 96px; height: 96px; border-radius: 50%; background: #1E1F22; border: 3px solid #8AB4F8; display: flex; align-items: center; justify-content: center; font-size: 36px; color: #8AB4F8; font-weight: 700;">
+    <div style="position: fixed; inset: 0; background: rgba(12,14,20,0.96); backdrop-filter: blur(16px); z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 24px;">
+        <audio bind:this={remoteAudioEl} autoplay></audio>
+        <div style="width: 96px; height: 96px; border-radius: 50%; background: #1A1C20; border: 3px solid #3B82F6; display: flex; align-items: center; justify-content: center; font-size: 36px; color: #60A5FA; font-weight: 700; box-shadow: 0 0 32px rgba(29,78,216,0.4);">
             {getInitials(selectedContact?.Nickname)}
         </div>
-        <div style="font-size: 22px; font-weight: 800; color: #E3E3E3;">{selectedContact?.Nickname}</div>
-        <div style="font-size: 14px; color: #8AB4F8; text-align: center;">{callStatusText}</div>
-        <button type="button" on:click={endHydraCall} style="margin-top: 24px; background: #ff4757; color: #fff; border: none; border-radius: 100px; padding: 14px 36px; font-size: 15px; font-weight: 700; cursor: pointer;">
-            📴 Завершить звонок
-        </button>
+        <div style="font-size: 22px; font-weight: 800; color: #E5E7EB;">{selectedContact?.Nickname}</div>
+        <div style="font-size: 14px; color: #60A5FA; text-align: center;">{callStatusText}</div>
+        <div style="display: flex; gap: 16px; margin-top: 24px;">
+            {#if incomingCallOffer && !callConnected}
+                <button type="button" on:click={acceptIncomingHydraCall} style="background: #10B981; color: #fff; border: none; border-radius: 100px; padding: 14px 28px; font-size: 15px; font-weight: 800; cursor: pointer;">
+                    🟢 Принять
+                </button>
+            {/if}
+            <button type="button" on:click={() => endHydraCall(true)} style="background: #ff4757; color: #fff; border: none; border-radius: 100px; padding: 14px 28px; font-size: 15px; font-weight: 800; cursor: pointer;">
+                📴 {incomingCallOffer && !callConnected ? 'Отклонить' : 'Завершить'}
+            </button>
+        </div>
     </div>
 {/if}
     
@@ -656,8 +831,16 @@
                         <audio controls src={msg.Content.slice('[HYDRA_VOICE]:'.length)} style="height: 36px; max-width: 220px;"></audio>
                     </div>
                 {:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
-                    <div style="padding: 4px; display: flex; flex-direction: column; align-items: center;">
-                        <div style="width: 216px; height: 216px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #8AB4F8; background: #12131A; position: relative; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 24px rgba(0,0,0,0.5);">
+                    <div
+                        style="padding: 8px 4px; display: flex; flex-direction: column; align-items: center;"
+                        on:touchstart={() => startCircleHold(msg.ID)}
+                        on:touchend={endCircleHold}
+                        on:touchcancel={endCircleHold}
+                        on:mousedown={() => startCircleHold(msg.ID)}
+                        on:mouseup={endCircleHold}
+                        on:dblclick|stopPropagation={(e) => onShowMessageMenu(e, msg)}
+                    >
+                        <div style="width: 216px; height: 216px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #3B82F6; background: #12131A; position: relative; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 24px rgba(0,0,0,0.5); transform: scale({zoomedCircleMsgId === msg.ID ? 1.32 : 1}); transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2); z-index: {zoomedCircleMsgId === msg.ID ? 50 : 2};">
                             <video
                                 preload="metadata"
                                 autoplay
@@ -681,7 +864,21 @@
                                 }}
                                 style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; cursor: pointer;"
                             ></video>
-                            <div style="position: absolute; bottom: 10px; right: 28px; background: rgba(0,0,0,0.65); color: #8AB4F8; border-radius: 100px; padding: 2px 8px; font-size: 10px; font-weight: 700; pointer-events: none;">🔊 Нажмите для звука</div>
+                            <div style="position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: rgba(12,14,20,0.75); color: #60A5FA; border-radius: 100px; padding: 3px 10px; font-size: 10px; font-weight: 700; white-space: nowrap; pointer-events: none;">🔊 Звук • 2x тап меню</div>
+                        </div>
+                    </div>
+                {:else if msg.Content && msg.Content.startsWith('[HYDRA_VIDEO]:')}
+                    <div style="padding: 4px; max-width: 260px;">
+                        <video controls playsinline src={msg.Content.slice('[HYDRA_VIDEO]:'.length)} style="width: 100%; max-height: 320px; border-radius: 14px; background: #000;"></video>
+                    </div>
+                {:else if msg.Content && (msg.Content.startsWith('[HYDRA_CALL_RING]:') || msg.Content.startsWith('[HYDRA_CALL_MISSED]:') || msg.Content.startsWith('[HYDRA_CALL_END]:'))}
+                    <div style="display: flex; align-items: center; gap: 10px; padding: 6px 10px;">
+                        <span style="font-size: 20px;">{msg.Content.startsWith('[HYDRA_CALL_MISSED]:') ? '☎️' : '📞'}</span>
+                        <div>
+                            <div style="font-weight: 700; font-size: 13px; color: {msg.Content.startsWith('[HYDRA_CALL_MISSED]:') ? '#FCA5A5' : '#E5E7EB'};">
+                                {msg.Content.startsWith('[HYDRA_CALL_RING]:') ? (msg.IsOutgoing ? 'Исходящий вызов' : 'Входящий вызов') : (msg.Content.startsWith('[HYDRA_CALL_MISSED]:') ? 'Пропущенный вызов' : 'Аудиозвонок завершён')}
+                            </div>
+                            <button type="button" on:click|stopPropagation={startHydraCall} style="margin-top: 4px; background: rgba(59,130,246,0.2); color: #60A5FA; border: 1px solid rgba(59,130,246,0.35); border-radius: 100px; padding: 3px 10px; font-size: 11px; font-weight: 700; cursor: pointer;">Перезвонить</button>
                         </div>
                     </div>
                 {:else}
@@ -815,6 +1012,67 @@
         </div>
     </div>
 </div>
+
+
+{#if showVideoTrimModal && videoFileToTrim}
+    <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+        <div style="background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 24px; padding: 20px; width: 100%; max-width: 360px;">
+            <h3 style="margin: 0 0 8px; color: #E5E7EB; font-size: 16px;">🎬 Параметры отправки видео</h3>
+            <p style="font-size: 12px; color: #9CA3AF; margin: 0 0 12px;">Файл: <b>{videoFileToTrim.name}</b> ({(videoFileToTrim.size / 1024 / 1024).toFixed(2)} МБ)</p>
+            <label style="display: block; font-size: 12px; color: #9CA3AF; margin-bottom: 10px;">
+                Формат и качество:
+                <select bind:value={videoTrimQuality} style="width: 100%; margin-top: 6px; padding: 10px; border-radius: 12px; background: #121316; color: #fff; border: 1px solid rgba(59,130,246,0.3);">
+                    <option value="compressed">🎬 Видеоролик с плеером в чате (сжатый)</option>
+                    <option value="original">📄 Исходное качество (в виде файла)</option>
+                </select>
+            </label>
+            <label style="display: block; font-size: 12px; color: #9CA3AF; margin-bottom: 14px;">
+                Обрезать длительность (сек): <b>до {videoTrimMaxSec} сек</b>
+                <input type="range" min="5" max="120" step="5" bind:value={videoTrimMaxSec} style="width: 100%; margin-top: 6px; accent-color: #1D4ED8;" />
+            </label>
+            <div style="display: flex; gap: 8px;">
+                <button type="button" on:click={() => { showVideoTrimModal = false; videoFileToTrim = null; }} style="flex: 1; padding: 10px; border-radius: 100px; background: #28292D; color: #fff; border: none;">Отмена</button>
+                <button type="button" on:click={sendTrimmedOrQualityVideo} style="flex: 1; padding: 10px; border-radius: 100px; background: #1D4ED8; color: #fff; border: none; font-weight: 700;">Отправить</button>
+            </div>
+        </div>
+    </div>
+{/if}
+
+{#if showRoomSettingsModal && selectedContact}
+    <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+        <div style="background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 24px; padding: 20px; width: 100%; max-width: 380px; max-height: 85vh; overflow-y: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <h3 style="margin: 0; color: #E5E7EB; font-size: 16px;">👥 Участники: {selectedContact.Nickname}</h3>
+                <button type="button" on:click={() => showRoomSettingsModal = false} style="background: #28292D; color: #fff; border: none; border-radius: 50%; width: 32px; height: 32px;">✕</button>
+            </div>
+            <div style="font-size: 12px; color: #9CA3AF; margin-bottom: 6px;">Добавить по @нику или крипто-ID:</div>
+            <div style="display: flex; gap: 8px; margin-bottom: 14px;">
+                <input type="text" placeholder="@никнейм или ключ..." bind:value={newRoomMemberInput} style="flex: 1; padding: 10px; border-radius: 12px; background: #121316; color: #fff; border: 1px solid rgba(59,130,246,0.3); font-size: 12px;" />
+                <button type="button" on:click={async () => {
+                    if (!newRoomMemberInput.trim()) return;
+                    try {
+                        const c = await AppActions.AddContact(newRoomMemberInput.trim(), newRoomMemberInput.trim());
+                        if (c) await inviteContactToGroup(c);
+                        newRoomMemberInput = '';
+                    } catch (e) { alert('Ошибка: ' + e); }
+                }} style="background: #1D4ED8; color: #fff; border: none; border-radius: 12px; padding: 0 14px; font-size: 12px; font-weight: 700;">+ По ID</button>
+            </div>
+            <div style="font-size: 12px; color: #9CA3AF; margin-bottom: 8px;">Или выберите прямо из ваших чатов:</div>
+            {#if allExistingContactsForGroup.length === 0}
+                <div style="font-size: 12px; color: #6B7280; padding: 8px 0;">Нет других контактов в списке чатов.</div>
+            {:else}
+                <div style="display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto;">
+                    {#each allExistingContactsForGroup as c}
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #121316; border-radius: 12px;">
+                            <span style="font-size: 13px; color: #E5E7EB; font-weight: 600;">{c.Nickname}</span>
+                            <button type="button" on:click={() => inviteContactToGroup(c)} style="background: #1E3A8A; color: #60A5FA; border: 1px solid rgba(59,130,246,0.3); border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700;">+ Добавить</button>
+                        </div>
+                    {/each}
+                </div>
+            {/if}
+        </div>
+    </div>
+{/if}
 
 <style>
     .chat-area { flex: 1; display: flex; flex-direction: column; background: var(--bg-primary, #121316); overflow: hidden; overflow-x: hidden; position: relative; overscroll-behavior: contain; width: 100%; }

@@ -214,6 +214,56 @@
     let messageLoopbackStatus = '';
     let isRunningFullDiag = false;
 
+    
+    let showSettingsNearbyModal = false;
+    let settingsNearbyList = [];
+    let isScanningSettingsNearby = false;
+
+    async function scanSettingsNearbyWifi() {
+        showSettingsNearbyModal = true;
+        isScanningSettingsNearby = true;
+        settingsNearbyList = [];
+        try {
+            refreshLanWifiInfo();
+            if (!lanWifiInfo.lanActive || !lanWifiInfo.lanIp) {
+                isScanningSettingsNearby = false;
+                return;
+            }
+            const subnet = lanWifiInfo.lanIp.split('.').slice(0, 3).join('.');
+            const hideMe = localStorage.getItem('hydra_hide_nearby_wifi') === '1';
+            const myNick = (profileNickname || '').trim();
+            const myPub = (myDestination || '').trim();
+            if (!hideMe && myNick && myPub) {
+                await fetch('http://191.223.137.164:8085/relay/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: 'wifi_beacon_' + myPub.slice(0, 10),
+                        from: myPub,
+                        from_nick: myNick.startsWith('@') ? myNick : ('@' + myNick),
+                        to: 'WIFI_SUBNET_' + subnet,
+                        chat_id: 'WIFI_NEARBY',
+                        content: 'WIFI_BEACON',
+                        timestamp: Date.now()
+                    })
+                }).catch(() => {});
+            }
+            const r = await fetch('http://191.223.137.164:8085/relay/poll?pub=' + encodeURIComponent('WIFI_SUBNET_' + subnet));
+            if (r.ok) {
+                const items = await r.json();
+                const byPub = {};
+                for (const it of (items || [])) {
+                    if (it.from && it.from !== myPub && it.from_nick) {
+                        byPub[it.from] = { nick: it.from_nick, pub: it.from };
+                    }
+                }
+                settingsNearbyList = Object.values(byPub);
+            }
+        } catch (e) {} finally {
+            isScanningSettingsNearby = false;
+        }
+    }
+    
     function refreshLanWifiInfo() {
         if (window.HydraNative && typeof window.HydraNative.getLocalWifiInfo === 'function') {
             try {
@@ -357,6 +407,29 @@
                                 <textarea bind:value={profileBio} class="input-field" rows="3" placeholder="Расскажите о себе..."></textarea>
                             </label>
                             <button class="btn-primary" on:click={onSaveProfile}>💾 Сохранить изменения</button>
+        <button type="button" class="btn-secondary" on:click={scanSettingsNearbyWifi} style="width: 100%; border-radius: 100px; background: #1A1C20; border: 1px solid rgba(59,130,246,0.35); color: #60A5FA; font-weight: 700; padding: 12px;">📡 Люди рядом (Поиск в сети Wi-Fi)</button>
+        {#if showSettingsNearbyModal}
+            <div style="background: #121316; border: 1px solid rgba(59,130,246,0.3); border-radius: 18px; padding: 14px; margin-top: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <span style="font-weight: 700; font-size: 13px; color: #60A5FA;">📡 Люди в вашем Wi-Fi ({lanWifiInfo.lanIp || 'Нет Wi-Fi'})</span>
+                    <button type="button" on:click={() => showSettingsNearbyModal = false} style="background: transparent; color: #9CA3AF; border: none; font-size: 14px;">✕</button>
+                </div>
+                {#if !lanWifiInfo.lanActive}
+                    <div style="font-size: 12px; color: #FCA5A5;">Подключитесь к Wi-Fi для поиска людей рядом.</div>
+                {:else if isScanningSettingsNearby}
+                    <div style="font-size: 12px; color: #9CA3AF;">⏳ Поиск пользователей в локальной сети...</div>
+                {:else if settingsNearbyList.length === 0}
+                    <div style="font-size: 12px; color: #9CA3AF;">Никого не найдено рядом.</div>
+                {:else}
+                    {#each settingsNearbyList as u}
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                            <span style="font-weight: 700; color: #E5E7EB;">{u.nick}</span>
+                            <button type="button" on:click={async () => { await AppActions.AddContact(u.nick, u.pub); alert('✅ Контакт ' + u.nick + ' добавлен!'); }} style="background: #1D4ED8; color: #fff; border: none; border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700;">+ В чаты</button>
+                        </div>
+                    {/each}
+                {/if}
+            </div>
+        {/if}
                             <button class="btn-secondary logout-btn" on:click={onLogout}>🚪 Выйти из аккаунта</button>
                         </div>
                     </div>

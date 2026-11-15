@@ -1,7 +1,7 @@
 <script>
     import * as AppActions from '../../wailsjs/go/main/App.js';
     import { Icons } from '../Icons.js';
-    import { getInitials, formatTime, getStatusColor, getStatusText, getAvatarGradient } from '../utils.js';
+    import { getInitials, formatTime, getStatusColor, getStatusText, getAvatarGradient, formatPreviewText } from '../utils.js';
     import { writable } from 'svelte/store';
 
     export let isMobile;
@@ -249,7 +249,18 @@
         showCreateStoryModal = false;
     }
 
+    
+    let storyPaused = false;
+    let storyIsVertical = false;
+
+    function deleteCurrentStory(stId) {
+        hydraStories = hydraStories.filter(s => s.id !== stId);
+        localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
+        activeStoryModal = null;
+    }
+    
     function openHydraStory(st) {
+        storyPaused = false;
         const isAnon = localStorage.getItem('hydra_anon_stories') === '1';
         if (isAnon) {
             st.anonViews = (st.anonViews || 0) + 1;
@@ -478,7 +489,7 @@
                             </div>
                             <span class="contact-time">{contact.LastMessageTime ? formatTime(contact.LastMessageTime) : ''}</span>
                         </div>
-                        <div class="contact-last">{contact.LastMessage || 'Нет сообщений'}</div>
+                        <div class="contact-last">{formatPreviewText(contact.LastMessage)}</div>
                     </div>
                     {#if contact.UnreadCount > 0}
                         <div class="contact-unread-badge">{contact.UnreadCount > 99 ? '99+' : contact.UnreadCount}</div>
@@ -554,10 +565,7 @@
                 <span style="font-size: 11px; color: #8AB4F8; font-weight: 600; margin-top: 4px; white-space: nowrap;">+ Сторис 24ч</span>
             </div>
 
-        <div on:click={openNearbyWifiRadar} role="button" tabindex="0" on:keydown={(e) => e.key === 'Enter' && openNearbyWifiRadar()} style="display: flex; flex-direction: column; align-items: center; cursor: pointer; min-width: 68px;">
-            <div style="width: 52px; height: 52px; border-radius: 50%; background: linear-gradient(135deg, #172554, #1E3A8A); border: 2px solid #60A5FA; display: flex; align-items: center; justify-content: center; font-size: 22px; color: #fff;">📡</div>
-            <span style="font-size: 11px; color: #60A5FA; font-weight: 600; margin-top: 4px; white-space: nowrap;">Люди рядом</span>
-        </div>
+        
             {#each hydraStories as st}
                 <div on:click={() => openHydraStory(st)} style="display: flex; flex-direction: column; align-items: center; cursor: pointer; min-width: 64px;">
                     <div style="width: 52px; height: 52px; border-radius: 50%; padding: 2px; background: linear-gradient(135deg, #8AB4F8, #4285F4);">
@@ -594,7 +602,7 @@
                 </div>
             {/if}
 
-            {#each filteredContacts as contact}
+            {#each sortedContacts as contact}
                 <div 
                     class="contact-item animate-card"
                     class:selected={selectedContact && selectedContact.ID === contact.ID}
@@ -615,7 +623,7 @@
                     </div>
                     <div class="contact-info">
                         <div class="contact-name">{formatContactDisplayName(contact.Nickname)}</div>
-                        <div class="contact-last">{contact.LastMessage || 'Нет сообщений'}</div>
+                        <div class="contact-last">{formatPreviewText(contact.LastMessage)}</div>
                     </div>
                     {#if contact.UnreadCount > 0}
                         <div class="contact-unread-badge">{contact.UnreadCount > 99 ? '99+' : contact.UnreadCount}</div>
@@ -704,27 +712,59 @@
 {/if}
 
 {#if activeStoryModal}
-    <div on:click={() => activeStoryModal = null} style="position: fixed; inset: 0; background: rgba(18,18,18,0.96); z-index: 99999; display: flex; flex-direction: column; justify-content: space-between; padding: 24px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; padding-top: env(safe-area-inset-top, 10px);">
+    <div style="position: fixed; inset: 0; background: #0B0D12; z-index: 99999; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
+        <!-- Динамический размытый атмосферный фон под цвет видео/фото -->
+        {#if activeStoryModal.video}
+            <video autoplay loop muted playsinline src={activeStoryModal.video} style="position: absolute; inset: -30px; width: calc(100% + 60px); height: calc(100% + 60px); object-fit: cover; filter: blur(38px) brightness(0.45) saturate(1.6); pointer-events: none; z-index: 0;"></video>
+        {:else if activeStoryModal.image}
+            <img src={activeStoryModal.image} alt="" style="position: absolute; inset: -30px; width: calc(100% + 60px); height: calc(100% + 60px); object-fit: cover; filter: blur(38px) brightness(0.45) saturate(1.6); pointer-events: none; z-index: 0;" />
+        {/if}
+
+        <!-- Шапка Сторис с кнопками Удалить и Закрыть -->
+        <div style="position: relative; z-index: 2; display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; padding-top: calc(16px + env(safe-area-inset-top, 12px)); background: linear-gradient(to bottom, rgba(0,0,0,0.65), transparent);">
             <div>
-                <div style="font-weight: 700; color: #E3E3E3; font-size: 16px;">{activeStoryModal.author}</div>
-                <div style="font-size: 12px; color: #8AB4F8;">⏱ Активна 24 часа • Защищено E2EE</div>
+                <div style="font-weight: 700; color: #fff; font-size: 16px;">{activeStoryModal.author}</div>
+                <div style="font-size: 12px; color: #60A5FA;">⏱ 24ч • {storyPaused ? '⏸ Пауза (нажмите для пуска)' : '▶️ Идёт показ'}</div>
             </div>
-            <button type="button" style="background: #28292D; color: #fff; border: none; border-radius: 50%; width: 38px; height: 38px; font-size: 16px;">✕</button>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <button type="button" on:click|stopPropagation={() => deleteCurrentStory(activeStoryModal.id)} style="background: rgba(239,68,68,0.25); color: #FCA5A5; border: 1px solid rgba(239,68,68,0.4); border-radius: 100px; padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer;">
+                    🗑️ Удалить
+                </button>
+                <button type="button" on:click={() => activeStoryModal = null} style="background: rgba(255,255,255,0.15); color: #fff; border: none; border-radius: 50%; width: 38px; height: 38px; font-size: 16px; cursor: pointer;">✕</button>
+            </div>
         </div>
-        <div style="text-align: center; margin: auto 0;" on:click|stopPropagation>
+
+        <!-- Контент Сторис: 1 нажатие = Пауза / Продолжить (без панели плеера!) -->
+        <div style="position: relative; z-index: 1; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: {storyIsVertical ? '0' : '16px'}; overflow: hidden;" on:click|stopPropagation={(e) => {
+            const vid = e.currentTarget.querySelector('video');
+            if (vid) {
+                if (vid.paused) { vid.play(); storyPaused = false; }
+                else { vid.pause(); storyPaused = true; }
+            }
+        }}>
             {#if activeStoryModal.video}
-                <video controls autoplay playsinline src={activeStoryModal.video} style="max-width: 100%; max-height: 58vh; border-radius: 20px; background: #000;"></video>
+                <video
+                    autoplay
+                    loop
+                    playsinline
+                    src={activeStoryModal.video}
+                    on:loadedmetadata={(e) => {
+                        const v = e.currentTarget;
+                        storyIsVertical = (v.videoHeight > v.videoWidth * 1.15);
+                    }}
+                    style="width: {storyIsVertical ? '100%' : 'auto'}; height: {storyIsVertical ? '100%' : 'auto'}; max-width: 100%; max-height: {storyIsVertical ? '100%' : '70vh'}; object-fit: {storyIsVertical ? 'cover' : 'contain'}; border-radius: {storyIsVertical ? '0' : '22px'}; box-shadow: 0 12px 40px rgba(0,0,0,0.6); cursor: pointer;"
+                ></video>
             {:else if activeStoryModal.image}
-                <img src={activeStoryModal.image} alt="story" style="max-width: 100%; max-height: 58vh; border-radius: 20px;" />
+                <img src={activeStoryModal.image} alt="story" style="max-width: 100%; max-height: 72vh; object-fit: contain; border-radius: 22px; box-shadow: 0 12px 40px rgba(0,0,0,0.6);" />
             {/if}
             {#if activeStoryModal.text}
-                <div style="margin-top: 16px; font-size: 20px; color: #E3E3E3; font-weight: 600;">{activeStoryModal.text}</div>
+                <div style="position: absolute; bottom: 20px; left: 20px; right: 20px; text-align: center; background: rgba(10,12,18,0.75); backdrop-filter: blur(10px); padding: 12px 18px; border-radius: 16px; font-size: 17px; color: #fff; font-weight: 600;">{activeStoryModal.text}</div>
             {/if}
         </div>
-        <div style="background: #1E1F22; border-radius: 20px; padding: 14px; font-size: 13px; color: #E3E3E3;">
+
+        <div style="position: relative; z-index: 2; margin: 12px 16px calc(12px + env(safe-area-inset-bottom, 8px)); background: rgba(26,28,32,0.85); backdrop-filter: blur(14px); border-radius: 20px; padding: 12px 16px; font-size: 12px; color: #E5E7EB;">
             <div>👁 Открытых просмотров: {activeStoryModal.openViews?.length || 0} {activeStoryModal.openViews?.length ? '(' + activeStoryModal.openViews.join(', ') + ')' : ''}</div>
-            <div style="color: #8AB4F8; margin-top: 4px;">🕵️ Анонимных просмотров (Невидимка): {activeStoryModal.anonViews || 0}</div>
+            <div style="color: #60A5FA; margin-top: 4px;">🕵️ Анонимных просмотров (Невидимка): {activeStoryModal.anonViews || 0}</div>
         </div>
     </div>
 {/if}
@@ -1102,5 +1142,14 @@
     .mobile-sidebar, .contacts-list, .mobile-contacts { max-width: 100vw !important; overflow-x: hidden !important; box-sizing: border-box !important; }
     .contact-item { max-width: calc(100% - 16px) !important; overflow: hidden !important; box-sizing: border-box !important; }
     .contact-name { white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; max-width: 210px !important; }
+    
+
+    video::-webkit-media-controls,
+    video::-webkit-media-controls-enclosure,
+    video::-webkit-media-controls-panel,
+    video::-webkit-media-controls-overlay-play-button {
+        display: none !important;
+        opacity: 0 !important;
+    }
     
 </style>

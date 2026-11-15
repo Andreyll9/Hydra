@@ -25,6 +25,7 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
     private lateinit var webView: WebView
     private var webViewFileCallback: ValueCallback<Array<Uri>>? = null
     private var isOpeningSystemPicker = false
+    private var pausedAtMs: Long = 0L
 
     companion object {
         private const val TAG = "Hydra"
@@ -32,8 +33,19 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
         private const val HEALTH_URL = "$SERVER_URL/health"
         private const val MAX_RETRIES = 30
         private const val RETRY_DELAY_MS = 1000L
-        private const val NOTIFICATION_CHANNEL_ID = "teleghost_messages"
+        private const val NOTIFICATION_CHANNEL_ID = "hydra_heads_up_messages"
         private const val PREFS_NAME = "hydra_biometric_prefs"
+        var currentInstance: MainActivity? = null
+        fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
+            currentInstance?.runOnUiThread {
+                val sNick = JSONObject.quote(senderNick)
+                val sText = JSONObject.quote(replyText)
+                currentInstance?.webView?.evaluateJavascript(
+                    "if(window.__onHydraDirectReply) window.__onHydraDirectReply($sNick, $sText);",
+                    null
+                )
+            }
+        }
     }
 
     fun pushNativeLog(tag: String, msg: String) {
@@ -93,11 +105,17 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
                         put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
                     }
                 }
-                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
-                } else {
-                    resolver.insert(android.provider.MediaStore.Files.getContentUri("external"), cv)
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                    val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                    if (!dlDir.exists()) dlDir.mkdirs()
+                    val outFile = File(dlDir, filename)
+                    outFile.writeText(logText, Charsets.UTF_8)
+                    runOnUiThread {
+                        android.widget.Toast.makeText(this@MainActivity, "✅ Лог сохранён в Загрузки: $filename", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                    return filename
                 }
+                val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
                 if (uri != null) {
                     resolver.openOutputStream(uri)?.use { it.write(logText.toByteArray(Charsets.UTF_8)) }
                     runOnUiThread {
@@ -141,6 +159,9 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
                     }
                     if (checkSelfPermission(android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
                         needed.add(android.Manifest.permission.CAMERA)
+                    }
+                    if (Build.VERSION.SDK_INT <= 29 && checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                        needed.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
                     }
                     if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                         needed.add(android.Manifest.permission.POST_NOTIFICATIONS)
@@ -265,7 +286,7 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val name = "Messages"
             val descriptionText = "New messages from contacts"
-            val importance = android.app.NotificationManager.IMPORTANCE_DEFAULT
+            val importance = android.app.NotificationManager.IMPORTANCE_HIGH
             val channel = android.app.NotificationChannel(NOTIFICATION_CHANNEL_ID, name, importance).apply {
                 description = descriptionText
             }
@@ -319,6 +340,7 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        currentInstance = this
 
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         window.statusBarColor = android.graphics.Color.parseColor("#121212")
@@ -415,22 +437,45 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
     override fun showNotification(title: String, message: String) {
         runOnUiThread {
             try {
+                val notifId = (System.currentTimeMillis() and 0xFFFFFFF).toInt()
+                val senderNick = title.removePrefix("Hydra - ").trim()
+                val remoteInput = androidx.core.app.RemoteInput.Builder("key_text_reply")
+                    .setLabel("Быстрый ответ...")
+                    .build()
+                val replyIntent = Intent(this, DirectReplyReceiver::class.java).apply {
+                    putExtra("sender_nick", senderNick)
+                    putExtra("notif_id", notifId)
+                }
+                val replyFlags = if (Build.VERSION.SDK_INT >= 31) {
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE
+                } else {
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                }
+                val replyPendingIntent = android.app.PendingIntent.getBroadcast(this, notifId, replyIntent, replyFlags)
+                val replyAction = androidx.core.app.NotificationCompat.Action.Builder(
+                    R.mipmap.ic_launcher,
+                    "Ответить",
+                    replyPendingIntent
+                ).addRemoteInput(remoteInput).build()
+
+                val intent = Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
+                val pendingIntent = android.app.PendingIntent.getActivity(this, 0, intent, android.app.PendingIntent.FLAG_IMMUTABLE)
+
                 val builder = androidx.core.app.NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
                     .setSmallIcon(R.mipmap.ic_launcher)
                     .setContentTitle(title)
                     .setContentText(message)
-                    .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
+                    .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                    .setCategory(androidx.core.app.NotificationCompat.CATEGORY_MESSAGE)
+                    .setDefaults(androidx.core.app.NotificationCompat.DEFAULT_ALL)
                     .setAutoCancel(true)
-                    .setOngoing(false)
-
-                val intent = Intent(this, MainActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                }
-                val pendingIntent: android.app.PendingIntent = android.app.PendingIntent.getActivity(this, 0, intent, android.app.PendingIntent.FLAG_IMMUTABLE)
-                builder.setContentIntent(pendingIntent)
+                    .setContentIntent(pendingIntent)
+                    .addAction(replyAction)
 
                 with(androidx.core.app.NotificationManagerCompat.from(this)) {
-                    notify(System.currentTimeMillis().toInt(), builder.build())
+                    notify(notifId, builder.build())
                 }
             } catch (e: Exception) {
                 android.util.Log.e(TAG, "Notification failed", e)
@@ -641,18 +686,26 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
         mobile.Mobile.setPlatformBridge(this)
         if (isOpeningSystemPicker) {
             isOpeningSystemPicker = false
-            webView.evaluateJavascript("setTimeout(function(){ window.__hydraSkipLock = false; }, 1000);", null)
+            pausedAtMs = 0L
+            webView.evaluateJavascript("window.__setHydraBlur && window.__setHydraBlur(false); setTimeout(function(){ window.__hydraSkipLock = false; }, 1000);", null)
             pushNativeLog("LIFECYCLE", "Возврат из Галереи (без блокировки)")
             return
         }
-        pushNativeLog("LIFECYCLE", "Приложение развёрнуто (onResume)")
-        webView.evaluateJavascript("if(window.__onHydraAppResume) window.__onHydraAppResume();", null)
+        val awayMs = if (pausedAtMs > 0L) (System.currentTimeMillis() - pausedAtMs) else 0L
+        pausedAtMs = 0L
+        if (awayMs >= 30000L) {
+            pushNativeLog("LIFECYCLE", "Отсутствие ${awayMs / 1000} сек (>= 30с) — запрос разблокировки!")
+            webView.evaluateJavascript("if(window.__lockHydraNow) window.__lockHydraNow(); if(window.__onHydraAppResume) window.__onHydraAppResume();", null)
+        } else {
+            pushNativeLog("LIFECYCLE", "Быстрый возврат (${awayMs / 1000} сек < 30с) — сессия сохранена без блокировки")
+            webView.evaluateJavascript("if(window.__setHydraBlur) window.__setHydraBlur(false);", null)
+        }
     }
 
     override fun onPause() {
         if (!isOpeningSystemPicker) {
-            pushNativeLog("LIFECYCLE", "Приложение свёрнуто (onPause) — блокировка!")
-            webView.evaluateJavascript("if(window.__setHydraBlur) window.__setHydraBlur(true); if(window.__lockHydraNow) window.__lockHydraNow();", null)
+            pausedAtMs = System.currentTimeMillis()
+            webView.evaluateJavascript("if(window.__setHydraBlur) window.__setHydraBlur(true);", null)
         }
         webView.onPause()
         super.onPause()

@@ -87,6 +87,24 @@
   // Context Menus
   let contextMenu = { show: false, x: 0, y: 0, contact: null };
   let messageContextMenu = { show: false, x: 0, y: 0, message: null };
+  
+    let showFolderAddList = false;
+    let showFolderRemList = false;
+
+    if (typeof window !== 'undefined') {
+        window.__onHydraDirectReply = async (senderNick, replyText) => {
+            // Фиксируем ответ из уведомления: на 1 час показываем точное время онлайна, затем снова 24ч
+            localStorage.setItem('hydra_direct_reply_ts', String(Date.now()));
+            localStorage.setItem('hydra_last_unlock_ts', String(Date.now()));
+            const list = await AppActions.GetContacts().catch(() => []);
+            const target = (list || []).find(c => (c.Nickname || '').toLowerCase().includes((senderNick || '').toLowerCase()));
+            if (target) {
+                await AppActions.SendText(target.ID, replyText, '');
+                loadContacts();
+            }
+        };
+    }
+    
   let folderContextMenu = { show: false, x: 0, y: 0, folder: null };
 
   // Mobile View
@@ -111,10 +129,7 @@
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
                 const mustLock = localStorage.getItem('hydra_always_lock') !== '0';
-                if (mustLock && screen === 'main' && !window.__hydraSkipLock) {
-                    screen = 'login';
-                    showSettings = false;
-                }
+                // Блокировка управляется 30-секундным таймером
             }
         });
     }
@@ -124,8 +139,9 @@
         window.__lockHydraNow = () => {
             if (window.__hydraSkipLock) return;
             if (screen === 'main') {
+                window.__savedViewBeforeLock = $mobileView;
+                window.__savedSettingsBeforeLock = showSettings;
                 screen = 'login';
-                showSettings = false;
                 if (window.__setHydraBlur) window.__setHydraBlur(true);
                 if (window.__addHydraLog) window.__addHydraLog('SECURITY-LOCK', '🔒 Приложение свёрнуто — включён экран блокировки и матовый фильтр!');
             }
@@ -166,10 +182,22 @@
         if (isMobile) {
             if (showSettings) {
                 showSettings = false;
-                mobileView.set('list');
+                if (window.__savedViewBeforeLock) {
+              showSettings = !!window.__savedSettingsBeforeLock;
+              mobileView.set(window.__savedViewBeforeLock);
+              window.__savedViewBeforeLock = null;
+          } else if (!selectedContact && !showSettings) {
+              mobileView.set('list');
+          }
             } else if (selectedContact) {
                 selectContact(null);
-                mobileView.set('list');
+                if (window.__savedViewBeforeLock) {
+              showSettings = !!window.__savedSettingsBeforeLock;
+              mobileView.set(window.__savedViewBeforeLock);
+              window.__savedViewBeforeLock = null;
+          } else if (!selectedContact && !showSettings) {
+              mobileView.set('list');
+          }
             }
         }
     });
@@ -317,7 +345,13 @@
             if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
           if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
           networkStatus = await AppActions.GetNetworkStatus();
-          mobileView.set('list');
+          if (window.__savedViewBeforeLock) {
+              showSettings = !!window.__savedSettingsBeforeLock;
+              mobileView.set(window.__savedViewBeforeLock);
+              window.__savedViewBeforeLock = null;
+          } else if (!selectedContact && !showSettings) {
+              mobileView.set('list');
+          }
           
           // Wait for essential data before hiding the overlay
           await Promise.all([
@@ -572,7 +606,13 @@
       onToggleSettings: () => { 
           if (showSettings) {
               showSettings = false;
-              if (isMobile) mobileView.set('list');
+              if (isMobile) if (window.__savedViewBeforeLock) {
+              showSettings = !!window.__savedSettingsBeforeLock;
+              mobileView.set(window.__savedViewBeforeLock);
+              window.__savedViewBeforeLock = null;
+          } else if (!selectedContact && !showSettings) {
+              mobileView.set('list');
+          }
           } else {
               showSettings = true;
               settingsView = 'menu';
@@ -616,7 +656,7 @@
           } catch (e) { showToast(e, "error"); }
       },
       onCopyDestination: () => {
-          AppActions.CopyToClipboard(myDestination);
+          AppActions.ClipboardSet(myDestination);
           showToast("Адрес скопирован", "success");
       },
       onOpenMyQR: () => { showQRModal = true; },
@@ -651,16 +691,19 @@
           localStorage.setItem('pinnedChats', JSON.stringify(pinnedChats));
       },
       onMovePin: (contactId, direction) => {
+          if (!pinnedChats.includes(contactId)) {
+              pinnedChats = [...pinnedChats, ...contacts.map(c => c.ID).filter(id => !pinnedChats.includes(id))];
+          }
           const index = pinnedChats.indexOf(contactId);
           if (index === -1) return;
           const newIndex = index + direction;
           if (newIndex < 0 || newIndex >= pinnedChats.length) return;
-          
           const temp = pinnedChats[index];
           pinnedChats[index] = pinnedChats[newIndex];
           pinnedChats[newIndex] = temp;
           pinnedChats = [...pinnedChats];
           localStorage.setItem('pinnedChats', JSON.stringify(pinnedChats));
+          contacts = [...contacts];
       }
   };
 
@@ -826,7 +869,13 @@
       },
       onClose: () => { 
           showSettings = false; 
-          if (isMobile) mobileView.set('list');
+          if (isMobile) if (window.__savedViewBeforeLock) {
+              showSettings = !!window.__savedSettingsBeforeLock;
+              mobileView.set(window.__savedViewBeforeLock);
+              window.__savedViewBeforeLock = null;
+          } else if (!selectedContact && !showSettings) {
+              mobileView.set('list');
+          }
       },
       onUpdateProfile: async (addr) => {
           try {
@@ -963,7 +1012,13 @@
             folderContextMenu.show = false;
             if (editingMessageId) { editingMessageId = null; editMessageContent = ''; }
             if (previewImage) { previewImage = null; }
-            if (showSettings && isMobile) { showSettings = false; mobileView.set('list'); }
+            if (showSettings && isMobile) { showSettings = false; if (window.__savedViewBeforeLock) {
+              showSettings = !!window.__savedSettingsBeforeLock;
+              mobileView.set(window.__savedViewBeforeLock);
+              window.__savedViewBeforeLock = null;
+          } else if (!selectedContact && !showSettings) {
+              mobileView.set('list');
+          } }
             if (showAddContact) { showAddContact = false; }
             if (showContactProfile) { showContactProfile = false; }
         }
@@ -1004,7 +1059,13 @@
                             bind:replyingTo {isMobile}
                             {canLoadMore} onLoadMore={loadMoreMessages}
                             onJumpToMessage={(e) => jumpToMessage(e.detail)}
-                            onBack={() => { selectContact(null); mobileView.set('list'); }}
+                            onBack={() => { selectContact(null); if (window.__savedViewBeforeLock) {
+              showSettings = !!window.__savedSettingsBeforeLock;
+              mobileView.set(window.__savedViewBeforeLock);
+              window.__savedViewBeforeLock = null;
+          } else if (!selectedContact && !showSettings) {
+              mobileView.set('list');
+          } }}
                             on:refresh={() => loadMessages(selectedContact?.ID)}
                             {...chatHandlers}
                         />
@@ -1132,53 +1193,53 @@
                 {@const notInFolders = folders.filter(f => !(f.ChatIDs || f.chat_ids || []).includes(contextMenu.contact.ID))}
 
                 {#if notInFolders.length > 0}
-                    <div class="context-item submenu-parent">
-                        Добавить в папку
-                        <div class="context-submenu">
-                            {#each notInFolders as folder}
-                                <div class="context-item" on:click={async () => {
-                                    await AppActions.AddChatToFolder(folder.ID || folder.id, contextMenu.contact.ID);
-                                    loadFolders();
-                                    contextMenu.show = false;
-                                    showToast(`Добавлено в папку "${folder.Name || folder.name}"`, 'success');
-                                }}>{folder.Icon || folder.icon} {folder.Name || folder.name}</div>
-                            {/each}
-                        </div>
+                    <div class="context-item" style="color: #60A5FA; font-weight: 700;" on:click|stopPropagation={() => showFolderAddList = !showFolderAddList}>
+                        📁 Добавить в папку {showFolderAddList ? '▾' : '▸'}
                     </div>
+                    {#if showFolderAddList}
+                        {#each notInFolders as folder}
+                            <div class="context-item" style="padding-left: 28px; background: rgba(29,78,216,0.12);" on:click|stopPropagation={async () => {
+                                await AppActions.AddChatToFolder(folder.ID || folder.id, contextMenu.contact.ID);
+                                await loadFolders();
+                                showFolderAddList = false;
+                                contextMenu.show = false;
+                                showToast(`Добавлено в папку "${folder.Name || folder.name}"`, 'success');
+                            }}>{folder.Icon || folder.icon} {folder.Name || folder.name}</div>
+                        {/each}
+                    {/if}
                 {/if}
 
                 {#if inFolders.length > 0}
-                    <div class="context-item submenu-parent">
-                        Удалить из папки
-                        <div class="context-submenu">
-                            {#each inFolders as folder}
-                                <div class="context-item" on:click={async () => {
-                                    await AppActions.RemoveChatFromFolder(folder.ID || folder.id, contextMenu.contact.ID);
-                                    loadFolders();
-                                    contextMenu.show = false;
-                                    showToast(`Удалено из папки "${folder.Name || folder.name}"`, 'success');
-                                }}>{folder.Icon || folder.icon} {folder.Name || folder.name}</div>
-                            {/each}
-                        </div>
+                    <div class="context-item" style="color: #FCA5A5;" on:click|stopPropagation={() => showFolderRemList = !showFolderRemList}>
+                        📁 Убрать из папки {showFolderRemList ? '▾' : '▸'}
                     </div>
+                    {#if showFolderRemList}
+                        {#each inFolders as folder}
+                            <div class="context-item" style="padding-left: 28px;" on:click|stopPropagation={async () => {
+                                await AppActions.RemoveChatFromFolder(folder.ID || folder.id, contextMenu.contact.ID);
+                                await loadFolders();
+                                showFolderRemList = false;
+                                contextMenu.show = false;
+                                showToast(`Убрано из папки "${folder.Name || folder.name}"`, 'info');
+                            }}>{folder.Icon || folder.icon} {folder.Name || folder.name}</div>
+                        {/each}
+                    {/if}
                 {/if}
             {/if}
             <div class="context-item" on:click={() => {
                 sidebarHandlers.onTogglePin(contextMenu.contact.ID);
                 contextMenu.show = false;
             }}>
-                {pinnedChats.includes(contextMenu.contact.ID) ? 'Открепить' : 'Закрепить'}
+                📌 {pinnedChats.includes(contextMenu.contact.ID) ? 'Открепить' : 'Закрепить'}
             </div>
-            {#if pinnedChats.includes(contextMenu.contact.ID)}
-                <div class="context-item" on:click={() => {
-                    sidebarHandlers.onMovePin(contextMenu.contact.ID, -1);
-                    contextMenu.show = false;
-                }}>Переместить выше</div>
-                <div class="context-item" on:click={() => {
-                    sidebarHandlers.onMovePin(contextMenu.contact.ID, 1);
-                    contextMenu.show = false;
-                }}>Переместить ниже</div>
-            {/if}
+            <div class="context-item" on:click={() => {
+                sidebarHandlers.onMovePin(contextMenu.contact.ID, -1);
+                contextMenu.show = false;
+            }}>⬆️ Переместить выше</div>
+            <div class="context-item" on:click={() => {
+                sidebarHandlers.onMovePin(contextMenu.contact.ID, 1);
+                contextMenu.show = false;
+            }}>⬇️ Переместить ниже</div>
             <div class="context-item danger" on:click={() => { 
                 AppActions.DeleteContact(contextMenu.contact.ID); 
                 loadContacts();
@@ -1213,7 +1274,7 @@
             }}>Ответить</div>
             {#if messageContextMenu.message?.Content}
                 <div class="context-item" on:click={() => {
-                    AppActions.CopyToClipboard(messageContextMenu.message.Content);
+                    AppActions.ClipboardSet(messageContextMenu.message.Content);
                     showToast('Текст скопирован', 'success');
                     messageContextMenu.show = false;
                 }}>Копировать текст</div>
@@ -1401,6 +1462,20 @@
         background: linear-gradient(135deg, #172554, #1E3A8A) !important;
         border: 1px solid rgba(59, 130, 246, 0.25) !important;
         color: #F3F4F6 !important;
+    }
+    
+
+    :global(.settings-content-area), :global(.contacts-list), :global(.messages-container) {
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch !important;
+        touch-action: pan-y !important;
+        overscroll-behavior-y: contain !important;
+    }
+    :global(.chat-avatar), :global(.contact-avatar) {
+        flex-shrink: 0 !important;
+        min-width: 42px !important;
+        min-height: 42px !important;
+        aspect-ratio: 1 / 1 !important;
     }
     
 </style>
