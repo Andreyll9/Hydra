@@ -38,7 +38,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Sync App with Hydra Relay v2.5 & Apply All Stage 5 Features
+      - name: Sync App with Hydra Relay v2.5 & Apply All Stage 5 Features Safely
         run: |
           cat << 'PYEOF' > sync_relay_v25.py
           import os, re, struct, zlib
@@ -99,7 +99,6 @@ jobs:
           # 2. internal/appcore/contacts.go:
           #    - Чистый код без неиспользуемого "log"
           #    - Автоматическое определение @ника по ключу через /nick/resolve?pub=... на твоём обновлённом VPS!
-          #    - Авто-исправление старых контактов (например, mWfgxc... -> @kira) прямо при вызове GetContacts()!
           contacts_go = '''package appcore
 
           import (
@@ -297,10 +296,9 @@ jobs:
           '''
           with open("internal/appcore/contacts.go", "w", encoding="utf-8") as f:
               f.write(contacts_go)
-          print("[OK] 2. contacts.go: авто-определение @ника по ключу (@kira, @gibel, @sidr) и синхронизация ChatID!")
+          print("[OK] 2. contacts.go записан")
 
           # 3. internal/appcore/messages.go и appcore.go:
-          #    Отправка и приём сообщений напрямую через /relay/send и /relay/poll на твоём обновлённом VPS 191.223.137.164:8085!
           msg_path = "internal/appcore/messages.go"
           if os.path.exists(msg_path):
               with open(msg_path, "r", encoding="utf-8") as f:
@@ -328,9 +326,8 @@ jobs:
               mc = mc.replace(old_send_block, new_send_block)
               with open(msg_path, "w", encoding="utf-8") as f:
                   f.write(mc)
-              print("[OK] 3. messages.go: отправка сообщений переведена напрямую на проверенный /relay/send!")
+              print("[OK] 3. messages.go обновлён")
 
-          # Обновляем версию и Destination = PublicKeyBase64 в internal/appcore (БЕЗ трогания go a.ConnectToI2P() в auth.go!)
           for root, _, files in os.walk("internal/appcore"):
               for fn in files:
                   if fn.endswith(".go"):
@@ -474,7 +471,7 @@ jobs:
                   ac += "\n" + vps_relay_methods
               with open(ac_path, "w", encoding="utf-8") as f:
                   f.write(ac)
-              print("[OK] 4. appcore.go: интегрирован цикл приёма/отправки /relay/poll и /relay/send с энергосбережением!")
+              print("[OK] 4. appcore.go обновлён")
 
           # 4. Обновляем версию APK до 2.5.0-hydra в android/app/build.gradle
           gradle_path = "android/app/build.gradle"
@@ -914,7 +911,7 @@ jobs:
               with open(ch_path, "w", encoding="utf-8") as f:
                   f.write(ch)
 
-          # 7. Settings.svelte
+          # 7. Settings.svelte (БЕЗ ДУБЛИРОВАНИЯ let isRecordingLogs!)
           st_path = "frontend/src/components/Settings.svelte"
           if os.path.exists(st_path):
               with open(st_path, "r", encoding="utf-8") as f:
@@ -930,50 +927,10 @@ jobs:
                   '.destination-box { \n        display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 16px;'
               )
 
-              old_bio = """        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center;">
-                          <div>
-                              <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">👆 Разблокировка по отпечатку пальца</div>
-                              <div style="font-size: 13px; color: #9AA0A6; margin-top: 4px;">Автоматически запрашивать биометрию при входе</div>
-                      <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center;">
-                          <input type="password" placeholder="Ваш ПИН для биометрии..." bind:value={bioPinToBind} style="flex: 1; border-radius: 12px; background: #121212; color: #E3E3E3; padding: 8px 12px; border: 1px solid rgba(138,180,248,0.3); font-size: 12px;" />
-                          <button type="button" on:click={setupAndTestBiometric} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;">
-                              👆 Привязать
-                          </button>
-                      </div>
-                      {#if bioBindStatus}
-                          <div style="margin-top: 6px; font-size: 12px; color: #8AB4F8;">{bioBindStatus}</div>
-                      {/if}
-                          </div>
-                          <input type="checkbox" checked={biometricEnabled} on:change={toggleBiometric} style="width: 22px; height: 22px; accent-color: #8AB4F8;" />
-                      </div>
-                  </div>"""
-
-              new_bio = """        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px; box-sizing: border-box; max-width: 100%;">
-                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
-                          <div style="flex: 1; min-width: 0;">
-                              <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">👆 Разблокировка по отпечатку пальца</div>
-                              <div style="font-size: 13px; color: #9CA3AF; margin-top: 4px;">Автоматически запрашивать биометрию при входе</div>
-                          </div>
-                          <input type="checkbox" checked={biometricEnabled} on:change={toggleBiometric} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
-                      </div>
-                      <div style="margin-top: 12px; display: flex; gap: 8px; align-items: center; width: 100%; box-sizing: border-box;">
-                          <input type="password" placeholder="Ваш ПИН для биометрии..." bind:value={bioPinToBind} style="flex: 1; min-width: 0; border-radius: 12px; background: #121316; color: #E5E7EB; padding: 10px 12px; border: 1px solid rgba(59,130,246,0.3); font-size: 13px; box-sizing: border-box;" />
-                          <button type="button" on:click={setupAndTestBiometric} style="background: #1D4ED8; color: #fff; border: none; border-radius: 100px; padding: 10px 16px; font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap; flex-shrink: 0;">
-                              👆 Привязать
-                          </button>
-                      </div>
-                      {#if bioBindStatus}
-                          <div style="margin-top: 8px; font-size: 12px; color: #60A5FA;">{bioBindStatus}</div>
-                      {/if}
-                  </div>"""
-              st = st.replace(old_bio, new_bio)
-
               if "let hideLastSeenEnabled =" not in st:
-                  priv_js = """
+                  priv_only_js = """
               let hideLastSeenEnabled = localStorage.getItem('hydra_hide_last_seen') === '1';
               let hideNearbyWifiEnabled = localStorage.getItem('hydra_hide_nearby_wifi') === '1';
-              let isRecordingLogs = typeof window !== 'undefined' ? !!window.__hydraLoggingActive : false;
 
               function toggleHideLastSeen() {
                   hideLastSeenEnabled = !hideLastSeenEnabled;
@@ -983,6 +940,12 @@ jobs:
                   hideNearbyWifiEnabled = !hideNearbyWifiEnabled;
                   localStorage.setItem('hydra_hide_nearby_wifi', hideNearbyWifiEnabled ? '1' : '0');
               }
+              """
+                  st = st.replace("let anonStoriesEnabled =", priv_only_js + "\n    let anonStoriesEnabled =", 1)
+
+              if "let isRecordingLogs =" not in st:
+                  rec_only_js = """
+              let isRecordingLogs = typeof window !== 'undefined' ? !!window.__hydraLoggingActive : false;
               function toggleLogRecording() {
                   isRecordingLogs = !isRecordingLogs;
                   if (typeof window !== 'undefined') {
@@ -993,22 +956,44 @@ jobs:
                   }
               }
               """
-                  st = st.replace("let anonStoriesEnabled =", priv_js + "\n    let anonStoriesEnabled =", 1)
+                  st = st.replace("function handleLicenseTap() {", rec_only_js + "\n    function handleLicenseTap() {", 1)
 
-              st = re.sub(r'\{#if devMenuUnlocked\}[\s\S]*?\{/if\}', '', st)
-              st = st.replace('on:click={() => showSecretDevModal = false}', 'on:click={() => { showSecretDevModal = false; licenseTapCount = 0; }}')
+              # На случай если в репозитории уже сохранилось 2 объявления let isRecordingLogs — оставляем строго одно!
+              parts = st.split("let isRecordingLogs =")
+              if len(parts) > 2:
+                  st = parts[0] + "let isRecordingLogs =" + parts[1] + "isRecordingLogs =" + "isRecordingLogs =".join(parts[2:])
 
-              old_lh = """            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 6px; flex-wrap: wrap;">
-                          <span style="font-size: 12px; font-weight: 800; color: #8AB4F8;">🐞 Системный журнал ({settingsLogLines.length})</span>"""
-              new_lh = """            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 6px; flex-wrap: wrap;">
-                          <span style="font-size: 12px; font-weight: 800; color: #60A5FA;">🐞 Системный журнал ({settingsLogLines.length})</span>
-                          <button type="button" on:click={toggleLogRecording} style="background: {isRecordingLogs ? '#ff4757' : '#1D4ED8'}; color: #fff; border: none; border-radius: 100px; padding: 6px 14px; font-size: 11px; font-weight: 800; cursor: pointer;">
-                              {isRecordingLogs ? '⏹ Остановить запись' : '🔴 Начать запись логов'}
-                          </button>"""
-              st = st.replace(old_lh, new_lh)
+              extra_privacy_cards = """
+                  <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                          <div>
+                              <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🕒 Скрывать точное время входа</div>
+                              <div style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">Показывать собеседникам только статус «Был(а) за последние 24ч»</div>
+                          </div>
+                          <input type="checkbox" checked={hideLastSeenEnabled} on:change={toggleHideLastSeen} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
+                      </div>
+                  </div>
+
+                  <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                          <div>
+                              <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">📡 Невидимка в «Люди рядом» (Wi-Fi)</div>
+                              <div style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">Запретить другим пользователям видеть ваш @ник в локальной сети Wi-Fi</div>
+                          </div>
+                          <input type="checkbox" checked={hideNearbyWifiEnabled} on:change={toggleHideNearbyWifi} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
+                      </div>
+                  </div>
+              """
+              if "Скрывать точное время входа" not in st:
+                  st = st.replace(
+                      '<div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px;">\n            <div style="display: flex; justify-content: space-between; align-items: center;">\n                <div>\n                    <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">🕵️ Анонимный просмотр историй (24ч)</div>',
+                      extra_privacy_cards + '\n        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">\n            <div style="display: flex; justify-content: space-between; align-items: center;">\n                <div>\n                    <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🕵️ Анонимный просмотр историй (24ч)</div>',
+                      1
+                  )
 
               with open(st_path, "w", encoding="utf-8") as f:
                   f.write(st)
+              print("[OK] 7. Settings.svelte проверен и очищен от дубликата isRecordingLogs")
 
           # 8. Глобальная замена всех фиолетовых цветов на Тёмно-синий + Тёмно-серый
           purple_to_darkblue = [
@@ -1078,9 +1063,10 @@ jobs:
                   color: #F3F4F6 !important;
               }
               """
-              ap = ap.replace("</style>", darkblue_css + "\n</style>", 1)
-              with open(app_path, "w", encoding="utf-8") as f:
-                  f.write(ap)
+              if "--bg-primary: #121316 !important;" not in ap:
+                  ap = ap.replace("</style>", darkblue_css + "\n</style>", 1)
+                  with open(app_path, "w", encoding="utf-8") as f:
+                      f.write(ap)
           print("[OK] 8. Вся тема переведена в Тёмно-синий + Тёмно-серый графит (v2.5.0-hydra)!")
           PYEOF
           python3 sync_relay_v25.py
