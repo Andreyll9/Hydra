@@ -38,12 +38,12 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply Full Stage 5 Upgrade (Unified Crypto ID, Seed Privacy Fix, Favorites Fix, Real Groups/Channels, Wi-Fi Nearby, 3-Dots Chat Menu, Last Seen & Battery Saver)
+      - name: Sync App with Hydra Relay v2.5 & Apply All Stage 5 Features
         run: |
-          cat << 'PYEOF' > apply_stage5_master.py
+          cat << 'PYEOF' > sync_relay_v25.py
           import os, re, struct, zlib
 
-          # 0. Генерируем фирменную иконку Гидры (Тёмно-синий + Голубой неон на тёмно-сером графите) для Android Launcher и Уведомлений!
+          # 0. Генерируем фирменную иконку Гидры (Тёмно-синий + Голубой неон на тёмно-сером графите) для Android и Уведомлений
           def create_hydra_png(path, size=192):
               raw_data = bytearray()
               cx, cy = size / 2.0, size / 2.0
@@ -54,19 +54,17 @@ jobs:
                   for x in range(size):
                       dx, dy = x - cx, y - cy
                       dist = (dx*dx + dy*dy) ** 0.5
-                      # Фон: тёмно-серый графит #121316, кольцо: тёмно-синий #1D4ED8 и неоновый #60A5FA
                       if dist > r_outer:
                           raw_data.extend((18, 19, 22, 255))
                       elif dist > r_inner:
                           raw_data.extend((29, 78, 216, 255))
                       else:
-                          # Рисуем стилизованный трезубец/корону Гидры в центре
                           nx, ny = dx / r_inner, dy / r_inner
-                          is_center_head = abs(nx) < 0.14 and -0.55 < ny < 0.55
-                          is_left_head = -0.52 < nx < -0.24 and -0.40 < ny < 0.35
-                          is_right_head = 0.24 < nx < 0.52 and -0.40 < ny < 0.35
+                          is_center = abs(nx) < 0.14 and -0.55 < ny < 0.55
+                          is_left = -0.52 < nx < -0.24 and -0.40 < ny < 0.35
+                          is_right = 0.24 < nx < 0.52 and -0.40 < ny < 0.35
                           is_base = abs(nx) < 0.48 and 0.20 < ny < 0.42
-                          if is_center_head or is_left_head or is_right_head or is_base:
+                          if is_center or is_left or is_right or is_base:
                               raw_data.extend((96, 165, 250, 255))
                           else:
                               raw_data.extend((22, 25, 32, 255))
@@ -83,11 +81,9 @@ jobs:
               create_hydra_png(f"android/app/src/main/res/{mip}/ic_launcher_round.png", 192)
               create_hydra_png(f"android/app/src/main/res/{mip}/ic_launcher_foreground.png", 192)
           create_hydra_png("frontend/public/icon.png", 192)
-          print("[OK] 0. Иконка приложения и системных уведомлений Android заменена на эмблему Гидры!")
+          print("[OK] 0. Иконка Гидры сгенерирована")
 
-          # 1. TeleGhostService.kt и MainActivity.kt:
-          #    - Переводим фоновое уведомление сервиса в бесшумный энергосберегающий режим IMPORTANCE_MIN ("🛡️ Hydra E2EE • Энергосбережение")
-          #    - Поддержка всех экранов Android 9+ (API 24..34) без обрезания и расплывания
+          # 1. TeleGhostService.kt: тихое энергосберегающее уведомление с иконкой Гидры
           svc_path = "android/app/src/main/java/com/teleghost/app/TeleGhostService.kt"
           if os.path.exists(svc_path):
               with open(svc_path, "r", encoding="utf-8") as f:
@@ -98,104 +94,445 @@ jobs:
               svc = svc.replace('"Maintaining I2P connection..."', '"Защищённый канал активен (энергосбережение)"')
               with open(svc_path, "w", encoding="utf-8") as f:
                   f.write(svc)
-              print("[OK] 1a. TeleGhostService.kt: уведомление переведено в тихий энергосберегающий режим Hydra")
+              print("[OK] 1. TeleGhostService.kt переведён в тихий режим")
 
-          # 2. internal/appcore/appcore.go и app_auth.go:
-          #    - СИНХРОНИЗАЦИЯ КРИПТО-ID: везде (в GetMyInfo, в Мой адрес и в Настройках сети) возвращаем единый 44-значный PublicKeyBase64!
-          #    - АВТО-СОЗДАНИЕ ПРОФИЛЯ ПРИ ВХОДЕ ПО SEED: чтобы при входе через Seed-ключ НЕ пропадали настройки Приватности!
-          #    - ЭНЕРГОСБЕРЕГАЮЩИЙ ПОЛЛИНГ: в активном режиме опрос раз в 4 сек, в фоне — раз в 20 сек (не сажает батарею!)
-          #    - ЭКСПОРТ АККАУНТА И СОХРАНЕНИЕ МЕДИА В ГАЛЕРЕЮ: при нажатии Экспорт архив сохраняется прямо в Загрузки/Шаринг!
-          for root, _, files in os.walk("internal/appcore"):
-              for fn in files:
-                  if not fn.endswith(".go"):
-                      continue
-                  fp = os.path.join(root, fn)
-                  with open(fp, "r", encoding="utf-8") as f:
-                      gc = f.read()
-                  orig = gc
+          # 2. internal/appcore/contacts.go:
+          #    - Чистый код без неиспользуемого "log"
+          #    - Автоматическое определение @ника по ключу через /nick/resolve?pub=... на твоём обновлённом VPS!
+          #    - Авто-исправление старых контактов (например, mWfgxc... -> @kira) прямо при вызове GetContacts()!
+          contacts_go = '''package appcore
 
-                  # Гарантируем, что в GetMyInfo всегда возвращается эталонный Destination = PublicKeyBase64
-                  if "func (a *AppCore) GetMyInfo()" in gc:
-                      gc = gc.replace(
-                          "Destination: dest,",
-                          "Destination: a.Identity.Keys.PublicKeyBase64,"
-                      )
+          import (
+          	"encoding/json"
+          	"fmt"
+          	"io"
+          	"net/http"
+          	"net/url"
+          	"strings"
+          	"time"
 
-                  # При входе по Seed-фразе (Login) автоматически создаём запись в ProfileManager, если её не было, чтобы GetCurrentProfile() никогда не был nil!
-                  if "func (a *AppCore) Login(mnemonic string) error" in gc and " EnsureProfileForSeed" not in gc:
-                      gc = gc.replace(
-                          "a.ConnectToI2P()",
-                          """if a.ProfileManager != nil && a.Identity != nil && a.Identity.Keys != nil {
-          		if existing, _ := a.ProfileManager.GetProfileByUserID(a.Identity.Keys.UserID); existing == nil {
-          			_, _ = a.ProfileManager.CreateProfile("Hydra User", "", a.Identity.Mnemonic, a.Identity.Keys.UserID, "", false)
+          	"teleghost/internal/core"
+          	"teleghost/internal/core/identity"
+
+          	"github.com/google/uuid"
+          )
+
+          func resolveNickByPubFromVPS(pub string) string {
+          	pub = strings.TrimSpace(pub)
+          	if len(pub) < 32 {
+          		return ""
+          	}
+          	client := &http.Client{Timeout: 3 * time.Second}
+          	resp, err := client.Get("http://191.223.137.164:8085/nick/resolve?pub=" + url.QueryEscape(pub))
+          	if err != nil || resp == nil {
+          		return ""
+          	}
+          	defer resp.Body.Close()
+          	if resp.StatusCode == http.StatusOK {
+          		body, _ := io.ReadAll(resp.Body)
+          		var res map[string]string
+          		if json.Unmarshal(body, &res) == nil && res["nickname"] != "" {
+          			n := strings.TrimPrefix(res["nickname"], "@")
+          			return "@" + n
           		}
           	}
-          	a.ConnectToI2P()"""
-                      )
+          	return ""
+          }
 
-                  if gc != orig:
-                      with open(fp, "w", encoding="utf-8") as f:
-                          f.write(gc)
-                      print("[OK] 2a. Синхронизирован Крипто-ID и профиль при Seed-входе в:", fp)
+          func (a *AppCore) GetContacts() ([]*ContactInfo, error) {
+          	if a.Repo == nil {
+          		return []*ContactInfo{}, nil
+          	}
+          	contacts, err := a.Repo.ListContactsWithLastMessage(a.Ctx)
+          	if err != nil {
+          		return nil, err
+          	}
+          	result := make([]*ContactInfo, len(contacts))
+          	for i, c := range contacts {
+          		updated := false
+          		if c.PublicKey == "" && len(c.I2PAddress) >= 32 {
+          			c.PublicKey = c.I2PAddress
+          			updated = true
+          		}
+          		if c.ChatID == "" && a.Identity != nil && a.Identity.Keys != nil && c.PublicKey != "" {
+          			c.ChatID = identity.CalculateChatID(a.Identity.Keys.PublicKeyBase64, c.PublicKey)
+          			updated = true
+          		}
+          		if (len(c.Nickname) > 28 && !strings.Contains(c.Nickname, " ")) || strings.HasPrefix(c.Nickname, "Unknown") || strings.HasPrefix(c.Nickname, "Контакт ") {
+          			if resolved := resolveNickByPubFromVPS(c.I2PAddress); resolved != "" {
+          				c.Nickname = resolved
+          				updated = true
+          			}
+          		}
+          		if updated {
+          			_ = a.Repo.SaveContact(a.Ctx, c)
+          		}
+          		info := &ContactInfo{
+          			ID:          c.ID,
+          			Nickname:    c.Nickname,
+          			Bio:         c.Bio,
+          			Avatar:      a.formatAvatarURL(c.Avatar),
+          			I2PAddress:  c.I2PAddress,
+          			PublicKey:   c.PublicKey,
+          			ChatID:      c.ChatID,
+          			IsBlocked:   c.IsBlocked,
+          			IsVerified:  c.IsVerified,
+          			UnreadCount: c.UnreadCount,
+          		}
+          		if c.LastMessage != "" {
+          			info.LastMessage = c.LastMessage
+          			tm := c.LastMessageTime
+          			info.LastMessageTime = &tm
+          		}
+          		result[i] = info
+          	}
+          	return result, nil
+          }
+
+          func (a *AppCore) AddContact(name, destination string) (*ContactInfo, error) {
+          	if a.Repo == nil || a.Identity == nil || a.Identity.Keys == nil {
+          		return nil, fmt.Errorf("not logged in")
+          	}
+          	name = strings.TrimSpace(name)
+          	destination = strings.TrimSpace(destination)
+
+          	if strings.HasPrefix(destination, "@") || (len(destination) >= 3 && len(destination) < 32 && !strings.Contains(destination, "/")) {
+          		cleanNick := strings.ToLower(strings.TrimPrefix(destination, "@"))
+          		client := &http.Client{Timeout: 8 * time.Second}
+          		resp, err := client.Get("http://191.223.137.164:8085/nick/resolve?nick=" + url.QueryEscape(cleanNick))
+          		if err != nil {
+          			return nil, fmt.Errorf("нет связи с сервером никнеймов: %v", err)
+          		}
+          		defer resp.Body.Close()
+          		if resp.StatusCode != http.StatusOK {
+          			return nil, fmt.Errorf("пользователь @%s не найден на сервере", cleanNick)
+          		}
+          		body, _ := io.ReadAll(resp.Body)
+          		var res map[string]string
+          		if json.Unmarshal(body, &res) == nil && res["pub_key"] != "" {
+          			destination = strings.TrimSpace(res["pub_key"])
+          			if name == "" || strings.HasPrefix(name, "Контакт ") || len(name) > 28 {
+          				name = "@" + cleanNick
+          			}
+          		}
+          	}
+
+          	if len(destination) < 32 {
+          		return nil, fmt.Errorf("некорректный ID ключ Hydra (введите @никнейм или отсканируйте QR-код)")
+          	}
+
+          	if name == "" || (len(name) > 28 && !strings.Contains(name, " ")) || strings.HasPrefix(name, "Контакт ") {
+          		if resolved := resolveNickByPubFromVPS(destination); resolved != "" {
+          			name = resolved
+          		} else if name == "" || len(name) > 28 {
+          			name = "Контакт " + destination[:6]
+          		}
+          	}
+
+          	myPub := a.Identity.Keys.PublicKeyBase64
+          	chatID := identity.CalculateChatID(myPub, destination)
+
+          	if existing, _ := a.Repo.GetContactByPublicKey(a.Ctx, destination); existing != nil {
+          		existing.Nickname = name
+          		existing.I2PAddress = destination
+          		existing.PublicKey = destination
+          		existing.ChatID = chatID
+          		_ = a.Repo.SaveContact(a.Ctx, existing)
+          		a.Emitter.Emit("contact_updated")
+          		return &ContactInfo{
+          			ID:         existing.ID,
+          			Nickname:   existing.Nickname,
+          			I2PAddress: existing.I2PAddress,
+          			PublicKey:  existing.PublicKey,
+          			ChatID:     existing.ChatID,
+          		}, nil
+          	}
+
+          	contact := &core.Contact{
+          		ID:         uuid.New().String(),
+          		Nickname:   name,
+          		I2PAddress: destination,
+          		PublicKey:  destination,
+          		ChatID:     chatID,
+          		AddedAt:    time.Now(),
+          		UpdatedAt:  time.Now(),
+          	}
+          	if err := a.Repo.SaveContact(a.Ctx, contact); err != nil {
+          		return nil, err
+          	}
+          	if a.Messenger != nil {
+          		go func(dst string) { _ = a.Messenger.SendHandshake(dst) }(destination)
+          	}
+          	a.Emitter.Emit("contact_updated")
+          	return &ContactInfo{
+          		ID:         contact.ID,
+          		Nickname:   contact.Nickname,
+          		I2PAddress: contact.I2PAddress,
+          		PublicKey:  contact.PublicKey,
+          		ChatID:     contact.ChatID,
+          	}, nil
+          }
+
+          func (a *AppCore) AddContactFromClipboard(name string) (*ContactInfo, error) {
+          	data, err := a.Platform.ClipboardGet()
+          	if err != nil {
+          		return nil, fmt.Errorf("clipboard error: %w", err)
+          	}
+          	if data == "" {
+          		return nil, fmt.Errorf("clipboard is empty")
+          	}
+          	return a.AddContact(name, data)
+          }
+
+          func (a *AppCore) DeleteContact(id string) error {
+          	if a.Repo == nil {
+          		return fmt.Errorf("not logged in")
+          	}
+          	err := a.Repo.DeleteContact(a.Ctx, id)
+          	if err == nil {
+          		a.Emitter.Emit("contact_updated")
+          	}
+          	return err
+          }
+          '''
+          with open("internal/appcore/contacts.go", "w", encoding="utf-8") as f:
+              f.write(contacts_go)
+          print("[OK] 2. contacts.go: авто-определение @ника по ключу (@kira, @gibel, @sidr) и синхронизация ChatID!")
+
+          # 3. internal/appcore/messages.go и appcore.go:
+          #    Отправка и приём сообщений напрямую через /relay/send и /relay/poll на твоём обновлённом VPS 191.223.137.164:8085!
+          msg_path = "internal/appcore/messages.go"
+          if os.path.exists(msg_path):
+              with open(msg_path, "r", encoding="utf-8") as f:
+                  mc = f.read()
+
+              old_send_block = """	if contactID != a.Identity.Keys.UserID {
+          		if err := a.Messenger.SendTextMessageWithID(contact.I2PAddress, contact.ChatID, msgID, text, replyToID); err != nil {
+          			log.Printf("[AppCore] SendTextMessage error to %s: %v", contact.Nickname, err)
+          			return fmt.Errorf("send failed: %w", err)
+          		}
+          	}"""
+
+              new_send_block = """	if contactID != a.Identity.Keys.UserID {
+          		if relayErr := a.SendViaVPSRelay(contact.I2PAddress, contact.ChatID, msgID, text, replyToID); relayErr != nil {
+          			log.Printf("[AppCore] VPS Relay error to %s: %v, trying fallback messenger...", contact.Nickname, relayErr)
+          			if a.Messenger != nil {
+          				if err := a.Messenger.SendTextMessageWithID(contact.I2PAddress, contact.ChatID, msgID, text, replyToID); err != nil {
+          					return fmt.Errorf("ошибка отправки: %w", relayErr)
+          				}
+          			} else {
+          				return fmt.Errorf("нет связи с релеем: %w", relayErr)
+          			}
+          		}
+          	}"""
+              mc = mc.replace(old_send_block, new_send_block)
+              with open(msg_path, "w", encoding="utf-8") as f:
+                  f.write(mc)
+              print("[OK] 3. messages.go: отправка сообщений переведена напрямую на проверенный /relay/send!")
+
+          # Обновляем версию и Destination = PublicKeyBase64 в internal/appcore (БЕЗ трогания go a.ConnectToI2P() в auth.go!)
+          for root, _, files in os.walk("internal/appcore"):
+              for fn in files:
+                  if fn.endswith(".go"):
+                      fp = os.path.join(root, fn)
+                      with open(fp, "r", encoding="utf-8") as f:
+                          gc = f.read()
+                      orig = gc
+                      gc = gc.replace('"2.0.0-hydra"', '"2.5.0-hydra"')
+                      gc = gc.replace('"1.0.2-beta"', '"2.5.0-hydra"')
+                      if "func (a *AppCore) GetMyInfo()" in gc:
+                          gc = gc.replace("Destination: dest,", "Destination: a.Identity.Keys.PublicKeyBase64,")
+                      if gc != orig:
+                          with open(fp, "w", encoding="utf-8") as f:
+                              f.write(gc)
 
           ac_path = "internal/appcore/appcore.go"
           if os.path.exists(ac_path):
               with open(ac_path, "r", encoding="utf-8") as f:
                   ac = f.read()
+              if '"net/url"' not in ac:
+                  ac = ac.replace('"net/http"', '"net/http"\n\t"net/url"', 1)
 
-              # Если GetCurrentProfile не нашёл профиль в списке (например, после входа по Seed), возвращаем виртуальный профиль текущего пользователя, чтобы вкладка Приватность ВСЕГДА отображалась полностью!
-              old_get_prof = """	return nil
-          }"""
-              new_get_prof = """	if a.Identity != nil && a.Identity.Keys != nil {
-          		return map[string]interface{}{
-          			"id":           a.Identity.Keys.UserID,
-          			"display_name": "Hydra Account",
-          			"user_id":      a.Identity.Keys.UserID,
-          			"avatar_path":  "",
-          			"use_pin":      true,
-          		}
-          	}
-          	return nil
-          }"""
               ac = ac.replace(
-                  '	for _, p := range profilesList {\n\t\tif p.UserID == a.Identity.Keys.UserID {\n\t\t\treturn map[string]interface{}{\n\t\t\t\t"id":           p.ID,\n\t\t\t\t"display_name": p.DisplayName,\n\t\t\t\t"user_id":      p.UserID,\n\t\t\t\t"avatar_path":  a.formatProfileAvatarURL(p.UserID, p.AvatarPath),\n\t\t\t\t"use_pin":      p.UsePin,\n\t\t\t}\n\t\t}\n\t}\n\treturn nil\n}',
-                  '	for _, p := range profilesList {\n\t\tif p.UserID == a.Identity.Keys.UserID {\n\t\t\treturn map[string]interface{}{\n\t\t\t\t"id":           p.ID,\n\t\t\t\t"display_name": p.DisplayName,\n\t\t\t\t"user_id":      p.UserID,\n\t\t\t\t"avatar_path":  a.formatProfileAvatarURL(p.UserID, p.AvatarPath),\n\t\t\t\t"use_pin":      p.UsePin,\n\t\t\t}\n\t\t}\n\t}\n' + new_get_prof
+                  '	if err := a.Messenger.Start(a.Ctx); err != nil {\n\t\ta.SetNetworkStatus(StatusError)\n\t\treturn\n\t}',
+                  '	if err := a.Messenger.Start(a.Ctx); err != nil {\n\t\tlog.Printf("[AppCore] Using Direct VPS Relay v2.5 (191.223.137.164:8085)")\n\t}\n\ta.SetNetworkStatus(StatusOnline)\n\tgo a.StartVPSRelayLoop()'
               )
 
-              # В ExportAccount автоматически вызываем a.Platform.ShareFile(zipPath), чтобы на Android сразу открывалось сохранение/отправка бэкапа (со всеми чатами и медиа!)
+              ac = ac.replace(
+                  '	for _, p := range profilesList {\n\t\tif p.UserID == a.Identity.Keys.UserID {\n\t\t\treturn map[string]interface{}{\n\t\t\t\t"id":           p.ID,\n\t\t\t\t"display_name": p.DisplayName,\n\t\t\t\t"user_id":      p.UserID,\n\t\t\t\t"avatar_path":  a.formatProfileAvatarURL(p.UserID, p.AvatarPath),\n\t\t\t\t"use_pin":      p.UsePin,\n\t\t\t}\n\t\t}\n\t}\n\treturn nil\n}',
+                  '	for _, p := range profilesList {\n\t\tif p.UserID == a.Identity.Keys.UserID {\n\t\t\treturn map[string]interface{}{\n\t\t\t\t"id":           p.ID,\n\t\t\t\t"display_name": p.DisplayName,\n\t\t\t\t"user_id":      p.UserID,\n\t\t\t\t"avatar_path":  a.formatProfileAvatarURL(p.UserID, p.AvatarPath),\n\t\t\t\t"use_pin":      p.UsePin,\n\t\t\t}\n\t\t}\n\t}\n\tif a.Identity != nil && a.Identity.Keys != nil {\n\t\treturn map[string]interface{}{\n\t\t\t"id":           a.Identity.Keys.UserID,\n\t\t\t"display_name": "Hydra Account",\n\t\t\t"user_id":      a.Identity.Keys.UserID,\n\t\t\t"avatar_path":  "",\n\t\t\t"use_pin":      true,\n\t\t}\n\t}\n\treturn nil\n}'
+              )
+
               ac = ac.replace(
                   "return zipPath, nil\n}",
                   "if a.Platform != nil {\n\t\t_ = a.Platform.ShareFile(zipPath)\n\t}\n\treturn zipPath, nil\n}",
                   1
               )
 
-              # Увеличиваем интервал фоновых проверок для экономии батареи (вместо каждой секунды -> 6 сек активно / 20 сек в фоне)
-              ac = ac.replace("time.Sleep(2 * time.Second)", "if a.IsFocused { time.Sleep(5 * time.Second) } else { time.Sleep(18 * time.Second) }")
-              ac = ac.replace("time.Sleep(10 * time.Second)", "time.Sleep(45 * time.Second)")
+              vps_relay_methods = '''
+          func (a *AppCore) SendViaVPSRelay(toPub, chatID, msgID, text, replyToID string) error {
+          	if a.Identity == nil || a.Identity.Keys == nil {
+          		return fmt.Errorf("no identity")
+          	}
+          	myPub := a.Identity.Keys.PublicKeyBase64
+          	myNick := ""
+          	if u, _ := a.Repo.GetMyProfile(a.Ctx); u != nil {
+          		myNick = u.Nickname
+          	}
+          	env := map[string]interface{}{
+          		"id":          msgID,
+          		"from":        myPub,
+          		"from_nick":   myNick,
+          		"to":          strings.TrimSpace(toPub),
+          		"chat_id":     chatID,
+          		"content":     text,
+          		"reply_to_id": replyToID,
+          		"timestamp":   time.Now().UnixMilli(),
+          	}
+          	raw, _ := json.Marshal(env)
+          	client := &http.Client{Timeout: 8 * time.Second}
+          	resp, err := client.Post("http://191.223.137.164:8085/relay/send", "application/json", bytes.NewReader(raw))
+          	if err != nil {
+          		return err
+          	}
+          	defer resp.Body.Close()
+          	if resp.StatusCode != http.StatusOK {
+          		return fmt.Errorf("relay status %d", resp.StatusCode)
+          	}
+          	return nil
+          }
 
+          func (a *AppCore) StartVPSRelayLoop() {
+          	seenIDs := make(map[string]bool)
+          	client := &http.Client{Timeout: 8 * time.Second}
+          	for {
+          		select {
+          		case <-a.Ctx.Done():
+          			return
+          		default:
+          		}
+          		if a.Identity != nil && a.Identity.Keys != nil && a.Repo != nil {
+          			myPub := a.Identity.Keys.PublicKeyBase64
+          			resp, err := client.Get("http://191.223.137.164:8085/relay/poll?pub=" + url.QueryEscape(myPub))
+          			if err == nil && resp != nil {
+          				if resp.StatusCode == http.StatusOK {
+          					var items []map[string]interface{}
+          					if json.NewDecoder(resp.Body).Decode(&items) == nil {
+          						for _, item := range items {
+          							mID, _ := item["id"].(string)
+          							fromPub, _ := item["from"].(string)
+          							fromNick, _ := item["from_nick"].(string)
+          							content, _ := item["content"].(string)
+          							replyTo, _ := item["reply_to_id"].(string)
+          							if mID == "" || fromPub == "" || seenIDs[mID] {
+          								continue
+          							}
+          							seenIDs[mID] = true
+          							if existing, _ := a.Repo.GetMessage(a.Ctx, mID); existing != nil {
+          								continue
+          							}
+          							msg := &core.Message{
+          								ID:          mID,
+          								SenderID:    fromPub,
+          								SenderAddr:  fromPub,
+          								Content:     content,
+          								ContentType: "text",
+          								Status:      core.MessageStatusDelivered,
+          								IsOutgoing:  false,
+          								Timestamp:   time.Now().UnixMilli(),
+          								CreatedAt:   time.Now(),
+          								UpdatedAt:   time.Now(),
+          							}
+          							if replyTo != "" {
+          								msg.ReplyToID = &replyTo
+          							}
+          							a.OnMessageReceived(msg, fromPub, fromPub)
+          							if fromNick != "" {
+          								if c, _ := a.Repo.GetContactByPublicKey(a.Ctx, fromPub); c != nil {
+          									if strings.HasPrefix(c.Nickname, "Unknown") || len(c.Nickname) > 28 {
+          										c.Nickname = fromNick
+          										_ = a.Repo.SaveContact(a.Ctx, c)
+          										a.Emitter.Emit("contact_updated")
+          									}
+          								}
+          							}
+          						}
+          					}
+          				}
+          				resp.Body.Close()
+          			}
+          		}
+          		if a.IsFocused {
+          			time.Sleep(3 * time.Second)
+          		} else {
+          			time.Sleep(15 * time.Second)
+          		}
+          	}
+          }
+          '''
+              if "func (a *AppCore) SendViaVPSRelay(" not in ac:
+                  ac += "\n" + vps_relay_methods
               with open(ac_path, "w", encoding="utf-8") as f:
                   f.write(ac)
-              print("[OK] 2b. appcore.go: GetCurrentProfile всегда возвращает объект для Seed-входа, включено энергосбережение сокета и авто-шаринг ZIP-бэкапа")
+              print("[OK] 4. appcore.go: интегрирован цикл приёма/отправки /relay/poll и /relay/send с энергосбережением!")
 
-          # 3. frontend/src/App.svelte:
-          #    - ЧИНИМ ЧЁРНЫЙ ЭКРАН ПРИ НАЖАТИИ НА "ИЗБРАННОЕ"!
-          #      1) Убираем сброс selectedContact = null при повторном клике на контакт!
-          #      2) В loadMessages(contactId) корректно обрабатываем Избранное (даже когда его нет в массиве contacts)!
-          #      3) Привязываем QRModal и Settings к единому крипто-ключу myDestination = currentUserInfo?.PublicKey || currentUserInfo?.Destination!
-          #      4) В onSaveFolder: если пользователь создаёт 👥 Группу или 📢 Канал, создаём НАСТОЯЩИЙ ЧАТ Группы/Канала в списке чатов, а не просто папку!
+          # 4. Обновляем версию APK до 2.5.0-hydra в android/app/build.gradle
+          gradle_path = "android/app/build.gradle"
+          if os.path.exists(gradle_path):
+              with open(gradle_path, "r", encoding="utf-8") as f:
+                  bg = f.read()
+              bg = re.sub(r'versionCode\s+\d+', 'versionCode 25', bg)
+              bg = re.sub(r'versionName\s+"[^"]+"', 'versionName "2.5.0-hydra"', bg)
+              with open(gradle_path, "w", encoding="utf-8") as f:
+                  f.write(bg)
+
+          # 5. Обновляем фронтенд (Svelte):
+          hydra_svg = """<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="32" cy="32" r="30" stroke="#3B82F6" stroke-width="2.5" fill="#121316"/><path d="M32 12C25 12 20 17 20 24C20 29 23 33 26 36L22 50H42L38 36C41 33 44 29 44 24C44 17 39 12 32 12Z" stroke="#60A5FA" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="rgba(29,78,216,0.22)"/><path d="M20 26C14 24 10 19 12 13C15 15 19 18 21 22" stroke="#60A5FA" stroke-width="2.5" stroke-linecap="round"/><path d="M44 26C50 24 54 19 52 13C49 15 45 18 43 22" stroke="#60A5FA" stroke-width="2.5" stroke-linecap="round"/><circle cx="28" cy="23" r="2" fill="#60A5FA"/><circle cx="36" cy="23" r="2" fill="#60A5FA"/><path d="M27 30C29 32 35 32 37 30" stroke="#60A5FA" stroke-width="2" stroke-linecap="round"/></svg>"""
+
+          icons_path = "frontend/src/Icons.js"
+          if os.path.exists(icons_path):
+              with open(icons_path, "r", encoding="utf-8") as f:
+                  ic = f.read()
+              ic = re.sub(r"Ghost:\s*`[\s\S]*?`", f"Ghost: `{hydra_svg}`", ic)
+              with open(icons_path, "w", encoding="utf-8") as f:
+                  f.write(ic)
+
+          auth_path = "frontend/src/components/Auth.svelte"
+          if os.path.exists(auth_path):
+              with open(auth_path, "r", encoding="utf-8") as f:
+                  au = f.read()
+              au = au.replace(
+                  '<img src="/icon.png" alt="Hydra" class="rounded-full shadow-lg" style="width: 80px; height: 80px; filter: drop-shadow(0 0 20px rgba(99, 102, 241, 0.4)); object-fit: cover; border: 2px solid rgba(255,255,255,0.1);" />',
+                  f'<div style="width: 84px; height: 84px; margin: 0 auto; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 24px rgba(29,78,216,0.35);">{hydra_svg}</div>'
+              )
+              with open(auth_path, "w", encoding="utf-8") as f:
+                  f.write(au)
+
+          idx_path = "frontend/index.html"
+          if os.path.exists(idx_path):
+              with open(idx_path, "r", encoding="utf-8") as f:
+                  ih = f.read()
+              if "window.__hydraLoggingActive" not in ih:
+                  ih = ih.replace(
+                      "window.__hydraLogList = [];",
+                      "window.__hydraLogList = [];\n    window.__hydraLoggingActive = localStorage.getItem('hydra_rec_logs') === '1';"
+                  )
+                  ih = ih.replace(
+                      "window.__addHydraLog = function(tag, msg) {\n      var d = new Date();",
+                      "window.__addHydraLog = function(tag, msg) {\n      if (!window.__hydraLoggingActive && tag !== 'LOG-CTRL') return;\n      var d = new Date();"
+                  )
+              with open(idx_path, "w", encoding="utf-8") as f:
+                  f.write(ih)
+
           app_path = "frontend/src/App.svelte"
           if os.path.exists(app_path):
               with open(app_path, "r", encoding="utf-8") as f:
                   ap = f.read()
-
-              # 3.1. Синхронизируем myDestination с PublicKey в loadMyInfo()
               ap = ap.replace(
                   "myDestination = info.Destination;\n          identity = info.ID;",
                   "myDestination = info.PublicKey || info.Destination;\n          identity = info.ID;"
               )
-
-              # 3.2. Чиним selectContact (убираем сброс в null при клике на тот же чат, из-за которого Избранное давало чёрный экран!)
-              old_sel_contact = """  function selectContact(contact) {
+              old_sel = """  function selectContact(contact) {
                 if (!contact) {
                     selectedContact = null;
                     messages = [];
@@ -208,8 +545,7 @@ jobs:
                     AppActions.SetActiveChat("");
                     return;
                 }"""
-
-              new_sel_contact = """  function selectContact(contact) {
+              new_sel = """  function selectContact(contact) {
                 if (!contact) {
                     selectedContact = null;
                     messages = [];
@@ -221,10 +557,9 @@ jobs:
                     contact.ChatID = identity || 'favorites_self';
                     contact.IsFavorites = true;
                 }"""
-              ap = ap.replace(old_sel_contact, new_sel_contact)
+              ap = ap.replace(old_sel, new_sel)
 
-              # 3.3. В onSaveFolder: если имя начинается с '👥 ' (Группа) или '📢 ' (Канал), создаём настоящий чат Группы или Канала с настройками и добавляем его в список чатов!
-              old_save_folder = """      onSaveFolder: async () => {
+              old_sf = """      onSaveFolder: async () => {
                     if (isEditingFolder) {
                         await AppActions.UpdateFolder(currentFolderData.ID, currentFolderData.Name, currentFolderData.Icon);
                     } else {
@@ -233,27 +568,14 @@ jobs:
                     showFolderModal = false;
                     loadContacts();
                 },"""
-
-              new_save_folder = """      onSaveFolder: async () => {
+              new_sf = """      onSaveFolder: async () => {
                     const rawName = (currentFolderData.Name || '').trim();
                     if (!isEditingFolder && (rawName.startsWith('👥 ') || rawName.startsWith('📢 '))) {
                         const isChan = rawName.startsWith('📢 ');
-                        // Генерируем уникальный 44-символьный крипто-ключ комнаты Группы/Канала
                         const roomSeed = btoa(unescape(encodeURIComponent('HYDRA_ROOM_' + rawName + '_' + Date.now()))).replace(/=/g, '') + '00000000000000000000000000000000';
                         const roomKey = roomSeed.slice(0, 43) + '=';
                         try {
-                            const createdRoom = await AppActions.AddContact(rawName, roomKey);
-                            if (createdRoom) {
-                                const metaKey = 'hydra_room_meta_' + (createdRoom.ID || roomKey);
-                                localStorage.setItem(metaKey, JSON.stringify({
-                                    type: isChan ? 'channel' : 'group',
-                                    title: rawName,
-                                    admin: myDestination || identity,
-                                    members: [profileNickname || 'Вы (Создатель)'],
-                                    onlyAdminCanPost: isChan,
-                                    createdAt: Date.now()
-                                }));
-                            }
+                            await AppActions.AddContact(rawName, roomKey);
                             showFolderModal = false;
                             await loadContacts();
                             showToast(isChan ? '📢 Канал создан в списке чатов!' : '👥 Группа создана в списке чатов!', 'success');
@@ -270,48 +592,38 @@ jobs:
                     showFolderModal = false;
                     loadContacts();
                 },"""
-              ap = ap.replace(old_save_folder, new_save_folder)
-
-              # 3.4. Публикуем штамп разблокировки приложения (для подтверждённого статуса "Был(а) за последние 24ч") и уменьшаем частоту опроса статуса сети с 10с до 30с для экономии батареи
-              ap = ap.replace(
-                  "setInterval(async () => {\n              const status = await AppActions.GetNetworkStatus();\n              if (status !== networkStatus) {\n                  console.log(\"[App] Polled network status changed:\", status);\n                  networkStatus = status;\n              }\n          }, 10 * 1000);",
-                  """// Отправляем подтверждённый сигнал разблокировки приложения для статуса присутствия (24ч)
-                    localStorage.setItem('hydra_last_unlock_ts', String(Date.now()));
-                    setInterval(async () => {
-                        if (document.visibilityState === 'hidden') return;
-                        const status = await AppActions.GetNetworkStatus();
-                        if (status !== networkStatus) networkStatus = status;
-                    }, 30 * 1000);"""
-              )
-
+              ap = ap.replace(old_sf, new_sf)
               with open(app_path, "w", encoding="utf-8") as f:
                   f.write(ap)
-              print("[OK] 3. App.svelte: починено Избранное, синхронизирован Крипто-ID и создание реальных Групп/Каналов")
 
-          # 4. frontend/src/components/Modals.svelte:
-          #    Исправляем обрезанную кнопку "Создать" на скриншоте 1 (делаем компактные кнопки в modal-footer)
           md_path = "frontend/src/components/Modals.svelte"
           if os.path.exists(md_path):
               with open(md_path, "r", encoding="utf-8") as f:
                   md = f.read()
+              if "import jsQR" not in md:
+                  md = md.replace("import { Icons } from '../Icons.js';", "import jsQR from 'jsqr';\n    import { Icons } from '../Icons.js';", 1)
+              if "function formatHydraKey(" not in md:
+                  md = md.replace("</script>", """
+              function formatHydraKey(raw) {
+                  if (!raw) return '';
+                  const clean = String(raw).trim();
+                  if (clean.startsWith('HYDRA-KEY-')) return clean;
+                  try { return 'HYDRA-KEY-' + btoa(unescape(encodeURIComponent(clean))).replace(/=/g, ''); } catch (e) { return 'HYDRA-KEY-' + clean; }
+              }
+              </script>""", 1)
               md = md.replace(
                   ".modal-footer { display: flex; gap: 12px; margin-top: 24px; }",
-                  ".modal-footer { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; justify-content: flex-end; }\n    .modal-footer .btn-small { padding: 10px 16px; font-size: 13px; flex: 1; min-width: 85px; text-align: center; }"
+                  ".modal-footer { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; justify-content: flex-end; }\n    .modal-footer .btn-small { padding: 10px 14px; font-size: 13px; flex: 1; min-width: 85px; text-align: center; }"
               )
               with open(md_path, "w", encoding="utf-8") as f:
                   f.write(md)
-              print("[OK] 4. Modals.svelte: выровнены кнопки Удалить / Отмена / Создать, чтобы не вылезали за край")
 
-          # 5. frontend/src/components/Sidebar.svelte:
-          #    Добавляем функцию "📡 Люди рядом (только по Wi-Fi)"!
-          #    Если оба телефона на одном Wi-Fi (и функция не скрыта в настройках Приватности), показывает их @ники без необходимости знать крипто-ключ!
           sb_path = "frontend/src/components/Sidebar.svelte"
           if os.path.exists(sb_path):
               with open(sb_path, "r", encoding="utf-8") as f:
                   sb = f.read()
-
-              nearby_js = """
-              // === ЭТАП 5: ЛЮДИ РЯДОМ (ТОЛЬКО ПО ЛОКАЛЬНОЙ СЕТИ WI-FI) ===
+              if "function openNearbyWifiRadar()" not in sb:
+                  nearby_js = """
               let showNearbyWifiModal = false;
               let nearbyWifiUsers = [];
               let isScanningNearby = false;
@@ -341,7 +653,6 @@ jobs:
                       const myNick = (myInfo?.Nickname || '').trim();
                       const myPub = (myInfo?.PublicKey || myInfo?.Destination || identity || '').trim();
 
-                      // Регистрируем наше присутствие в локальной Wi-Fi комнате подсети (только если не скрыто в настройках)
                       if (!hideMe && myNick && myPub) {
                           await fetch('http://191.223.137.164:8085/relay/send', {
                               method: 'POST',
@@ -352,13 +663,12 @@ jobs:
                                   from_nick: myNick.startsWith('@') ? myNick : ('@' + myNick),
                                   to: 'WIFI_SUBNET_' + subnet,
                                   chat_id: 'WIFI_NEARBY',
-                                  content: JSON.stringify({ subnet, nick: myNick, pub: myPub, ts: Date.now() }),
+                                  content: 'WIFI_BEACON',
                                   timestamp: Date.now()
                               })
                           }).catch(() => {});
                       }
 
-                      // Запрашиваем список активных пиров в этой же Wi-Fi подсети
                       const r = await fetch('http://191.223.137.164:8085/relay/poll?pub=' + encodeURIComponent('WIFI_SUBNET_' + subnet));
                       if (r.ok) {
                           const items = await r.json();
@@ -370,9 +680,7 @@ jobs:
                           }
                           nearbyWifiUsers = Object.values(mapByPub);
                       }
-                  } catch (e) {
-                      console.warn('Nearby Wi-Fi scan error:', e);
-                  } finally {
+                  } catch (e) {} finally {
                       isScanningNearby = false;
                   }
               }
@@ -382,66 +690,51 @@ jobs:
                       await AppActions.AddContact(u.nick, u.pub);
                       showNearbyWifiModal = false;
                       location.reload();
-                  } catch (e) {
-                      alert('Ошибка подключения: ' + e);
-                  }
+                  } catch (e) { alert('Ошибка: ' + e); }
               }
               """
-              if "function openNearbyWifiRadar()" not in sb:
                   sb = sb.replace("</script>", nearby_js + "\n</script>", 1)
 
-              # Добавляем кнопку "📡 Люди рядом (Wi-Fi)" рядом с "+ Сторис 24ч" в мобильной и десктопной ленте
-              nearby_circle_btn = """
+                  nearby_btn = """
                   <div on:click={openNearbyWifiRadar} role="button" tabindex="0" on:keydown={(e) => e.key === 'Enter' && openNearbyWifiRadar()} style="display: flex; flex-direction: column; align-items: center; cursor: pointer; min-width: 68px;">
-                      <div style="width: 52px; height: 52px; border-radius: 50%; background: linear-gradient(135deg, #172554, #1E3A8A); border: 2px solid #60A5FA; display: flex; align-items: center; justify-content: center; font-size: 22px; color: #fff; box-shadow: 0 4px 12px rgba(29,78,216,0.35);">📡</div>
+                      <div style="width: 52px; height: 52px; border-radius: 50%; background: linear-gradient(135deg, #172554, #1E3A8A); border: 2px solid #60A5FA; display: flex; align-items: center; justify-content: center; font-size: 22px; color: #fff;">📡</div>
                       <span style="font-size: 11px; color: #60A5FA; font-weight: 600; margin-top: 4px; white-space: nowrap;">Люди рядом</span>
                   </div>"""
+                  sb = sb.replace(
+                      '<span style="font-size: 11px; color: #8AB4F8; font-weight: 600; margin-top: 4px; white-space: nowrap;">+ Сторис 24ч</span>\n            </div>',
+                      '<span style="font-size: 11px; color: #8AB4F8; font-weight: 600; margin-top: 4px; white-space: nowrap;">+ Сторис 24ч</span>\n            </div>\n' + nearby_btn,
+                      1
+                  )
 
-              sb = sb.replace(
-                  '<span style="font-size: 11px; color: #8AB4F8; font-weight: 600; margin-top: 4px; white-space: nowrap;">+ Сторис 24ч</span>\n            </div>',
-                  '<span style="font-size: 11px; color: #8AB4F8; font-weight: 600; margin-top: 4px; white-space: nowrap;">+ Сторис 24ч</span>\n            </div>\n' + nearby_circle_btn,
-                  1
-              )
-
-              nearby_modal_html = """
+                  nearby_modal = """
           {#if showNearbyWifiModal}
-              <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.92); backdrop-filter: blur(12px); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+              <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
                   <div style="background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 24px; padding: 20px; width: 100%; max-width: 380px;">
                       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                          <h3 style="margin: 0; color: #E5E7EB; font-size: 17px;">📡 Люди рядом (Wi-Fi радар)</h3>
-                          <button type="button" on:click={() => showNearbyWifiModal = false} style="background: #28292D; color: #fff; border: none; border-radius: 50%; width: 32px; height: 32px; cursor: pointer;">✕</button>
+                          <h3 style="margin: 0; color: #E5E7EB; font-size: 17px;">📡 Люди рядом (только по Wi-Fi)</h3>
+                          <button type="button" on:click={() => showNearbyWifiModal = false} style="background: #28292D; color: #fff; border: none; border-radius: 50%; width: 32px; height: 32px;">✕</button>
                       </div>
-                      <p style="font-size: 12px; color: #9CA3AF; margin: 0 0 14px;">
-                          Показывает только @никнеймы пользователей Hydra в вашей локальной сети Wi-Fi без раскрытия крипто-ключей.
-                      </p>
-
+                      <p style="font-size: 12px; color: #9CA3AF; margin: 0 0 14px;">Показывает только @никнеймы пользователей Hydra в вашей сети Wi-Fi без раскрытия крипто-ключей.</p>
                       {#if !myWifiSubnetIp}
-                          <div style="padding: 16px; border-radius: 16px; background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3); color: #FCA5A5; font-size: 13px; text-align: center; margin-bottom: 14px;">
-                              ⚠️ Функция работает строго по Wi-Fi. Подключитесь к роутеру Wi-Fi для поиска людей вокруг.
-                          </div>
+                          <div style="padding: 16px; border-radius: 16px; background: rgba(239,68,68,0.12); color: #FCA5A5; font-size: 13px; text-align: center;">⚠️ Подключитесь к Wi-Fi для обнаружения людей рядом.</div>
                       {:else}
-                          <div style="padding: 10px 12px; border-radius: 12px; background: #121316; border: 1px solid rgba(59,130,246,0.2); font-size: 12px; color: #60A5FA; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
-                              <span>🟢 Сеть Wi-Fi: <b>{myWifiSubnetIp}</b></span>
-                              <button type="button" on:click={scanNearbyWifiPeers} style="background: #1E3A8A; color: #fff; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; cursor: pointer;">🔄 Поиск</button>
+                          <div style="padding: 10px 12px; border-radius: 12px; background: #121316; font-size: 12px; color: #60A5FA; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+                              <span>🟢 Ваш Wi-Fi: <b>{myWifiSubnetIp}</b></span>
+                              <button type="button" on:click={scanNearbyWifiPeers} style="background: #1E3A8A; color: #fff; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px;">🔄 Поиск</button>
                           </div>
-
                           {#if isScanningNearby}
-                              <div style="text-align: center; padding: 20px; color: #9CA3AF; font-size: 13px;">⏳ Сканирование локальной сети Wi-Fi...</div>
+                              <div style="text-align: center; padding: 20px; color: #9CA3AF; font-size: 13px;">⏳ Сканирование локальной сети...</div>
                           {:else if nearbyWifiUsers.length === 0}
-                              <div style="text-align: center; padding: 20px; color: #9CA3AF; font-size: 13px;">
-                                  Пока никого не найдено в этой сети Wi-Fi.<br><span style="font-size: 11px; opacity: 0.7;">(Откройте «Люди рядом» на втором устройстве в том же Wi-Fi)</span>
-                              </div>
+                              <div style="text-align: center; padding: 20px; color: #9CA3AF; font-size: 13px;">Никого не найдено в этой сети Wi-Fi.</div>
                           {:else}
-                              <div style="display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-y: auto; margin-bottom: 12px;">
+                              <div style="display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-y: auto;">
                                   {#each nearbyWifiUsers as u}
-                                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: #121316; border-radius: 14px; border: 1px solid rgba(59,130,246,0.2);">
+                                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: #121316; border-radius: 14px;">
                                           <div>
                                               <div style="font-weight: 700; color: #E5E7EB; font-size: 14px;">{u.nick}</div>
                                               <div style="font-size: 11px; color: #4CAF50;">📡 В вашей сети Wi-Fi</div>
                                           </div>
-                                          <button type="button" on:click={() => connectToNearbyUser(u)} style="background: #1D4ED8; color: #fff; border: none; border-radius: 100px; padding: 7px 14px; font-size: 12px; font-weight: 700; cursor: pointer;">
-                                              Написать
-                                          </button>
+                                          <button type="button" on:click={() => connectToNearbyUser(u)} style="background: #1D4ED8; color: #fff; border: none; border-radius: 100px; padding: 7px 14px; font-size: 12px; font-weight: 700;">Написать</button>
                                       </div>
                                   {/each}
                               </div>
@@ -451,24 +744,35 @@ jobs:
               </div>
           {/if}
           """
-              if "showNearbyWifiModal" not in sb.split("</script>")[-1]:
-                  sb = sb.replace("<style>", nearby_modal_html + "\n<style>", 1)
-
+                  sb = sb.replace("<style>", nearby_modal + "\n<style>", 1)
               with open(sb_path, "w", encoding="utf-8") as f:
                   f.write(sb)
-              print("[OK] 5. Sidebar.svelte: добавлен Wi-Fi радар '📡 Люди рядом' (строго по Wi-Fi, показывает только ник)")
 
-          # 6. frontend/src/components/Chat.svelte:
-          #    - Добавляем меню "3 точки (⋮)" в шапку чата: 🧹 Очистить чат, 👥 Настройки Группы/Канала (если это группа/канал), 🗑️ Удалить чат!
-          #    - Добавляем кнопку "📥 В Галерею" для сохранения фото и видео-кружков в память телефона!
-          #    - Добавляем умный статус "Был(а) в сети": точное время ИЛИ "Был(а) недавно (за последние 24ч по разблокировке)", если время скрыто в Приватности!
+          # 6. Chat.svelte
           ch_path = "frontend/src/components/Chat.svelte"
           if os.path.exists(ch_path):
               with open(ch_path, "r", encoding="utf-8") as f:
                   ch = f.read()
 
-              chat_menu_js = """
-              // === ЭТАП 5: МЕНЮ 3 ТОЧКИ В ЧАТЕ (ОЧИСТИТЬ / УДАЛИТЬ / НАСТРОЙКИ ГРУППЫ) + СОХРАНЕНИЕ МЕДИА В ГАЛЕРЕЮ ===
+              if "let liveCirclePreviewEl = null;" not in ch:
+                  ch = ch.replace("let isRecordingMedia = false;", "let isRecordingMedia = false;\n    let liveCirclePreviewEl = null;\n    let activeMediaStream = null;", 1)
+                  ch = ch.replace(
+                      "recordedChunks = [];",
+                      """recordedChunks = [];
+                      activeMediaStream = stream;
+                      if (mode === 'video') {
+                          setTimeout(() => {
+                              if (liveCirclePreviewEl && activeMediaStream) {
+                                  liveCirclePreviewEl.srcObject = activeMediaStream;
+                                  liveCirclePreviewEl.play().catch(() => {});
+                              }
+                          }, 60);
+                      }"""
+                  )
+                  ch = ch.replace("stream.getTracks().forEach(t => t.stop());", "stream.getTracks().forEach(t => t.stop());\n                activeMediaStream = null;")
+
+              if "function clearCurrentChatHistory()" not in ch:
+                  chat_extra_js = """
               let showChatHeaderMenu = false;
               let showRoomSettingsModal = false;
               let newRoomMemberInput = '';
@@ -479,20 +783,12 @@ jobs:
                   const sName = String(contact.Nickname || '');
                   if (sName.startsWith('👥 ')) return 'Группа E2EE • Участники защищены';
                   if (sName.startsWith('📢 ')) return 'Канал E2EE • Вещание';
-
                   const hideExactTime = localStorage.getItem('hydra_hide_last_seen') === '1';
                   const lastMsg = (msgs || []).filter(m => !m.IsOutgoing).slice(-1)[0];
                   const lastTs = lastMsg?.Timestamp || (contact.LastMessageTime ? new Date(contact.LastMessageTime).getTime() : 0);
                   const diffMs = Date.now() - lastTs;
-
                   if (lastTs > 0 && diffMs < 180000) return 'В сети';
-                  if (hideExactTime) {
-                      const unlockTs = Number(localStorage.getItem('hydra_last_unlock_ts') || Date.now());
-                      if (Date.now() - unlockTs < 86400000 || (lastTs > 0 && diffMs < 86400000)) {
-                          return 'Был(а) за последние 24ч (подтверждено)';
-                      }
-                      return 'Был(а) давно';
-                  }
+                  if (hideExactTime) return 'Был(а) за последние 24ч';
                   if (lastTs > 0) {
                       const d = new Date(lastTs);
                       const hm = d.toTimeString().slice(0, 5);
@@ -504,10 +800,8 @@ jobs:
 
               async function clearCurrentChatHistory() {
                   showChatHeaderMenu = false;
-                  if (!selectedContact || !messages || messages.length === 0) return;
-                  for (const m of messages) {
-                      await AppActions.DeleteMessage(m.ID).catch(() => {});
-                  }
+                  if (!selectedContact || !messages) return;
+                  for (const m of messages) { await AppActions.DeleteMessage(m.ID).catch(() => {}); }
                   messages = [];
                   dispatch('refresh');
               }
@@ -525,42 +819,77 @@ jobs:
                       const ext = dataUrl.includes('video/') ? 'webm' : 'png';
                       const fname = `${prefix}_${Date.now()}.${ext}`;
                       const tempPath = await AppActions.SaveTempImage(dataUrl, fname);
-                      if (tempPath) {
-                          await AppActions.SaveFileToLocation(tempPath, fname);
-                      }
-                  } catch (e) {
-                      alert('Ошибка сохранения в Галерею: ' + e);
-                  }
+                      if (tempPath) await AppActions.SaveFileToLocation(tempPath, fname);
+                  } catch (e) { alert('Ошибка сохранения: ' + e); }
               }
               """
-              if "function clearCurrentChatHistory()" not in ch:
-                  ch = ch.replace("</script>", chat_menu_js + "\n</script>", 1)
+                  ch = ch.replace("</script>", chat_extra_js + "\n</script>", 1)
 
-              # Заменяем статичный текст "В сети / Оффлайн" в шапке чата на умный getContactPresenceText(selectedContact, messages)
               ch = re.sub(
                   r"\{\(messages \|\| \[\]\)\.some\(m => !m\.IsOutgoing && m\.SenderID === selectedContact\?\.PublicKey && \(Date\.now\(\) - m\.Timestamp < 300000\)\) \? 'В сети' : 'Оффлайн'\}",
                   "{getContactPresenceText(selectedContact, messages)}",
                   ch
               )
 
-              # Добавляем кнопку "⋮" (3 точки) в шапку чата справа от кнопки звонка 📞
-              old_call_btn = """            <button type="button" on:click={startHydraCall} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 50%; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; font-size: 17px; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 8px rgba(138,180,248,0.35);" title="Позвонить (WebRTC E2EE)">
+              old_c_render = """                {:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
+                              <div style="padding: 4px; display: flex; flex-direction: column; align-items: center;">
+                                  <div style="width: 210px; height: 210px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #8AB4F8; background: #000; position: relative; display: flex; align-items: center; justify-content: center;">
+                                      <video playsinline loop src={msg.Content.slice('[HYDRA_CIRCLE]:'.length)} on:click|stopPropagation={(e) => { const v = e.currentTarget; if (v.paused) v.play(); else v.pause(); }} style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; cursor: pointer;"></video>
+                                  </div>
+                                  <span style="font-size: 11px; opacity: 0.85; margin-top: 6px;">📹 Видео-кружок (нажмите для пуска/паузы)</span>
+                              </div>"""
+              new_c_render = """                {:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
+                              <div style="padding: 4px; display: flex; flex-direction: column; align-items: center;">
+                                  <div style="width: 216px; height: 216px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #3B82F6; background: #121316; position: relative; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 24px rgba(0,0,0,0.5);">
+                                      <video preload="metadata" autoplay muted loop playsinline src={msg.Content.slice('[HYDRA_CIRCLE]:'.length) + '#t=0.1'} on:loadedmetadata={(e) => { const v = e.currentTarget; v.currentTime = 0.1; v.play().catch(() => {}); }} on:click|stopPropagation={(e) => { const v = e.currentTarget; if (v.muted) { v.muted = false; v.currentTime = 0; v.play(); } else if (v.paused) { v.play(); } else { v.muted = true; v.pause(); } }} style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; cursor: pointer;"></video>
+                                      <div style="position: absolute; bottom: 10px; right: 28px; background: rgba(0,0,0,0.65); color: #60A5FA; border-radius: 100px; padding: 2px 8px; font-size: 10px; font-weight: 700; pointer-events: none;">🔊 Звук</div>
+                                  </div>
+                                  <button type="button" on:click|stopPropagation={() => saveMediaDataUrlToGallery(msg.Content.slice('[HYDRA_CIRCLE]:'.length), 'hydra_circle')} style="margin-top: 6px; background: #1A1C20; color: #60A5FA; border: 1px solid rgba(59,130,246,0.25); border-radius: 100px; padding: 4px 10px; font-size: 11px; cursor: pointer;">📥 В Галерею</button>
+                              </div>"""
+              ch = ch.replace(old_c_render, new_c_render)
+
+              old_rec_b = """    <div style="display: flex; gap: 8px; padding: 6px 14px; background: #18191C; align-items: center; border-top: 1px solid rgba(255,255,255,0.04);">
+                  <button type="button" on:click={() => showEmojiPanel = !showEmojiPanel} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">😊 Стикеры</button>
+                  <button type="button" on:click={() => toggleVoiceOrCircle('audio')} style="background: {isRecordingMedia && recordMode==='audio' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">
+                      {isRecordingMedia && recordMode==='audio' ? '⏹ Стоп (Аудио)' : '🎤 Голосовое'}
+                  </button>
+                  <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="background: {isRecordingMedia && recordMode==='video' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">
+                      {isRecordingMedia && recordMode==='video' ? '⏹ Стоп (Кружок)' : '📹 Кружок'}
+                  </button>
+                  {#if isRecordingMedia}
+                      <span style="margin-left: auto; color: #ff4757; font-size: 12px; font-weight: 700;">🔴 Запись: {recordingSeconds} сек... (нажмите Стоп для отправки)</span>
+                  {/if}
+              </div>"""
+
+              new_rec_b = """    {#if isRecordingMedia && recordMode === 'video'}
+                  <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.88); backdrop-filter: blur(12px); z-index: 99990; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px;">
+                      <div style="font-size: 15px; font-weight: 800; color: #ff4757;">🔴 Запись видео-кружка: {recordingSeconds} сек / 30 сек</div>
+                      <div style="width: 240px; height: 240px; border-radius: 50%; overflow: hidden; clip-path: circle(50% at 50% 50%); -webkit-clip-path: circle(50% at 50% 50%); border: 4px solid #3B82F6; background: #000;">
+                          <video bind:this={liveCirclePreviewEl} autoplay muted playsinline style="width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); border-radius: 50%;"></video>
+                      </div>
+                      <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="background: #1D4ED8; color: #fff; border: none; border-radius: 100px; padding: 14px 32px; font-size: 15px; font-weight: 800; cursor: pointer;">⏹ Остановить и отправить кружок</button>
+                  </div>
+              {/if}
+              <div style="display: flex; gap: 8px; padding: 8px 14px; background: #141619; align-items: center; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.04);">
+                  <button type="button" on:click={() => showEmojiPanel = !showEmojiPanel} style="flex: 1; background: #22252A; color: #E5E7EB; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer;">😊 Стикеры</button>
+                  <button type="button" on:click={() => toggleVoiceOrCircle('audio')} style="flex: 1; background: {isRecordingMedia && recordMode==='audio' ? '#ff4757' : '#22252A'}; color: #E5E7EB; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer;">
+                      {isRecordingMedia && recordMode==='audio' ? '⏹ Стоп (' + recordingSeconds + 'с)' : '🎤 Голосовое'}
+                  </button>
+                  <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="flex: 1; background: {isRecordingMedia && recordMode==='video' ? '#ff4757' : '#22252A'}; color: #E5E7EB; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer;">
+                      {isRecordingMedia && recordMode==='video' ? '⏹ Стоп' : '📹 Кружок'}
+                  </button>
+              </div>"""
+              ch = ch.replace(old_rec_b, new_rec_b)
+
+              old_call_b = """            <button type="button" on:click={startHydraCall} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 50%; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; font-size: 17px; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 8px rgba(138,180,248,0.35);" title="Позвонить (WebRTC E2EE)">
                           📞
                       </button>
                   </div>"""
-
-              new_call_and_3dots = """            <button type="button" on:click={startHydraCall} style="background: #1D4ED8; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; flex-shrink: 0;" title="Позвонить">
-                          📞
-                      </button>
+              new_call_b = """            <button type="button" on:click={startHydraCall} style="background: #1D4ED8; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; flex-shrink: 0;" title="Позвонить">📞</button>
                       <div style="position: relative;">
-                          <button type="button" on:click|stopPropagation={() => showChatHeaderMenu = !showChatHeaderMenu} style="background: #22252A; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.25); border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; cursor: pointer;">
-                              ⋮
-                          </button>
+                          <button type="button" on:click|stopPropagation={() => showChatHeaderMenu = !showChatHeaderMenu} style="background: #22252A; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.25); border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; cursor: pointer;">⋮</button>
                           {#if showChatHeaderMenu}
                               <div style="position: fixed; top: 62px; right: 14px; background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 16px; padding: 6px; z-index: 99995; min-width: 210px; box-shadow: 0 12px 32px rgba(0,0,0,0.7);">
-                                  {#if String(selectedContact?.Nickname || '').startsWith('👥') || String(selectedContact?.Nickname || '').startsWith('📢')}
-                                      <button type="button" on:click={() => { showChatHeaderMenu = false; showRoomSettingsModal = true; }} style="width: 100%; text-align: left; padding: 10px 12px; background: transparent; color: #60A5FA; border: none; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer;">⚙️ Настройки Группы/Канала</button>
-                                  {/if}
                                   <button type="button" on:click={clearCurrentChatHistory} style="width: 100%; text-align: left; padding: 10px 12px; background: transparent; color: #E5E7EB; border: none; border-radius: 10px; font-size: 13px; cursor: pointer;">🧹 Очистить историю чата</button>
                                   {#if !selectedContact?.IsFavorites && selectedContact?.Nickname !== 'Избранное'}
                                       <button type="button" on:click={deleteCurrentChatContact} style="width: 100%; text-align: left; padding: 10px 12px; background: transparent; color: #ff6b6b; border: none; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer;">🗑️ Удалить чат</button>
@@ -569,58 +898,82 @@ jobs:
                           {/if}
                       </div>
                   </div>"""
+              ch = ch.replace(old_call_b, new_call_b)
 
-              ch = ch.replace(old_call_btn, new_call_and_3dots)
-
-              # Добавляем кнопку "📥 В Галерею" под видео-кружками
-              ch = ch.replace(
-                  '<div style="position: absolute; bottom: 10px; right: 28px; background: rgba(0,0,0,0.65); color: #8AB4F8; border-radius: 100px; padding: 2px 8px; font-size: 10px; font-weight: 700; pointer-events: none;">🔊 Нажмите для звука</div>\n                                  </div>',
-                  '<div style="position: absolute; bottom: 10px; right: 28px; background: rgba(0,0,0,0.65); color: #8AB4F8; border-radius: 100px; padding: 2px 8px; font-size: 10px; font-weight: 700; pointer-events: none;">🔊 Звук</div>\n                                  </div>\n                                  <button type="button" on:click|stopPropagation={() => saveMediaDataUrlToGallery(msg.Content.slice("[HYDRA_CIRCLE]:".length), "hydra_circle")} style="margin-top: 6px; background: #1A1C20; color: #60A5FA; border: 1px solid rgba(59,130,246,0.25); border-radius: 100px; padding: 4px 10px; font-size: 11px; cursor: pointer;">📥 Сохранить в Галерею</button>'
-              )
-
-              # Модальное окно настроек Группы / Канала (как в Telegram: участники, права публикации, ссылка-ключ)
-              room_modal_html = """
-          {#if showRoomSettingsModal && selectedContact}
-              <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.9); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
-                  <div style="background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 24px; padding: 20px; width: 100%; max-width: 380px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                          <h3 style="margin: 0; color: #E5E7EB; font-size: 17px;">⚙️ Управление: {selectedContact.Nickname}</h3>
-                          <button type="button" on:click={() => showRoomSettingsModal = false} style="background: #28292D; color: #fff; border: none; border-radius: 50%; width: 32px; height: 32px;">✕</button>
-                      </div>
-                      <div style="padding: 12px; background: #121316; border-radius: 14px; margin-bottom: 12px; font-size: 12px; color: #9CA3AF;">
-                          <div>🔑 <b>Крипто-ID комнаты:</b></div>
-                          <div style="word-break: break-all; font-family: monospace; color: #60A5FA; margin-top: 4px;">{selectedContact.I2PAddress}</div>
-                          <button type="button" on:click={() => { AppActions.ClipboardSet(selectedContact.I2PAddress); alert('✅ ID комнаты скопирован'); }} style="margin-top: 8px; width: 100%; background: #1E3A8A; color: #fff; border: none; border-radius: 100px; padding: 7px; font-size: 12px; font-weight: 700;">📋 Скопировать приглашение</button>
-                      </div>
-                      <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-                          <input type="text" placeholder="Добавить @ник участника..." bind:value={newRoomMemberInput} style="flex: 1; padding: 10px 12px; border-radius: 12px; background: #121316; color: #fff; border: 1px solid rgba(59,130,246,0.25); font-size: 12px;" />
-                          <button type="button" on:click={() => { if (newRoomMemberInput.trim()) { alert('✅ Участник ' + newRoomMemberInput + ' добавлен в список рассылки E2EE'); newRoomMemberInput = ''; } }} style="background: #1D4ED8; color: #fff; border: none; border-radius: 12px; padding: 0 14px; font-size: 12px; font-weight: 700;">+ Добавить</button>
-                      </div>
-                  </div>
-              </div>
-          {/if}
-          """
-              if "showRoomSettingsModal" not in ch.split("</script>")[-1]:
-                  ch = ch.replace("<style>", room_modal_html + "\n<style>", 1)
+              hide_play_css = """
+              video::-webkit-media-controls-overlay-play-button,
+              video::-webkit-media-controls-start-playback-button {
+                  display: none !important;
+                  -webkit-appearance: none !important;
+                  opacity: 0 !important;
+              }
+              """
+              if "video::-webkit-media-controls-start-playback-button" not in ch:
+                  ch = ch.replace("</style>", hide_play_css + "\n</style>", 1)
 
               with open(ch_path, "w", encoding="utf-8") as f:
                   f.write(ch)
-              print("[OK] 6. Chat.svelte: добавлено меню 3 точки (Очистить/Удалить/Настройки группы), статус присутствия 24ч и сохранение медиа в Галерею")
 
-          # 7. frontend/src/components/Settings.svelte:
-          #    - Убираем обёртку {#if selectedProfile} вокруг настроек Приватности (чтобы они НЕ пропадали при входе через Seed-ключ!)
-          #    - Добавляем в Приватность тумблеры:
-          #      1) "🕒 Скрывать точное время визита (показывать только 'Был(а) за последние 24ч')"
-          #      2) "📡 Скрывать меня в радаре 'Люди рядом' по Wi-Fi"
-          #    - Чиним разъехавшуюся кнопку "Скопировать ключ" на скриншоте 3 (делаем вертикальную колонку в destination-box)
+          # 7. Settings.svelte
           st_path = "frontend/src/components/Settings.svelte"
           if os.path.exists(st_path):
               with open(st_path, "r", encoding="utf-8") as f:
                   st = f.read()
 
-              privacy_extra_js = """
+              st = st.replace(".destination-details summary::before { content: '🌐'; font-size: 14px; }", ".destination-details summary::before { content: none; display: none; }")
+              st = st.replace('<img src="/icon.png" alt="Hydra" style="width: 100%; height: 100%; object-fit: cover; border-radius: 28px;" />', hydra_svg)
+              st = st.replace("{#if selectedProfile}", "{#if true}")
+              st = st.replace("{#if selectedProfile.use_pin}", "{#if true}")
+              st = st.replace("selectedProfile.use_pin", "selectedProfile?.use_pin")
+              st = st.replace(
+                  '.destination-box { \n        display: flex; align-items: flex-start; gap: 10px; padding: 20px;',
+                  '.destination-box { \n        display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 16px;'
+              )
+
+              old_bio = """        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px;">
+                      <div style="display: flex; justify-content: space-between; align-items: center;">
+                          <div>
+                              <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">👆 Разблокировка по отпечатку пальца</div>
+                              <div style="font-size: 13px; color: #9AA0A6; margin-top: 4px;">Автоматически запрашивать биометрию при входе</div>
+                      <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center;">
+                          <input type="password" placeholder="Ваш ПИН для биометрии..." bind:value={bioPinToBind} style="flex: 1; border-radius: 12px; background: #121212; color: #E3E3E3; padding: 8px 12px; border: 1px solid rgba(138,180,248,0.3); font-size: 12px;" />
+                          <button type="button" on:click={setupAndTestBiometric} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;">
+                              👆 Привязать
+                          </button>
+                      </div>
+                      {#if bioBindStatus}
+                          <div style="margin-top: 6px; font-size: 12px; color: #8AB4F8;">{bioBindStatus}</div>
+                      {/if}
+                          </div>
+                          <input type="checkbox" checked={biometricEnabled} on:change={toggleBiometric} style="width: 22px; height: 22px; accent-color: #8AB4F8;" />
+                      </div>
+                  </div>"""
+
+              new_bio = """        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px; box-sizing: border-box; max-width: 100%;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                          <div style="flex: 1; min-width: 0;">
+                              <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">👆 Разблокировка по отпечатку пальца</div>
+                              <div style="font-size: 13px; color: #9CA3AF; margin-top: 4px;">Автоматически запрашивать биометрию при входе</div>
+                          </div>
+                          <input type="checkbox" checked={biometricEnabled} on:change={toggleBiometric} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
+                      </div>
+                      <div style="margin-top: 12px; display: flex; gap: 8px; align-items: center; width: 100%; box-sizing: border-box;">
+                          <input type="password" placeholder="Ваш ПИН для биометрии..." bind:value={bioPinToBind} style="flex: 1; min-width: 0; border-radius: 12px; background: #121316; color: #E5E7EB; padding: 10px 12px; border: 1px solid rgba(59,130,246,0.3); font-size: 13px; box-sizing: border-box;" />
+                          <button type="button" on:click={setupAndTestBiometric} style="background: #1D4ED8; color: #fff; border: none; border-radius: 100px; padding: 10px 16px; font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap; flex-shrink: 0;">
+                              👆 Привязать
+                          </button>
+                      </div>
+                      {#if bioBindStatus}
+                          <div style="margin-top: 8px; font-size: 12px; color: #60A5FA;">{bioBindStatus}</div>
+                      {/if}
+                  </div>"""
+              st = st.replace(old_bio, new_bio)
+
+              if "let hideLastSeenEnabled =" not in st:
+                  priv_js = """
               let hideLastSeenEnabled = localStorage.getItem('hydra_hide_last_seen') === '1';
               let hideNearbyWifiEnabled = localStorage.getItem('hydra_hide_nearby_wifi') === '1';
+              let isRecordingLogs = typeof window !== 'undefined' ? !!window.__hydraLoggingActive : false;
 
               function toggleHideLastSeen() {
                   hideLastSeenEnabled = !hideLastSeenEnabled;
@@ -630,52 +983,108 @@ jobs:
                   hideNearbyWifiEnabled = !hideNearbyWifiEnabled;
                   localStorage.setItem('hydra_hide_nearby_wifi', hideNearbyWifiEnabled ? '1' : '0');
               }
+              function toggleLogRecording() {
+                  isRecordingLogs = !isRecordingLogs;
+                  if (typeof window !== 'undefined') {
+                      window.__hydraLoggingActive = isRecordingLogs;
+                      localStorage.setItem('hydra_rec_logs', isRecordingLogs ? '1' : '0');
+                      window.__addHydraLog('LOG-CTRL', isRecordingLogs ? '▶️ Запись логов ЗАПУЩЕНА' : '⏹ Запись логов ОСТАНОВЛЕНА');
+                      refreshSettingsLogs();
+                  }
+              }
               """
-              if "let hideLastSeenEnabled =" not in st:
-                  st = st.replace("let anonStoriesEnabled =", privacy_extra_js + "\n    let anonStoriesEnabled =", 1)
+                  st = st.replace("let anonStoriesEnabled =", priv_js + "\n    let anonStoriesEnabled =", 1)
 
-              # Делаем так, чтобы в Приватности блок настроек рендерился ВСЕГДА (даже если вход выполнен через Seed-фразу!), заменяя {#if selectedProfile} на {#if true}
-              st = st.replace("{#if selectedProfile}", "{#if true}")
-              st = st.replace("{#if selectedProfile.use_pin}", "{#if true}")
-              st = st.replace("selectedProfile.use_pin", "selectedProfile?.use_pin")
+              st = re.sub(r'\{#if devMenuUnlocked\}[\s\S]*?\{/if\}', '', st)
+              st = st.replace('on:click={() => showSecretDevModal = false}', 'on:click={() => { showSecretDevModal = false; licenseTapCount = 0; }}')
 
-              # Добавляем 2 новых тумблера Приватности (Скрытие точного времени входа и Скрытие в Люди рядом по Wi-Fi)
-              extra_privacy_cards = """
-                  <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
-                          <div>
-                              <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🕒 Скрывать точное время входа</div>
-                              <div style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">Показывать собеседникам только статус «Был(а) за последние 24ч» (подтверждается разблокировкой приложения)</div>
-                          </div>
-                          <input type="checkbox" checked={hideLastSeenEnabled} on:change={toggleHideLastSeen} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
-                      </div>
-                  </div>
-
-                  <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
-                          <div>
-                              <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">📡 Невидимка в «Люди рядом» (Wi-Fi)</div>
-                              <div style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">Запретить другим пользователям видеть ваш @ник в локальной сети Wi-Fi</div>
-                          </div>
-                          <input type="checkbox" checked={hideNearbyWifiEnabled} on:change={toggleHideNearbyWifi} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
-                      </div>
-                  </div>
-              """
-              if "Скрывать точное время входа" not in st:
-                  st = st.replace("🕵️ Анонимный просмотр историй (24ч)", extra_privacy_cards + "\n                🕵️ Анонимный просмотр историй (24ч)", 1)
-
-              # Чиним разъехавшуюся кнопку "Скопировать ключ" на скриншоте 3 (делаем flex-direction: column в .destination-box)
-              st = st.replace(
-                  '.destination-box { \n        display: flex; align-items: flex-start; gap: 10px; padding: 20px;',
-                  '.destination-box { \n        display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 16px;'
-              )
+              old_lh = """            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 6px; flex-wrap: wrap;">
+                          <span style="font-size: 12px; font-weight: 800; color: #8AB4F8;">🐞 Системный журнал ({settingsLogLines.length})</span>"""
+              new_lh = """            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 6px; flex-wrap: wrap;">
+                          <span style="font-size: 12px; font-weight: 800; color: #60A5FA;">🐞 Системный журнал ({settingsLogLines.length})</span>
+                          <button type="button" on:click={toggleLogRecording} style="background: {isRecordingLogs ? '#ff4757' : '#1D4ED8'}; color: #fff; border: none; border-radius: 100px; padding: 6px 14px; font-size: 11px; font-weight: 800; cursor: pointer;">
+                              {isRecordingLogs ? '⏹ Остановить запись' : '🔴 Начать запись логов'}
+                          </button>"""
+              st = st.replace(old_lh, new_lh)
 
               with open(st_path, "w", encoding="utf-8") as f:
                   f.write(st)
-              print("[OK] 7. Settings.svelte: Приватность больше не пропадает при Seed-входе, добавлены тумблеры 24ч и Wi-Fi, выровнена кнопка копирования ключа")
+
+          # 8. Глобальная замена всех фиолетовых цветов на Тёмно-синий + Тёмно-серый
+          purple_to_darkblue = [
+              ("#6366f1", "#1D4ED8"),
+              ("#6c5ce7", "#1E40AF"),
+              ("#5a4fcf", "#1E3A8A"),
+              ("#a29bfe", "#60A5FA"),
+              ("#a78bfa", "#3B82F6"),
+              ("#1a1a2e", "#16181D"),
+              ("#1e1e2e", "#1A1C20"),
+              ("#11111b", "#141619"),
+              ("#0c0c14", "#121316"),
+              ("rgba(99, 102, 241,", "rgba(29, 78, 216,"),
+              ("rgba(99,102,241,", "rgba(29,78,216,"),
+              ("rgba(108, 92, 231,", "rgba(30, 64, 175,"),
+              ("rgba(162, 155, 254,", "rgba(59, 130, 246,"),
+              ("'1.0.2-beta'", "'2.5.0-hydra'"),
+          ]
+          for root, _, files in os.walk("frontend/src"):
+              for fn in files:
+                  if fn.endswith((".svelte", ".js", ".css")):
+                      fp = os.path.join(root, fn)
+                      with open(fp, "r", encoding="utf-8") as f:
+                          c = f.read()
+                      orig = c
+                      for o, n in purple_to_darkblue:
+                          c = c.replace(o, n)
+                      if fn == "utils.js":
+                          c = re.sub(r"#667eea|#764ba2|#6B73FF|#000DFF|#8E2DE2|#4A00E0|#c471f5|#fa71cd", "#1E3A8A", c)
+                      if c != orig:
+                          with open(fp, "w", encoding="utf-8") as f:
+                              f.write(c)
+
+          if os.path.exists(app_path):
+              with open(app_path, "r", encoding="utf-8") as f:
+                  ap = f.read()
+              darkblue_css = """
+              :global(:root) {
+                  --bg-primary: #121316 !important;
+                  --bg-secondary: #1A1C20 !important;
+                  --bg-tertiary: #22252A !important;
+                  --bg-input: #141619 !important;
+                  --accent: #1D4ED8 !important;
+                  --text-primary: #E5E7EB !important;
+                  --text-secondary: #9CA3AF !important;
+                  --border: rgba(59, 130, 246, 0.16) !important;
+              }
+              :global(body), :global(.app-container), :global(.login-screen), :global(.content-area) {
+                  background: #121316 !important;
+                  color: #E5E7EB !important;
+              }
+              :global(.sidebar), :global(.glass-panel), :global(.settings-card), :global(.modal-content) {
+                  background: #1A1C20 !important;
+                  border: 1px solid rgba(59, 130, 246, 0.16) !important;
+                  border-radius: 24px !important;
+              }
+              :global(.btn-primary), :global(.btn-primary-premium) {
+                  background: linear-gradient(135deg, #1E3A8A, #1D4ED8) !important;
+                  color: #FFFFFF !important;
+                  border: 1px solid rgba(96, 165, 250, 0.3) !important;
+                  border-radius: 100px !important;
+                  font-weight: 700 !important;
+              }
+              :global(.message.outgoing .message-bubble:not(.circle-only-bubble)) {
+                  background: linear-gradient(135deg, #172554, #1E3A8A) !important;
+                  border: 1px solid rgba(59, 130, 246, 0.28) !important;
+                  color: #F3F4F6 !important;
+              }
+              """
+              ap = ap.replace("</style>", darkblue_css + "\n</style>", 1)
+              with open(app_path, "w", encoding="utf-8") as f:
+                  f.write(ap)
+          print("[OK] 8. Вся тема переведена в Тёмно-синий + Тёмно-серый графит (v2.5.0-hydra)!")
           PYEOF
-          python3 apply_stage5_master.py
-          rm -f apply_stage5_master.py
+          python3 sync_relay_v25.py
+          rm -f sync_relay_v25.py
           gofmt -w internal/ mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -685,13 +1094,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Stage 5 Master Upgrade
+      - name: Commit Hydra v2.5.0 Stage 5 Release
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Fix Seed privacy view, Favorites black screen, unified Crypto ID, real Groups/Channels, Wi-Fi Nearby radar, 3-dots chat menu & Hydra icons [skip ci]"
+            git commit -m "Release Hydra v2.5.0: Sync with VPS Relay v2.5, auto-resolve nicknames (@kira/@gibel/@sidr), Dark Blue theme, Wi-Fi Nearby & Stage 5 [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
