@@ -265,7 +265,7 @@
           currentUserInfo = info;
           profileNickname = info.Nickname;
           profileAvatar = info.Avatar;
-          myDestination = info.Destination;
+          myDestination = info.PublicKey || info.Destination;
           identity = info.ID;
           if (info.Status) networkStatus = info.Status;
       }
@@ -366,11 +366,10 @@
           AppActions.SetActiveChat("");
           return;
       }
-      if (selectedContact && selectedContact.ID === contact.ID) {
-          selectedContact = null;
-          messages = [];
-          AppActions.SetActiveChat("");
-          return;
+      if (contact.IsFavorites || contact.Nickname === 'Избранное') {
+          contact.ID = identity || 'favorites_self';
+          contact.ChatID = identity || 'favorites_self';
+          contact.IsFavorites = true;
       }
       selectedContact = contact;
       showSettings = false;
@@ -861,6 +860,21 @@
       onConfirm: () => { confirmAction(); showConfirmModal = false; },
       onCancelConfirm: () => { showConfirmModal = false; },
       onSaveFolder: async () => {
+          const rawName = (currentFolderData.Name || '').trim();
+          if (!isEditingFolder && (rawName.startsWith('👥 ') || rawName.startsWith('📢 '))) {
+              const isChan = rawName.startsWith('📢 ');
+              const roomSeed = btoa(unescape(encodeURIComponent('HYDRA_ROOM_' + rawName + '_' + Date.now()))).replace(/=/g, '') + '00000000000000000000000000000000';
+              const roomKey = roomSeed.slice(0, 43) + '=';
+              try {
+                  await AppActions.AddContact(rawName, roomKey);
+                  showFolderModal = false;
+                  await loadContacts();
+                  showToast(isChan ? '📢 Канал создан в списке чатов!' : '👥 Группа создана в списке чатов!', 'success');
+                  return;
+              } catch (e) {
+                  showToast('Ошибка создания комнаты: ' + e, 'error');
+              }
+          }
           if (isEditingFolder) {
               await AppActions.UpdateFolder(currentFolderData.ID, currentFolderData.Name, currentFolderData.Icon);
           } else {

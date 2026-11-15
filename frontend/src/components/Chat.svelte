@@ -400,6 +400,57 @@
             alert('Разрешите доступ к микрофону и камере: ' + err);
         }
     }
+
+    let showChatHeaderMenu = false;
+    let showRoomSettingsModal = false;
+    let newRoomMemberInput = '';
+
+    function getContactPresenceText(contact, msgs) {
+        if (!contact) return 'Оффлайн';
+        if (contact.IsFavorites || contact.Nickname === 'Избранное') return 'Локальное хранилище E2EE';
+        const sName = String(contact.Nickname || '');
+        if (sName.startsWith('👥 ')) return 'Группа E2EE • Участники защищены';
+        if (sName.startsWith('📢 ')) return 'Канал E2EE • Вещание';
+        const hideExactTime = localStorage.getItem('hydra_hide_last_seen') === '1';
+        const lastMsg = (msgs || []).filter(m => !m.IsOutgoing).slice(-1)[0];
+        const lastTs = lastMsg?.Timestamp || (contact.LastMessageTime ? new Date(contact.LastMessageTime).getTime() : 0);
+        const diffMs = Date.now() - lastTs;
+        if (lastTs > 0 && diffMs < 180000) return 'В сети';
+        if (hideExactTime) return 'Был(а) за последние 24ч';
+        if (lastTs > 0) {
+            const d = new Date(lastTs);
+            const hm = d.toTimeString().slice(0, 5);
+            if (diffMs < 86400000) return 'Был(а) сегодня в ' + hm;
+            return 'Был(а) ' + d.toLocaleDateString() + ' в ' + hm;
+        }
+        return 'Был(а) за последние 24ч';
+    }
+
+    async function clearCurrentChatHistory() {
+        showChatHeaderMenu = false;
+        if (!selectedContact || !messages) return;
+        for (const m of messages) { await AppActions.DeleteMessage(m.ID).catch(() => {}); }
+        messages = [];
+        dispatch('refresh');
+    }
+
+    async function deleteCurrentChatContact() {
+        showChatHeaderMenu = false;
+        if (!selectedContact) return;
+        await AppActions.DeleteContact(selectedContact.ID).catch(() => {});
+        if (onBack) onBack();
+        location.reload();
+    }
+
+    async function saveMediaDataUrlToGallery(dataUrl, prefix = 'hydra_media') {
+        try {
+            const ext = dataUrl.includes('video/') ? 'webm' : 'png';
+            const fname = `${prefix}_${Date.now()}.${ext}`;
+            const tempPath = await AppActions.SaveTempImage(dataUrl, fname);
+            if (tempPath) await AppActions.SaveFileToLocation(tempPath, fname);
+        } catch (e) { alert('Ошибка сохранения: ' + e); }
+    }
+    
 </script>
 
 <div class="chat-area animate-fade-in" class:mobile={isMobile}>
@@ -449,7 +500,7 @@
                 <div class="chat-status">
                     <span class="status-dot" style="background: {(messages || []).some(m => !m.IsOutgoing && m.SenderID === selectedContact?.PublicKey && (Date.now() - m.Timestamp < 300000)) ? '#4CAF50' : '#9E9E9E'};"></span>
                     <span class="status-text">
-                        {(messages || []).some(m => !m.IsOutgoing && m.SenderID === selectedContact?.PublicKey && (Date.now() - m.Timestamp < 300000)) ? 'В сети' : 'Оффлайн'}
+                        {getContactPresenceText(selectedContact, messages)}
                     </span>
                     {#if isMobile}
                          <button class="btn-icon-xs" style="margin-left: 8px; opacity: 0.7;" on:click|stopPropagation={() => {
@@ -474,9 +525,18 @@
                     ⏱ {disappearingTimer === 0 ? 'Выкл' : (disappearingTimer === 60 ? '1м' : '1ч')}
                 </button>
             {/if}
-            <button type="button" on:click={startHydraCall} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 50%; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; font-size: 17px; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 8px rgba(138,180,248,0.35);" title="Позвонить (WebRTC E2EE)">
-                📞
-            </button>
+            <button type="button" on:click={startHydraCall} style="background: #1D4ED8; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; flex-shrink: 0;" title="Позвонить">📞</button>
+            <div style="position: relative;">
+                <button type="button" on:click|stopPropagation={() => showChatHeaderMenu = !showChatHeaderMenu} style="background: #22252A; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.25); border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; cursor: pointer;">⋮</button>
+                {#if showChatHeaderMenu}
+                    <div style="position: fixed; top: 62px; right: 14px; background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 16px; padding: 6px; z-index: 99995; min-width: 210px; box-shadow: 0 12px 32px rgba(0,0,0,0.7);">
+                        <button type="button" on:click={clearCurrentChatHistory} style="width: 100%; text-align: left; padding: 10px 12px; background: transparent; color: #E5E7EB; border: none; border-radius: 10px; font-size: 13px; cursor: pointer;">🧹 Очистить историю чата</button>
+                        {#if !selectedContact?.IsFavorites && selectedContact?.Nickname !== 'Избранное'}
+                            <button type="button" on:click={deleteCurrentChatContact} style="width: 100%; text-align: left; padding: 10px 12px; background: transparent; color: #ff6b6b; border: none; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer;">🗑️ Удалить чат</button>
+                        {/if}
+                    </div>
+                {/if}
+            </div>
         </div>
     {/if}
 </div>

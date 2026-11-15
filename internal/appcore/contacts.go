@@ -15,6 +15,28 @@ import (
 	"github.com/google/uuid"
 )
 
+func resolveNickByPubFromVPS(pub string) string {
+	pub = strings.TrimSpace(pub)
+	if len(pub) < 32 {
+		return ""
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://191.223.137.164:8085/nick/resolve?pub=" + url.QueryEscape(pub))
+	if err != nil || resp == nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		var res map[string]string
+		if json.Unmarshal(body, &res) == nil && res["nickname"] != "" {
+			n := strings.TrimPrefix(res["nickname"], "@")
+			return "@" + n
+		}
+	}
+	return ""
+}
+
 func (a *AppCore) GetContacts() ([]*ContactInfo, error) {
 	if a.Repo == nil {
 		return []*ContactInfo{}, nil
@@ -25,6 +47,24 @@ func (a *AppCore) GetContacts() ([]*ContactInfo, error) {
 	}
 	result := make([]*ContactInfo, len(contacts))
 	for i, c := range contacts {
+		updated := false
+		if c.PublicKey == "" && len(c.I2PAddress) >= 32 {
+			c.PublicKey = c.I2PAddress
+			updated = true
+		}
+		if c.ChatID == "" && a.Identity != nil && a.Identity.Keys != nil && c.PublicKey != "" {
+			c.ChatID = identity.CalculateChatID(a.Identity.Keys.PublicKeyBase64, c.PublicKey)
+			updated = true
+		}
+		if (len(c.Nickname) > 28 && !strings.Contains(c.Nickname, " ")) || strings.HasPrefix(c.Nickname, "Unknown") || strings.HasPrefix(c.Nickname, "Контакт ") {
+			if resolved := resolveNickByPubFromVPS(c.I2PAddress); resolved != "" {
+				c.Nickname = resolved
+				updated = true
+			}
+		}
+		if updated {
+			_ = a.Repo.SaveContact(a.Ctx, c)
+		}
 		info := &ContactInfo{
 			ID:          c.ID,
 			Nickname:    c.Nickname,
@@ -69,7 +109,7 @@ func (a *AppCore) AddContact(name, destination string) (*ContactInfo, error) {
 		var res map[string]string
 		if json.Unmarshal(body, &res) == nil && res["pub_key"] != "" {
 			destination = strings.TrimSpace(res["pub_key"])
-			if name == "" || strings.HasPrefix(name, "Контакт ") {
+			if name == "" || strings.HasPrefix(name, "Контакт ") || len(name) > 28 {
 				name = "@" + cleanNick
 			}
 		}
@@ -78,8 +118,13 @@ func (a *AppCore) AddContact(name, destination string) (*ContactInfo, error) {
 	if len(destination) < 32 {
 		return nil, fmt.Errorf("некорректный ID ключ Hydra (введите @никнейм или отсканируйте QR-код)")
 	}
-	if name == "" || (len(name) > 28 && !strings.Contains(name, " ")) {
-		name = "Контакт " + destination[:6]
+
+	if name == "" || (len(name) > 28 && !strings.Contains(name, " ")) || strings.HasPrefix(name, "Контакт ") {
+		if resolved := resolveNickByPubFromVPS(destination); resolved != "" {
+			name = resolved
+		} else if name == "" || len(name) > 28 {
+			name = "Контакт " + destination[:6]
+		}
 	}
 
 	myPub := a.Identity.Keys.PublicKeyBase64

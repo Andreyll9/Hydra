@@ -517,7 +517,8 @@
     .input-field { width: 100%; padding: 14px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 14px; color: white; outline: none; transition: all 0.2s; }
     .input-field:focus { border-color: var(--accent); box-shadow: 0 0 10px rgba(29, 78, 216, 0.2); }
     
-    .modal-footer { display: flex; gap: 12px; margin-top: 24px; }
+    .modal-footer { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; justify-content: flex-end; }
+    .modal-footer .btn-small { padding: 10px 14px; font-size: 13px; flex: 1; min-width: 85px; text-align: center; }
     .btn-small { padding: 12px 24px; border-radius: 16px; font-weight: 600; cursor: pointer; border: none; transition: all 0.2s; font-size: 14px; }
     .btn-small:hover { opacity: 0.9; transform: translateY(-2px); }
     

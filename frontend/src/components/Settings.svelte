@@ -144,6 +144,19 @@
     }
 
     let biometricEnabled = localStorage.getItem('hydra_biometric') !== '0';
+    
+    let hideLastSeenEnabled = localStorage.getItem('hydra_hide_last_seen') === '1';
+    let hideNearbyWifiEnabled = localStorage.getItem('hydra_hide_nearby_wifi') === '1';
+
+    function toggleHideLastSeen() {
+        hideLastSeenEnabled = !hideLastSeenEnabled;
+        localStorage.setItem('hydra_hide_last_seen', hideLastSeenEnabled ? '1' : '0');
+    }
+    function toggleHideNearbyWifi() {
+        hideNearbyWifiEnabled = !hideNearbyWifiEnabled;
+        localStorage.setItem('hydra_hide_nearby_wifi', hideNearbyWifiEnabled ? '1' : '0');
+    }
+    
     let anonStoriesEnabled = localStorage.getItem('hydra_anon_stories') === '1';
     let duressPinValue = localStorage.getItem('hydra_duress_pin') || '';
 
@@ -355,19 +368,19 @@
                                     <button class="btn-secondary clickable-accent show-key-btn" on:click={onShowSeed}>Показать ключ</button>
                                  </div>
 
-                         {#if selectedProfile}
+                         {#if true}
                             <div class="setting-item-box">
                                 <div class="flex-row">
                                     <div>
                                         <h4>Быстрый вход по ПИН-коду</h4>
-                                        <p>{selectedProfile.use_pin ? 'Включено. Ключ зашифрован локально.' : 'Выключено. Требуется ввод seed-фразы.'}</p>
+                                        <p>{selectedProfile?.use_pin ? 'Включено. Ключ зашифрован локально.' : 'Выключено. Требуется ввод seed-фразы.'}</p>
                                     </div>
                                     <label class="switch">
-                                        <input type="checkbox" checked={selectedProfile.use_pin} on:change={onTogglePinUsage}>
+                                        <input type="checkbox" checked={selectedProfile?.use_pin} on:change={onTogglePinUsage}>
                                         <span class="slider round"></span>
                                     </label>
                                 </div>
-                                {#if selectedProfile.use_pin}
+                                {#if true}
                                     <button class="btn-secondary full-width" on:click={onChangePin}>Сменить ПИН-код</button>
         <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px; box-sizing: border-box; max-width: 100%;">
             <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
@@ -388,10 +401,31 @@
             {/if}
         </div>
 
-        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px;">
+        
+        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                <div>
+                    <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🕒 Скрывать точное время входа</div>
+                    <div style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">Показывать собеседникам только статус «Был(а) за последние 24ч»</div>
+                </div>
+                <input type="checkbox" checked={hideLastSeenEnabled} on:change={toggleHideLastSeen} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
+            </div>
+        </div>
+
+        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                <div>
+                    <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">📡 Невидимка в «Люди рядом» (Wi-Fi)</div>
+                    <div style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">Запретить другим пользователям видеть ваш @ник в локальной сети Wi-Fi</div>
+                </div>
+                <input type="checkbox" checked={hideNearbyWifiEnabled} on:change={toggleHideNearbyWifi} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
+            </div>
+        </div>
+    
+        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <div>
-                    <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">🕵️ Анонимный просмотр историй (24ч)</div>
+                    <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🕵️ Анонимный просмотр историй (24ч)</div>
                     <div style="font-size: 13px; color: #9AA0A6; margin-top: 4px;">Скрывать ваше имя в списке зрителей (режим невидимки)</div>
                 </div>
                 <input type="checkbox" checked={anonStoriesEnabled} on:change={toggleAnonStories} style="width: 22px; height: 22px; accent-color: #8AB4F8;" />
@@ -715,7 +749,7 @@
     .hint-inline { font-size: 11px; opacity: 0.5; font-weight: 400; font-family: var(--font-main); margin-left: auto; }
 
     .destination-box { 
-        display: flex; align-items: flex-start; gap: 10px; padding: 20px; 
+        display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 16px; 
         animation: slideDown 0.3s ease-out;
     }
     .destination-code { 

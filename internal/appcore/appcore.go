@@ -441,6 +441,9 @@ func (a *AppCore) ExportAccount() (string, error) {
 		return "", fmt.Errorf("failed to add user data: %w", err)
 	}
 
+	if a.Platform != nil {
+		_ = a.Platform.ShareFile(zipPath)
+	}
 	return zipPath, nil
 }
 
@@ -602,6 +605,15 @@ func (a *AppCore) GetCurrentProfile() map[string]interface{} {
 				"avatar_path":  a.formatProfileAvatarURL(p.UserID, p.AvatarPath),
 				"use_pin":      p.UsePin,
 			}
+		}
+	}
+	if a.Identity != nil && a.Identity.Keys != nil {
+		return map[string]interface{}{
+			"id":           a.Identity.Keys.UserID,
+			"display_name": "Hydra Account",
+			"user_id":      a.Identity.Keys.UserID,
+			"avatar_path":  "",
+			"use_pin":      true,
 		}
 	}
 	return nil

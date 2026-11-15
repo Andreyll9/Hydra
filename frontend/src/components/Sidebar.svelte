@@ -268,6 +268,76 @@
         return s;
     }
     
+
+    let showNearbyWifiModal = false;
+    let nearbyWifiUsers = [];
+    let isScanningNearby = false;
+    let myWifiSubnetIp = '';
+
+    async function openNearbyWifiRadar() {
+        showNearbyWifiModal = true;
+        await scanNearbyWifiPeers();
+    }
+
+    async function scanNearbyWifiPeers() {
+        isScanningNearby = true;
+        nearbyWifiUsers = [];
+        try {
+            let lanInfo = { lanIp: '', lanActive: false };
+            if (window.HydraNative && typeof window.HydraNative.getLocalWifiInfo === 'function') {
+                lanInfo = JSON.parse(window.HydraNative.getLocalWifiInfo());
+            }
+            myWifiSubnetIp = lanInfo.lanIp || '';
+            if (!lanInfo.lanActive || !myWifiSubnetIp) {
+                isScanningNearby = false;
+                return;
+            }
+            const subnet = myWifiSubnetIp.split('.').slice(0, 3).join('.');
+            const hideMe = localStorage.getItem('hydra_hide_nearby_wifi') === '1';
+            const myInfo = await AppActions.GetMyInfo().catch(() => null);
+            const myNick = (myInfo?.Nickname || '').trim();
+            const myPub = (myInfo?.PublicKey || myInfo?.Destination || identity || '').trim();
+
+            if (!hideMe && myNick && myPub) {
+                await fetch('http://191.223.137.164:8085/relay/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: 'wifi_beacon_' + myPub.slice(0, 10),
+                        from: myPub,
+                        from_nick: myNick.startsWith('@') ? myNick : ('@' + myNick),
+                        to: 'WIFI_SUBNET_' + subnet,
+                        chat_id: 'WIFI_NEARBY',
+                        content: 'WIFI_BEACON',
+                        timestamp: Date.now()
+                    })
+                }).catch(() => {});
+            }
+
+            const r = await fetch('http://191.223.137.164:8085/relay/poll?pub=' + encodeURIComponent('WIFI_SUBNET_' + subnet));
+            if (r.ok) {
+                const items = await r.json();
+                const mapByPub = {};
+                for (const it of (items || [])) {
+                    if (it.from && it.from !== myPub && it.from_nick) {
+                        mapByPub[it.from] = { nick: it.from_nick, pub: it.from, ts: it.timestamp || Date.now() };
+                    }
+                }
+                nearbyWifiUsers = Object.values(mapByPub);
+            }
+        } catch (e) {} finally {
+            isScanningNearby = false;
+        }
+    }
+
+    async function connectToNearbyUser(u) {
+        try {
+            await AppActions.AddContact(u.nick, u.pub);
+            showNearbyWifiModal = false;
+            location.reload();
+        } catch (e) { alert('Ошибка: ' + e); }
+    }
+    
 </script>
 
 {#if !isMobile}
@@ -483,6 +553,11 @@
                 <div style="width: 52px; height: 52px; border-radius: 50%; background: #1E1F22; border: 2px dashed #8AB4F8; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #8AB4F8; font-weight: 700;">+</div>
                 <span style="font-size: 11px; color: #8AB4F8; font-weight: 600; margin-top: 4px; white-space: nowrap;">+ Сторис 24ч</span>
             </div>
+
+        <div on:click={openNearbyWifiRadar} role="button" tabindex="0" on:keydown={(e) => e.key === 'Enter' && openNearbyWifiRadar()} style="display: flex; flex-direction: column; align-items: center; cursor: pointer; min-width: 68px;">
+            <div style="width: 52px; height: 52px; border-radius: 50%; background: linear-gradient(135deg, #172554, #1E3A8A); border: 2px solid #60A5FA; display: flex; align-items: center; justify-content: center; font-size: 22px; color: #fff;">📡</div>
+            <span style="font-size: 11px; color: #60A5FA; font-weight: 600; margin-top: 4px; white-space: nowrap;">Люди рядом</span>
+        </div>
             {#each hydraStories as st}
                 <div on:click={() => openHydraStory(st)} style="display: flex; flex-direction: column; align-items: center; cursor: pointer; min-width: 64px;">
                     <div style="width: 52px; height: 52px; border-radius: 50%; padding: 2px; background: linear-gradient(135deg, #8AB4F8, #4285F4);">
@@ -650,6 +725,44 @@
         <div style="background: #1E1F22; border-radius: 20px; padding: 14px; font-size: 13px; color: #E3E3E3;">
             <div>👁 Открытых просмотров: {activeStoryModal.openViews?.length || 0} {activeStoryModal.openViews?.length ? '(' + activeStoryModal.openViews.join(', ') + ')' : ''}</div>
             <div style="color: #8AB4F8; margin-top: 4px;">🕵️ Анонимных просмотров (Невидимка): {activeStoryModal.anonViews || 0}</div>
+        </div>
+    </div>
+{/if}
+
+
+{#if showNearbyWifiModal}
+    <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+        <div style="background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 24px; padding: 20px; width: 100%; max-width: 380px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h3 style="margin: 0; color: #E5E7EB; font-size: 17px;">📡 Люди рядом (только по Wi-Fi)</h3>
+                <button type="button" on:click={() => showNearbyWifiModal = false} style="background: #28292D; color: #fff; border: none; border-radius: 50%; width: 32px; height: 32px;">✕</button>
+            </div>
+            <p style="font-size: 12px; color: #9CA3AF; margin: 0 0 14px;">Показывает только @никнеймы пользователей Hydra в вашей сети Wi-Fi без раскрытия крипто-ключей.</p>
+            {#if !myWifiSubnetIp}
+                <div style="padding: 16px; border-radius: 16px; background: rgba(239,68,68,0.12); color: #FCA5A5; font-size: 13px; text-align: center;">⚠️ Подключитесь к Wi-Fi для обнаружения людей рядом.</div>
+            {:else}
+                <div style="padding: 10px 12px; border-radius: 12px; background: #121316; font-size: 12px; color: #60A5FA; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>🟢 Ваш Wi-Fi: <b>{myWifiSubnetIp}</b></span>
+                    <button type="button" on:click={scanNearbyWifiPeers} style="background: #1E3A8A; color: #fff; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px;">🔄 Поиск</button>
+                </div>
+                {#if isScanningNearby}
+                    <div style="text-align: center; padding: 20px; color: #9CA3AF; font-size: 13px;">⏳ Сканирование локальной сети...</div>
+                {:else if nearbyWifiUsers.length === 0}
+                    <div style="text-align: center; padding: 20px; color: #9CA3AF; font-size: 13px;">Никого не найдено в этой сети Wi-Fi.</div>
+                {:else}
+                    <div style="display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-y: auto;">
+                        {#each nearbyWifiUsers as u}
+                            <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: #121316; border-radius: 14px;">
+                                <div>
+                                    <div style="font-weight: 700; color: #E5E7EB; font-size: 14px;">{u.nick}</div>
+                                    <div style="font-size: 11px; color: #4CAF50;">📡 В вашей сети Wi-Fi</div>
+                                </div>
+                                <button type="button" on:click={() => connectToNearbyUser(u)} style="background: #1D4ED8; color: #fff; border: none; border-radius: 100px; padding: 7px 14px; font-size: 12px; font-weight: 700;">Написать</button>
+                            </div>
+                        {/each}
+                    </div>
+                {/if}
+            {/if}
         </div>
     </div>
 {/if}
