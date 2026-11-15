@@ -38,1350 +38,333 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply Complete Stage 5 & UX Polish (Real WebRTC Calls, 30s Lock & View Persistence, Direct Reply Notifications, Android 9 Scroll/Storage Fix, Story Blur & Circle Zoom)
+      - name: Apply Call Bubble Fix, QR Auto-Nick Resolve, Image Zoom/Share, Working Disappearing Timer & Security Hardening
         run: |
-          cat << 'PYEOF' > apply_complete_upgrade.py
+          cat << 'PYEOF' > apply_security_and_ux.py
           import os, re, shutil
 
-          # 0. Устанавливаем оригинальную иконку щита Гидры (logo.png) во все папки Android и фронтенда
-          real_hydra_logo = "frontend/src/assets/images/logo.png"
-          if os.path.exists(real_hydra_logo):
-              for mip in ["mipmap-mdpi", "mipmap-hdpi", "mipmap-xhdpi", "mipmap-xxhdpi", "mipmap-xxxhdpi"]:
-                  for fname in ["ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png"]:
-                      dst = f"android/app/src/main/res/{mip}/{fname}"
-                      os.makedirs(os.path.dirname(dst), exist_ok=True)
-                      shutil.copyfile(real_hydra_logo, dst)
-              shutil.copyfile(real_hydra_logo, "frontend/public/icon.png")
-              shutil.copyfile(real_hydra_logo, "icon.png")
+          # 1. БЕЗОПАСНОСТЬ (AndroidManifest.xml):
+          #    Ставим android:allowBackup="false", чтобы через ADB нельзя было слить базу чатов и ключи!
+          mf_path = "android/app/src/main/AndroidManifest.xml"
+          if os.path.exists(mf_path):
+              with open(mf_path, "r", encoding="utf-8") as f:
+                  mf = f.read()
+              mf = mf.replace('android:allowBackup="true"', 'android:allowBackup="false"')
+              with open(mf_path, "w", encoding="utf-8") as f:
+                  f.write(mf)
+              print("[OK] 1. AndroidManifest.xml: включена защита от ADB-бэкапа (allowBackup=false)")
 
-          # 1. frontend/src/utils.js:
-          #    - Чиним getInitials(name): убираем эмодзи (👥, 📢 и др.) и режем по полноценным Unicode-символам Array.from(), чтобы не было значка ' П' в русских названиях групп!
-          #    - Убираем все фиолетовые градиенты аватарок (#8b5cf6, #a855f7, #ec4899) и ставим благородные тёмно-синие/морские оттенки!
-          #    - Добавляем универсальную функцию formatPreviewText(text) для красивого отображения кружков, голосовых, видео и звонков вместо шифра Base64!
-          utils_js = '''export function getInitials(name) {
-              if (!name) return 'H';
-              const clean = String(name)
-                  .replace(/[\\u{1F300}-\\u{1FAFF}\\u{2600}-\\u{27BF}\\u{FE00}-\\u{FE0F}]/gu, '')
-                  .replace(/^[@+#\\s]+/, '')
-                  .trim();
-              if (!clean) return '👥';
-              const words = clean.split(/\\s+/).filter(Boolean);
-              if (words.length >= 2) {
-                  return (Array.from(words[0])[0] + Array.from(words[1])[0]).toUpperCase();
-              }
-              return Array.from(clean).slice(0, 2).join('').toUpperCase();
-          }
+          # 2. БЕЗОПАСНОСТЬ (mobile/mobile.go):
+          #    - Защищаем локальный сервер 127.0.0.1:8080 от внешних сайтов (блокируем чужие Origin в CORS, чтобы ни один сайт в браузере не мог обратиться к API приложения!)
+          mob_path = "mobile/mobile.go"
+          if os.path.exists(mob_path):
+              with open(mob_path, "r", encoding="utf-8") as f:
+                  mb = f.read()
 
-          export function formatPreviewText(raw) {
-              if (!raw) return 'Нет сообщений';
-              const s = String(raw).trim();
-              if (s.startsWith('[HYDRA_VOICE]:')) return '🎤 Голосовое сообщение';
-              if (s.startsWith('[HYDRA_CIRCLE]:')) return '📹 Видео-кружок';
-              if (s.startsWith('[HYDRA_VIDEO]:')) return '🎬 Видеоролик';
-              if (s.startsWith('[HYDRA_GROUP_INVITE]:') || s.startsWith('SFlEUkFfUk9PTV')) return '🎟️ Приглашение в группу/канал';
-              if (s.startsWith('[HYDRA_CALL_RING]:')) return '📞 Входящий вызов...';
-              if (s.startsWith('[HYDRA_CALL_ANSWER]:')) return '🟢 Вызов принят';
-              if (s.startsWith('[HYDRA_CALL_END]:')) return '☎️ Вызов завершён';
-              if (s.startsWith('[HYDRA_CALL_MISSED]:')) return '☎️ Пропущенный звонок';
-              if (s.startsWith('[HYDRA_CALL_ICE]:')) return '🔄 Установка соединения...';
-              return s;
-          }
+              old_cors = 'w.Header().Set("Access-Control-Allow-Origin", "*")'
+              new_cors = '''origin := r.Header.Get("Origin")
+          	if origin != "" && !strings.HasPrefix(origin, "http://127.0.0.1") && !strings.HasPrefix(origin, "http://localhost") {
+          		http.Error(w, "forbidden origin", http.StatusForbidden)
+          		return
+          	}
+          	w.Header().Set("Access-Control-Allow-Origin", "http://127.0.0.1:8080")'''
+              mb = mb.replace(old_cors, new_cors)
+              with open(mob_path, "w", encoding="utf-8") as f:
+                  f.write(mb)
+              print("[OK] 2. mobile/mobile.go: закрыт доступ к API 127.0.0.1:8080 для сторонних браузерных вкладок (Anti-CSRF/Session Hijack)")
 
-          export function getAvatarGradient(name) {
-              if (!name) return 'linear-gradient(135deg, #1E3A8A, #1D4ED8)';
-              let hash = 0;
-              for (let i = 0; i < name.length; i++) {
-                  hash = name.charCodeAt(i) + ((hash << 5) - hash);
-              }
-              const palettes = [
-                  ['#172554', '#1D4ED8'],
-                  ['#1E3A8A', '#2563EB'],
-                  ['#0F172A', '#1E40AF'],
-                  ['#0369A1', '#1D4ED8'],
-                  ['#0D9488', '#1E3A8A'],
-                  ['#1E293B', '#3B82F6'],
-                  ['#0284C7', '#1E3A8A'],
-                  ['#115E59', '#0369A1']
-              ];
-              const idx = Math.abs(hash) % palettes.length;
-              return `linear-gradient(135deg, ${palettes[idx][0]}, ${palettes[idx][1]})`;
-          }
+          # 3. БЕЗОПАСНОСТЬ + ПРЕВЬЮ ВЫЗОВОВ (frontend/src/utils.js):
+          #    - В formatPreviewText добавляем [HYDRA_CALL_ANSWER] и скрываем метки таймера [HYDRA_TTL:...]
+          #    - В parseMarkdown блокируем опасные ссылки javascript: / data: / vbscript: (Anti-XSS)
+          ut_path = "frontend/src/utils.js"
+          if os.path.exists(ut_path):
+              with open(ut_path, "r", encoding="utf-8") as f:
+                  ut = f.read()
+              ut = ut.replace(
+                  "const s = String(raw).trim();",
+                  "const s = String(raw).replace(/^\\[HYDRA_TTL:\\d+\\]/, '').trim();"
+              )
+              ut = ut.replace(
+                  "html = html.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href=\"$2\" target=\"_blank\" rel=\"noopener noreferrer\">$1</a>');",
+                  "html = html.replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^)]+)\\)/g, '<a href=\"$2\" target=\"_blank\" rel=\"noopener noreferrer\">$1</a>');"
+              )
+              with open(ut_path, "w", encoding="utf-8") as f:
+                  f.write(ut)
+              print("[OK] 3. utils.js: добавлена защита от XSS-ссылок и очистка меток таймера")
 
-          export function formatTime(timestamp) {
-              if (!timestamp) return '';
-              const date = new Date(timestamp);
-              return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          }
+          # 4. ЧИНИМ ГИГАНТСКИЙ КОД ПРИ ЗВОНКЕ (internal/appcore/messages.go и appcore.go):
+          #    - В SendText: если отправляется технический пакет [HYDRA_CALL_ANSWER]: или [HYDRA_CALL_ICE]: — отправляем его по сети собеседнику, но НЕ сохраняем в базу чата и НЕ выводим пузырь на экран!
+          #    - В StartVPSRelayLoop: ограничиваем размер карты seenIDs (до 1000 записей), чтобы исключить утечку памяти!
+          msg_path = "internal/appcore/messages.go"
+          if os.path.exists(msg_path):
+              with open(msg_path, "r", encoding="utf-8") as f:
+                  mc = f.read()
 
-          export function getStatusColor(status) {
-              switch (status) {
-                  case 'online': return '#4CAF50';
-                  case 'connecting': return '#FFC107';
-                  case 'starting': return '#3B82F6';
-                  case 'error': return '#F44336';
-                  default: return '#9E9E9E';
-              }
-          }
+              old_save_out = """	if err := a.Repo.SaveMessage(a.Ctx, msg); err != nil {
+          		log.Printf("[AppCore] Failed to save message: %v", err)
+          	}"""
 
-          export function getStatusText(status) {
-              switch (status) {
-                  case 'online': return 'В сети';
-                  case 'connecting': return 'Подключение...';
-                  case 'starting': return 'Подключение к узлу Hydra...';
-                  case 'error': return 'Ожидание сети';
-                  default: return 'Оффлайн';
-              }
-          }
+              new_save_out = """	// Технические пакеты WebRTC (CALL_ANSWER / CALL_ICE / GROUP_INVITE) не сохраняем как текстовые пузыри в истории чата
+          	if strings.HasPrefix(text, "[HYDRA_CALL_ANSWER]:") || strings.HasPrefix(text, "[HYDRA_CALL_ICE]:") || strings.HasPrefix(text, "[HYDRA_GROUP_INVITE]:") {
+          		return nil
+          	}
+          	if err := a.Repo.SaveMessage(a.Ctx, msg); err != nil {
+          		log.Printf("[AppCore] Failed to save message: %v", err)
+          	}"""
+              mc = mc.replace(old_save_out, new_save_out, 1)
+              with open(msg_path, "w", encoding="utf-8") as f:
+                  f.write(mc)
+              print("[OK] 4a. messages.go: пакеты [HYDRA_CALL_ANSWER] больше не сохраняются в чат как синие простыни кода!")
 
-          export function parseMarkdown(text) {
-              if (!text) return '';
-              let html = text
-                  .replace(/&/g, '&amp;')
-                  .replace(/</g, '&lt;')
-                  .replace(/>/g, '&gt;');
-              html = html.replace(/```([\\s\\S]*?)```/g, '<pre class="md-code-block">$1</pre>');
-              html = html.replace(/`([^`]+)`/g, '<code class="md-code">$1</code>');
-              html = html.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
-              html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-              html = html.replace(/(?<!\\w)\\*([^*]+)\\*(?!\\w)/g, '<em>$1</em>');
-              html = html.replace(/(?<!\\w)_([^_]+)_(?!\\w)/g, '<em>$1</em>');
-              html = html.replace(/~~([^~]+)~~/g, '<del>$1</del>');
-              html = html.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-              html = html.replace(/<[^>]+>|https?:\\/\\/[^\\s<]+/g, (match) => {
-                  if (match.startsWith('<')) return match;
-                  return `<a href="${match}" target="_blank" rel="noopener noreferrer">${match}</a>`;
-              });
-              return html.replace(/\\n/g, '<br>');
-          }
-          '''
-          with open("frontend/src/utils.js", "w", encoding="utf-8") as f:
-              f.write(utils_js)
-          print("[OK] 1. utils.js: починены русские инициалы групп с эмодзи и добавлен фильтр превью медиа/звонков!")
-
-          # 2. internal/appcore/appcore.go:
-          #    - Чиним текст системных уведомлений Android в SendNotification (чтобы вместо шифра [HYDRA_VOICE]... писалось "🎤 Голосовое сообщение", "📹 Видео-кружок", "📞 Входящий звонок"!)
-          #    - Фильтруем технические пакеты [HYDRA_CALL_ICE], чтобы они не засоряли базу чата, но мгновенно уходили во фронтенд через Emitter.Emit("call_signal", ...)
           ac_path = "internal/appcore/appcore.go"
           if os.path.exists(ac_path):
               with open(ac_path, "r", encoding="utf-8") as f:
                   ac = f.read()
-
-              old_notif = """	case "text":
-          		if len(message) > 100 {
-          			message = message[:97] + "..."
-          		}
-          	}"""
-
-              new_notif = """	case "text":
-          		if strings.HasPrefix(message, "[HYDRA_VOICE]:") {
-          			message = "🎤 Голосовое сообщение"
-          		} else if strings.HasPrefix(message, "[HYDRA_CIRCLE]:") {
-          			message = "📹 Видео-кружок"
-          		} else if strings.HasPrefix(message, "[HYDRA_VIDEO]:") {
-          			message = "🎬 Видеозапись"
-          		} else if strings.HasPrefix(message, "[HYDRA_CALL_RING]:") {
-          			message = "📞 Входящий аудиовызов Hydra..."
-          		} else if strings.HasPrefix(message, "[HYDRA_CALL_MISSED]:") {
-          			message = "☎️ Пропущенный вызов"
-          		} else if strings.HasPrefix(message, "[HYDRA_CALL_END]:") {
-          			message = "📞 Звонок завершён"
-          		} else if strings.HasPrefix(message, "[HYDRA_GROUP_INVITE]:") || strings.HasPrefix(message, "SFlEUkFfUk9PTV") {
-          			message = "🎟️ Приглашение в группу/канал"
-          		} else if len(message) > 100 {
-          			message = message[:97] + "..."
-          		}
-          	}"""
-              ac = ac.replace(old_notif, new_notif)
-
-              # В OnMessageReceived: если пришёл технический пакет звонка ([HYDRA_CALL_RING], [HYDRA_CALL_ANSWER], [HYDRA_CALL_ICE], [HYDRA_CALL_END]),
-              # сразу эмитим событие "hydra_call_signal" во фронтенд! А если это приглашение в группу [HYDRA_GROUP_INVITE]:Название|Ключ — автоматически добавляем группу в контакты!
-              old_on_msg = """	msg.ChatID = contact.ChatID
-
-          	if err := a.Repo.SaveMessage(a.Ctx, msg); err != nil {
-          		return
-          	}"""
-
-              new_on_msg = """	msg.ChatID = contact.ChatID
-
-          	if strings.HasPrefix(msg.Content, "[HYDRA_GROUP_INVITE]:") {
-          		parts := strings.SplitN(strings.TrimPrefix(msg.Content, "[HYDRA_GROUP_INVITE]:"), "|", 2)
-          		if len(parts) == 2 {
-          			_, _ = a.AddContact(parts[0], parts[1])
-          			msg.Content = "🎟️ Вас добавили в «" + parts[0] + "»"
-          		}
-          	}
-
-          	if strings.HasPrefix(msg.Content, "[HYDRA_CALL_ICE]:") || strings.HasPrefix(msg.Content, "[HYDRA_CALL_ANSWER]:") {
-          		a.Emitter.Emit("hydra_call_signal", map[string]interface{}{
-          			"from":    senderPubKey,
-          			"nick":    contact.Nickname,
-          			"chat_id": contact.ChatID,
-          			"content": msg.Content,
-          		})
-          		return
-          	}
-          	if strings.HasPrefix(msg.Content, "[HYDRA_CALL_RING]:") || strings.HasPrefix(msg.Content, "[HYDRA_CALL_END]:") || strings.HasPrefix(msg.Content, "[HYDRA_CALL_MISSED]:") {
-          		a.Emitter.Emit("hydra_call_signal", map[string]interface{}{
-          			"from":       senderPubKey,
-          			"contact_id": contact.ID,
-          			"nick":       contact.Nickname,
-          			"chat_id":    contact.ChatID,
-          			"content":    msg.Content,
-          		})
-          	}
-
-          	if err := a.Repo.SaveMessage(a.Ctx, msg); err != nil {
-          		return
-          	}"""
-              ac = ac.replace(old_on_msg, new_on_msg)
-
+              # Защита от утечки памяти в seenIDs
+              ac = ac.replace(
+                  "seenIDs[mID] = true",
+                  "if len(seenIDs) > 1000 { seenIDs = make(map[string]bool) }\n\t\t\t\t\t\t\tseenIDs[mID] = true"
+              )
               with open(ac_path, "w", encoding="utf-8") as f:
                   f.write(ac)
-              print("[OK] 2. appcore.go: красивые уведомления без Base64-шифра, авто-принятие приглашений в группы и сигналинг звонков!")
 
-          # 3. AndroidManifest.xml + MainActivity.kt:
-          #    - Разрешения WRITE_EXTERNAL_STORAGE / READ_EXTERNAL_STORAGE для Android 9 и 10 (чинит Permission Denial на Xiaomi Mi A1!)
-          #    - Нативное всплывающее уведомление (Heads-Up IMPORTANCE_HIGH) с кнопкой "Ответить" (RemoteInput Direct Reply) прямо из другого приложения!
-          #    - Блокировка приложения ТОЛЬКО если пользователь вышел дольше чем на 30 секунд!
-          manifest_path = "android/app/src/main/AndroidManifest.xml"
-          if os.path.exists(manifest_path):
-              with open(manifest_path, "r", encoding="utf-8") as f:
-                  mf = f.read()
-              if "WRITE_EXTERNAL_STORAGE" not in mf:
-                  mf = mf.replace(
-                      '<uses-permission android:name="android.permission.CAMERA" />',
-                      '<uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />'
-                  )
-              if "DirectReplyReceiver" not in mf:
-                  mf = mf.replace(
-                      '</application>',
-                      '        <receiver android:name=".DirectReplyReceiver" android:exported="false" />\n    </application>'
-                  )
-              with open(manifest_path, "w", encoding="utf-8") as f:
-                  f.write(mf)
-              print("[OK] 3a. AndroidManifest.xml: добавлены разрешения памяти для Android 9+ и DirectReplyReceiver для ответа из уведомления!")
-
-          # Создаём DirectReplyReceiver.kt для обработки ответа прямо из всплывающего уведомления
-          reply_receiver_kt = '''package com.teleghost.app
-
-          import android.content.BroadcastReceiver
-          import android.content.Context
-          import android.content.Intent
-          import androidx.core.app.NotificationManagerCompat
-          import androidx.core.app.RemoteInput
-          import org.json.JSONObject
-
-          class DirectReplyReceiver : BroadcastReceiver() {
-              override fun onReceive(context: Context, intent: Intent) {
-                  val results = RemoteInput.getResultsFromIntent(intent) ?: return
-                  val replyText = results.getCharSequence("key_text_reply")?.toString()?.trim() ?: return
-                  val senderNick = intent.getStringExtra("sender_nick") ?: ""
-                  val notifId = intent.getIntExtra("notif_id", 0)
-
-                  if (replyText.isNotEmpty()) {
-                      MainActivity.handleDirectReplyFromNotification(senderNick, replyText)
-                  }
-                  if (notifId != 0) {
-                      NotificationManagerCompat.from(context).cancel(notifId)
-                  }
-              }
-          }
-          '''
-          with open("android/app/src/main/java/com/teleghost/app/DirectReplyReceiver.kt", "w", encoding="utf-8") as f:
-              f.write(reply_receiver_kt)
-
-          kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
-          if os.path.exists(kt_path):
-              with open(kt_path, "r", encoding="utf-8") as f:
-                  kt = f.read()
-
-              # Добавляем переменную pauseTimestamp для 30-секундного таймера блокировки и поддержку Direct Reply
-              kt = kt.replace(
-                  "private var isOpeningSystemPicker = false",
-                  "private var isOpeningSystemPicker = false\n    private var pausedAtMs: Long = 0L"
+          # 5. АВТО-РЕГИСТРАЦИЯ ИМЕНИ ПРОФИЛЯ («Дима») НА СЕРВЕРЕ ПРИ ВХОДЕ (internal/appcore/auth.go):
+          #    Чтобы когда создаёшь профиль «Дима», он никогда не записывался как «User», а сразу закреплял имя «дима» за твоим ключом на VPS!
+          au_go_path = "internal/appcore/auth.go"
+          if os.path.exists(au_go_path):
+              with open(au_go_path, "r", encoding="utf-8") as f:
+                  ag = f.read()
+              ag = ag.replace(
+                  "go a.ConnectToI2P()",
+                  """go func() {
+          		a.ConnectToI2P()
+          		if a.Repo != nil {
+          			if u, _ := a.Repo.GetMyProfile(a.Ctx); u != nil && u.Nickname != "" && u.Nickname != "User" {
+          				_ = a.UpdateMyProfile(u.Nickname, u.Bio, u.Avatar)
+          			}
+          		}
+          	}()"""
               )
-              kt = kt.replace(
-                  'private const val PREFS_NAME = "hydra_biometric_prefs"',
-                  '''private const val PREFS_NAME = "hydra_biometric_prefs"
-                  var currentInstance: MainActivity? = null
-                  fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
-                      currentInstance?.runOnUiThread {
-                          val sNick = JSONObject.quote(senderNick)
-                          val sText = JSONObject.quote(replyText)
-                          currentInstance?.webView?.evaluateJavascript(
-                              "if(window.__onHydraDirectReply) window.__onHydraDirectReply($sNick, $sText);",
-                              null
-                          )
-                      }
-                  }'''
+              with open(au_go_path, "w", encoding="utf-8") as f:
+                  f.write(ag)
+              print("[OK] 5. auth.go: имя профиля (например, Дима) автоматически синхронизируется с VPS при входе, заменяя 'User'!")
+
+          # 6. АВТО-ОПРЕДЕЛЕНИЕ НИКА ПО QR-КОДУ (frontend/src/components/Modals.svelte) + РОВНАЯ КНОПКА МАСТЕР-КЛЮЧА (Auth.svelte):
+          #    Когда сканируешь QR-код (камерой или из галереи), сразу запрашиваем у VPS никнейм владельца этого ключа (/nick/resolve?pub=...) и ставим его вместо 'Контакт tezLHu'!
+          md_path = "frontend/src/components/Modals.svelte"
+          if os.path.exists(md_path):
+              with open(md_path, "r", encoding="utf-8") as f:
+                  md = f.read()
+
+              old_qr_cam_hit = """                if (code && code.data) {
+                              addContactAddress = code.data.trim();
+                              if (!addContactName.trim()) addContactName = 'Контакт ' + addContactAddress.slice(0, 6);
+                              qrStatusMsg = '✅ QR-код успешно считан камерой!';"""
+
+              new_qr_cam_hit = """                if (code && code.data) {
+                              addContactAddress = code.data.trim();
+                              qrStatusMsg = '⏳ QR считан! Поиск @никнейма на сервере...';
+                              stopLiveQRScanner();
+                              fetch('http://191.223.137.164:8085/nick/resolve?pub=' + encodeURIComponent(addContactAddress))
+                                  .then(r => r.ok ? r.json() : null)
+                                  .then(d => {
+                                      if (d && d.nickname) {
+                                          addContactName = '@' + d.nickname.replace(/^@/, '');
+                                          qrStatusMsg = '✅ Найдено имя пользователя: ' + addContactName;
+                                      } else {
+                                          if (!addContactName.trim() || addContactName.startsWith('Контакт ')) addContactName = 'Пользователь Hydra';
+                                          qrStatusMsg = '✅ QR-код считан! Введите имя друга выше.';
+                                      }
+                                  })
+                                  .catch(() => {
+                                      if (!addContactName.trim()) addContactName = 'Пользователь Hydra';
+                                      qrStatusMsg = '✅ QR-код успешно считан!';
+                                  });"""
+              md = md.replace(old_qr_cam_hit, new_qr_cam_hit)
+
+              old_qr_file_hit = """            if (code && code.data) {
+                          addContactAddress = code.data.trim();
+                          if (!addContactName.trim()) addContactName = 'Контакт ' + addContactAddress.slice(0, 6);
+                          qrStatusMsg = '✅ QR-код распознан из картинки!';"""
+
+              new_qr_file_hit = """            if (code && code.data) {
+                          addContactAddress = code.data.trim();
+                          qrStatusMsg = '⏳ Поиск @никнейма владельца QR...';
+                          fetch('http://191.223.137.164:8085/nick/resolve?pub=' + encodeURIComponent(addContactAddress))
+                              .then(r => r.ok ? r.json() : null)
+                              .then(d => {
+                                  if (d && d.nickname) {
+                                      addContactName = '@' + d.nickname.replace(/^@/, '');
+                                      qrStatusMsg = '✅ Найдено имя: ' + addContactName;
+                                  } else {
+                                      if (!addContactName.trim() || addContactName.startsWith('Контакт ')) addContactName = 'Пользователь Hydra';
+                                      qrStatusMsg = '✅ QR-код распознан из картинки!';
+                                  }
+                              }).catch(() => {});"""
+              md = md.replace(old_qr_file_hit, new_qr_file_hit)
+
+              with open(md_path, "w", encoding="utf-8") as f:
+                  f.write(md)
+              print("[OK] 6a. Modals.svelte: после сканирования QR-кода автоматически подтягивается @никнейм с сервера вместо 'Контакт tezLHu'!")
+
+          # Выравниваем кнопку "Я сохранил(а) Мастер-ключ HYDRA-KEY" в Auth.svelte (Скриншот 5)
+          au_svelte_path = "frontend/src/components/Auth.svelte"
+          if os.path.exists(au_svelte_path):
+              with open(au_svelte_path, "r", encoding="utf-8") as f:
+                  aus = f.read()
+              aus = aus.replace(
+                  'style="height: 52px; font-size: 16px; border-radius: 16px;">\n        Я сохранил(а) Мастер-ключ HYDRA-KEY\n      </button>',
+                  'style="min-height: 50px; height: auto; padding: 14px 20px; font-size: 15px; line-height: 1.3; border-radius: 100px; display: flex; align-items: center; justify-content: center; text-align: center;">\n        ✅ Я сохранил(а) Мастер-ключ\n      </button>'
               )
-              kt = kt.replace(
-                  "super.onCreate(savedInstanceState)",
-                  "super.onCreate(savedInstanceState)\n        currentInstance = this"
-              )
+              with open(au_svelte_path, "w", encoding="utf-8") as f:
+                  f.write(aus)
+              print("[OK] 6b. Auth.svelte: кнопка сохранения Мастер-ключа идеально выровнена!")
 
-              # На Android 9 (SDK < 29) запрашиваем WRITE_EXTERNAL_STORAGE и используем совместимое сохранение файла
-              kt = kt.replace(
-                  'if (checkSelfPermission(android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {\n                        needed.add(android.Manifest.permission.CAMERA)\n                    }',
-                  '''if (checkSelfPermission(android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                                  needed.add(android.Manifest.permission.CAMERA)
-                              }
-                              if (Build.VERSION.SDK_INT <= 29 && checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                                  needed.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                              }'''
-              )
-
-              # В saveLogsToDownloads для Android 9 (SDK < 29) пишем напрямую в Environment.getExternalStoragePublicDirectory(DIRECTORY_DOWNLOADS)
-              old_save_logs = """                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                              resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
-                          } else {
-                              resolver.insert(android.provider.MediaStore.Files.getContentUri("external"), cv)
-                          }"""
-              new_save_logs = """                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                              val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-                              if (!dlDir.exists()) dlDir.mkdirs()
-                              val outFile = File(dlDir, filename)
-                              outFile.writeText(logText, Charsets.UTF_8)
-                              runOnUiThread {
-                                  android.widget.Toast.makeText(this@MainActivity, "✅ Лог сохранён в Загрузки: $filename", android.widget.Toast.LENGTH_LONG).show()
-                              }
-                              return filename
-                          }
-                          val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)"""
-              kt = kt.replace(old_save_logs, new_save_logs)
-
-              # Делаем канал уведомлений для входящих сообщений IMPORTANCE_HIGH (всплывающий поверх других приложений!) и добавляем кнопку "Ответить" (RemoteInput)
-              kt = kt.replace(
-                  "val importance = android.app.NotificationManager.IMPORTANCE_DEFAULT",
-                  "val importance = android.app.NotificationManager.IMPORTANCE_HIGH"
-              )
-              kt = kt.replace(
-                  'private const val NOTIFICATION_CHANNEL_ID = "teleghost_messages"',
-                  'private const val NOTIFICATION_CHANNEL_ID = "hydra_heads_up_messages"'
-              )
-
-              old_show_notif = """                val builder = androidx.core.app.NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-                              .setSmallIcon(R.mipmap.ic_launcher)
-                              .setContentTitle(title)
-                              .setContentText(message)
-                              .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
-                              .setAutoCancel(true)
-                              .setOngoing(false)
-
-                          val intent = Intent(this, MainActivity::class.java).apply {
-                              flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                          }
-                          val pendingIntent: android.app.PendingIntent = android.app.PendingIntent.getActivity(this, 0, intent, android.app.PendingIntent.FLAG_IMMUTABLE)
-                          builder.setContentIntent(pendingIntent)
-
-                          with(androidx.core.app.NotificationManagerCompat.from(this)) {
-                              notify(System.currentTimeMillis().toInt(), builder.build())
-                          }"""
-
-              new_show_notif = """                val notifId = (System.currentTimeMillis() and 0xFFFFFFF).toInt()
-                          val senderNick = title.removePrefix("Hydra - ").trim()
-                          val remoteInput = androidx.core.app.RemoteInput.Builder("key_text_reply")
-                              .setLabel("Быстрый ответ...")
-                              .build()
-                          val replyIntent = Intent(this, DirectReplyReceiver::class.java).apply {
-                              putExtra("sender_nick", senderNick)
-                              putExtra("notif_id", notifId)
-                          }
-                          val replyFlags = if (Build.VERSION.SDK_INT >= 31) {
-                              android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE
-                          } else {
-                              android.app.PendingIntent.FLAG_UPDATE_CURRENT
-                          }
-                          val replyPendingIntent = android.app.PendingIntent.getBroadcast(this, notifId, replyIntent, replyFlags)
-                          val replyAction = androidx.core.app.NotificationCompat.Action.Builder(
-                              R.mipmap.ic_launcher,
-                              "Ответить",
-                              replyPendingIntent
-                          ).addRemoteInput(remoteInput).build()
-
-                          val intent = Intent(this, MainActivity::class.java).apply {
-                              flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                          }
-                          val pendingIntent = android.app.PendingIntent.getActivity(this, 0, intent, android.app.PendingIntent.FLAG_IMMUTABLE)
-
-                          val builder = androidx.core.app.NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-                              .setSmallIcon(R.mipmap.ic_launcher)
-                              .setContentTitle(title)
-                              .setContentText(message)
-                              .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
-                              .setCategory(androidx.core.app.NotificationCompat.CATEGORY_MESSAGE)
-                              .setDefaults(androidx.core.app.NotificationCompat.DEFAULT_ALL)
-                              .setAutoCancel(true)
-                              .setContentIntent(pendingIntent)
-                              .addAction(replyAction)
-
-                          with(androidx.core.app.NotificationManagerCompat.from(this)) {
-                              notify(notifId, builder.build())
-                          }"""
-              kt = kt.replace(old_show_notif, new_show_notif)
-
-              # 30-секундный таймер блокировки в onPause / onResume!
-              old_pause_resume = """    override fun onResume() {
-                  super.onResume()
-                  webView.onResume()
-                  mobile.Mobile.setPlatformBridge(this)
-                  if (isOpeningSystemPicker) {
-                      isOpeningSystemPicker = false
-                      webView.evaluateJavascript("setTimeout(function(){ window.__hydraSkipLock = false; }, 1000);", null)
-                      pushNativeLog("LIFECYCLE", "Возврат из Галереи (без блокировки)")
-                      return
-                  }
-                  pushNativeLog("LIFECYCLE", "Приложение развёрнуто (onResume)")
-                  webView.evaluateJavascript("if(window.__onHydraAppResume) window.__onHydraAppResume();", null)
-              }
-
-              override fun onPause() {
-                  if (!isOpeningSystemPicker) {
-                      pushNativeLog("LIFECYCLE", "Приложение свёрнуто (onPause) — блокировка!")
-                      webView.evaluateJavascript("if(window.__setHydraBlur) window.__setHydraBlur(true); if(window.__lockHydraNow) window.__lockHydraNow();", null)
-                  }
-                  webView.onPause()
-                  super.onPause()
-              }"""
-
-              new_pause_resume = """    override fun onResume() {
-                  super.onResume()
-                  webView.onResume()
-                  mobile.Mobile.setPlatformBridge(this)
-                  if (isOpeningSystemPicker) {
-                      isOpeningSystemPicker = false
-                      pausedAtMs = 0L
-                      webView.evaluateJavascript("window.__setHydraBlur && window.__setHydraBlur(false); setTimeout(function(){ window.__hydraSkipLock = false; }, 1000);", null)
-                      pushNativeLog("LIFECYCLE", "Возврат из Галереи (без блокировки)")
-                      return
-                  }
-                  val awayMs = if (pausedAtMs > 0L) (System.currentTimeMillis() - pausedAtMs) else 0L
-                  pausedAtMs = 0L
-                  if (awayMs >= 30000L) {
-                      pushNativeLog("LIFECYCLE", "Отсутствие ${awayMs / 1000} сек (>= 30с) — запрос разблокировки!")
-                      webView.evaluateJavascript("if(window.__lockHydraNow) window.__lockHydraNow(); if(window.__onHydraAppResume) window.__onHydraAppResume();", null)
-                  } else {
-                      pushNativeLog("LIFECYCLE", "Быстрый возврат (${awayMs / 1000} сек < 30с) — сессия сохранена без блокировки")
-                      webView.evaluateJavascript("if(window.__setHydraBlur) window.__setHydraBlur(false);", null)
-                  }
-              }
-
-              override fun onPause() {
-                  if (!isOpeningSystemPicker) {
-                      pausedAtMs = System.currentTimeMillis()
-                      webView.evaluateJavascript("if(window.__setHydraBlur) window.__setHydraBlur(true);", null)
-                  }
-                  webView.onPause()
-                  super.onPause()
-              }"""
-              kt = kt.replace(old_pause_resume, new_pause_resume)
-
-              with open(kt_path, "w", encoding="utf-8") as f:
-                  f.write(kt)
-              print("[OK] 3b. MainActivity.kt: 30-секундный таймер блокировки, всплывающее уведомление с кнопкой Ответить и поддержка памяти Android 9!")
-
-          # 4. frontend/index.html:
-          #    - Убираем мгновенный вызов __lockHydraNow при скрытии вкладки (теперь блокировка срабатывает строго если прошло >= 30 секунд!)
-          #    - Чиним CSS для Android 9 (убираем жёсткий overflow: hidden, блокировавший тач-скролл в Приватности!)
-          idx_path = "frontend/index.html"
-          if os.path.exists(idx_path):
-              with open(idx_path, "r", encoding="utf-8") as f:
-                  ih = f.read()
-              ih = ih.replace("if (window.__lockHydraNow) window.__lockHydraNow();", "window.__hiddenSince = Date.now();")
-              ih = ih.replace(
-                  "window.__setHydraBlur(false);",
-                  "window.__setHydraBlur(false);\n            if (window.__hiddenSince && (Date.now() - window.__hiddenSince >= 30000) && window.__lockHydraNow) { window.__lockHydraNow(); }\n            window.__hiddenSince = 0;"
-              )
-              with open(idx_path, "w", encoding="utf-8") as f:
-                  f.write(ih)
-              print("[OK] 4. index.html: синхронизирован 30-секундный таймер блокировки")
-
-          # 5. frontend/src/App.svelte:
-          #    - НЕ сбрасываем открытый чат или настройки при повторном входе после блокировки (сохраняем $mobileView и selectedContact)!
-          #    - Обрабатываем ответ прямо из всплывающего уведомления (window.__onHydraDirectReply): отправляем сообщение и ставим метку активности на 1 час!
-          #    - Делаем "Добавить в папку" и "Удалить из папки" удобными для пальца на телефоне (раскрываются по клику, а не по мышиному :hover!)
-          #    - Разрешаем кнопки "Переместить выше / Переместить ниже" для ЛЮБЫХ чатов, групп и каналов!
-          #    - Принимаем входящий звонок по событию "hydra_call_signal" на любом экране!
+          # 7. ПОЛНОЭКРАННЫЙ ПРОСМОТР ФОТО С ЗУМОМ И КНОПКАМИ "ПОДЕЛИТЬСЯ / ОТКРЫТЬ С ПОМОЩЬЮ" И "СОХРАНИТЬ" (frontend/src/App.svelte):
           app_path = "frontend/src/App.svelte"
           if os.path.exists(app_path):
               with open(app_path, "r", encoding="utf-8") as f:
                   ap = f.read()
 
-              # Убираем мгновенную блокировку в visibilitychange внутри App.svelte (пусть работает 30-секундный таймер!)
+              if "let previewImagePath = '';" not in ap:
+                  ap = ap.replace("let previewImage = null;", "let previewImage = null;\n  let previewImagePath = '';\n  let previewZoom = 1;", 1)
+
               ap = ap.replace(
-                  "if (mustLock && screen === 'main' && !window.__hydraSkipLock) {\n                    screen = 'login';\n                    showSettings = false;\n                }",
-                  "// Блокировка управляется 30-секундным таймером"
+                  'onPreviewImage: async (path) => {\n          const base64 = await AppActions.GetFileBase64(path);\n          previewImage = "data:image/jpeg;base64," + base64;\n      },',
+                  'onPreviewImage: async (path) => {\n          previewImagePath = path;\n          previewZoom = 1;\n          const base64 = await AppActions.GetFileBase64(path);\n          previewImage = "data:image/jpeg;base64," + base64;\n      },'
               )
 
-              # В window.__lockHydraNow сохраняем открытый экран (чат или настройки), чтобы при разблокировке вернуть пользователя туда же!
-              ap = ap.replace(
-                  "window.__lockHydraNow = () => {\n            if (window.__hydraSkipLock) return;\n            if (screen === 'main') {\n                screen = 'login';\n                showSettings = false;",
-                  "window.__lockHydraNow = () => {\n            if (window.__hydraSkipLock) return;\n            if (screen === 'main') {\n                window.__savedViewBeforeLock = $mobileView;\n                window.__savedSettingsBeforeLock = showSettings;\n                screen = 'login';"
-              )
+              old_preview_html = """    {#if previewImage}
+              <div class="fullscreen-preview" on:click={() => previewImage = null}>
+                  <img src={previewImage} alt="Preview" />
+              </div>
+          {/if}"""
 
-              # В onLoginSuccess восстанавливаем открытый до блокировки чат или раздел настроек (вместо сброса mobileView.set('list'))!
-              ap = ap.replace(
-                  "mobileView.set('list');",
-                  """if (window.__savedViewBeforeLock) {
-                        showSettings = !!window.__savedSettingsBeforeLock;
-                        mobileView.set(window.__savedViewBeforeLock);
-                        window.__savedViewBeforeLock = null;
-                    } else if (!selectedContact && !showSettings) {
-                        mobileView.set('list');
-                    }"""
-              )
-
-              # Добавляем обработчик быстрого ответа из уведомления (window.__onHydraDirectReply) и состояния аккордеона папок в контекстном меню
-              direct_reply_js = """
-              let showFolderAddList = false;
-              let showFolderRemList = false;
-
-              if (typeof window !== 'undefined') {
-                  window.__onHydraDirectReply = async (senderNick, replyText) => {
-                      // Фиксируем ответ из уведомления: на 1 час показываем точное время онлайна, затем снова 24ч
-                      localStorage.setItem('hydra_direct_reply_ts', String(Date.now()));
-                      localStorage.setItem('hydra_last_unlock_ts', String(Date.now()));
-                      const list = await AppActions.GetContacts().catch(() => []);
-                      const target = (list || []).find(c => (c.Nickname || '').toLowerCase().includes((senderNick || '').toLowerCase()));
-                      if (target) {
-                          await AppActions.SendText(target.ID, replyText, '');
-                          loadContacts();
-                      }
-                  };
-              }
-              """
-              if "window.__onHydraDirectReply" not in ap:
-                  ap = ap.replace("let folderContextMenu =", direct_reply_js + "\n  let folderContextMenu =", 1)
-
-              # Разрешаем onMovePin двигать ЛЮБОЙ контакт (если он ещё не в pinnedChats — автоматически добавляем текущий порядок в pinnedChats и двигаем вверх/вниз!)
-              old_move_pin = """      onMovePin: (contactId, direction) => {
-                    const index = pinnedChats.indexOf(contactId);
-                    if (index === -1) return;
-                    const newIndex = index + direction;
-                    if (newIndex < 0 || newIndex >= pinnedChats.length) return;
-                    
-                    const temp = pinnedChats[index];
-                    pinnedChats[index] = pinnedChats[newIndex];
-                    pinnedChats[newIndex] = temp;
-                    pinnedChats = [...pinnedChats];
-                    localStorage.setItem('pinnedChats', JSON.stringify(pinnedChats));
-                }"""
-
-              new_move_pin = """      onMovePin: (contactId, direction) => {
-                    if (!pinnedChats.includes(contactId)) {
-                        pinnedChats = [...pinnedChats, ...contacts.map(c => c.ID).filter(id => !pinnedChats.includes(id))];
-                    }
-                    const index = pinnedChats.indexOf(contactId);
-                    if (index === -1) return;
-                    const newIndex = index + direction;
-                    if (newIndex < 0 || newIndex >= pinnedChats.length) return;
-                    const temp = pinnedChats[index];
-                    pinnedChats[index] = pinnedChats[newIndex];
-                    pinnedChats[newIndex] = temp;
-                    pinnedChats = [...pinnedChats];
-                    localStorage.setItem('pinnedChats', JSON.stringify(pinnedChats));
-                    contacts = [...contacts];
-                }"""
-              ap = ap.replace(old_move_pin, new_move_pin)
-
-              # В контекстном меню контакта делаем "Добавить в папку" раскрывающимся по клику (для тач-экранов!) и показываем "Переместить выше / ниже" для ВСЕХ чатов, групп и каналов!
-              old_ctx_menu = """                {#if notInFolders.length > 0}
-                              <div class="context-item submenu-parent">
-                                  Добавить в папку
-                                  <div class="context-submenu">
-                                      {#each notInFolders as folder}
-                                          <div class="context-item" on:click={async () => {
-                                              await AppActions.AddChatToFolder(folder.ID || folder.id, contextMenu.contact.ID);
-                                              loadFolders();
-                                              contextMenu.show = false;
-                                              showToast(`Добавлено в папку "${folder.Name || folder.name}"`, 'success');
-                                          }}>{folder.Icon || folder.icon} {folder.Name || folder.name}</div>
-                                      {/each}
-                                  </div>
-                              </div>
+              new_preview_html = """    {#if previewImage}
+              <div class="fullscreen-preview" style="display: flex; flex-direction: column; justify-content: space-between; background: rgba(8,10,15,0.96); backdrop-filter: blur(16px);">
+                  <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 16px 20px; padding-top: calc(16px + env(safe-area-inset-top, 12px)); box-sizing: border-box; z-index: 10; background: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent);">
+                      <div style="display: flex; gap: 10px;">
+                          <button type="button" on:click={() => previewZoom = previewZoom >= 3 ? 1 : +(previewZoom + 0.75).toFixed(2)} style="background: #1A1C20; color: #60A5FA; border: 1px solid rgba(59,130,246,0.35); border-radius: 100px; padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer;">
+                              🔍 {previewZoom}x
+                          </button>
+                          {#if previewImagePath}
+                              <button type="button" on:click={async () => {
+                                  try { await AppActions.ShareFile(previewImagePath); } catch (e) { showToast('Ошибка открытия: ' + e, 'error'); }
+                              }} style="background: #1D4ED8; color: #fff; border: none; border-radius: 100px; padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer;">
+                                  📤 Поделиться / Открыть в...
+                              </button>
+                              <button type="button" on:click={async () => {
+                                  const fname = previewImagePath.split('/').pop() || ('hydra_photo_' + Date.now() + '.jpg');
+                                  await chatHandlers.onSaveFile(previewImagePath, fname);
+                              }} style="background: #1A1C20; color: #E5E7EB; border: 1px solid rgba(255,255,255,0.15); border-radius: 100px; padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer;">
+                                  📥 В Галерею
+                              </button>
                           {/if}
-
-                          {#if inFolders.length > 0}
-                              <div class="context-item submenu-parent">
-                                  Удалить из папки
-                                  <div class="context-submenu">
-                                      {#each inFolders as folder}
-                                          <div class="context-item" on:click={async () => {
-                                              await AppActions.RemoveChatFromFolder(folder.ID || folder.id, contextMenu.contact.ID);
-                                              loadFolders();
-                                              contextMenu.show = false;
-                                              showToast(`Удалено из папки "${folder.Name || folder.name}"`, 'success');
-                                          }}>{folder.Icon || folder.icon} {folder.Name || folder.name}</div>
-                                      {/each}
-                                  </div>
-                              </div>
-                          {/if}
-                      {/if}
-                      <div class="context-item" on:click={() => {
-                          sidebarHandlers.onTogglePin(contextMenu.contact.ID);
-                          contextMenu.show = false;
-                      }}>
-                          {pinnedChats.includes(contextMenu.contact.ID) ? 'Открепить' : 'Закрепить'}
                       </div>
-                      {#if pinnedChats.includes(contextMenu.contact.ID)}
-                          <div class="context-item" on:click={() => {
-                              sidebarHandlers.onMovePin(contextMenu.contact.ID, -1);
-                              contextMenu.show = false;
-                          }}>Переместить выше</div>
-                          <div class="context-item" on:click={() => {
-                              sidebarHandlers.onMovePin(contextMenu.contact.ID, 1);
-                              contextMenu.show = false;
-                          }}>Переместить ниже</div>
-                      {/if}"""
+                      <button type="button" on:click={() => { previewImage = null; previewZoom = 1; }} style="background: rgba(255,255,255,0.15); color: #fff; border: none; border-radius: 50%; width: 38px; height: 38px; font-size: 16px; cursor: pointer;">✕</button>
+                  </div>
 
-              new_ctx_menu = """                {#if notInFolders.length > 0}
-                              <div class="context-item" style="color: #60A5FA; font-weight: 700;" on:click|stopPropagation={() => showFolderAddList = !showFolderAddList}>
-                                  📁 Добавить в папку {showFolderAddList ? '▾' : '▸'}
-                              </div>
-                              {#if showFolderAddList}
-                                  {#each notInFolders as folder}
-                                      <div class="context-item" style="padding-left: 28px; background: rgba(29,78,216,0.12);" on:click|stopPropagation={async () => {
-                                          await AppActions.AddChatToFolder(folder.ID || folder.id, contextMenu.contact.ID);
-                                          await loadFolders();
-                                          showFolderAddList = false;
-                                          contextMenu.show = false;
-                                          showToast(`Добавлено в папку "${folder.Name || folder.name}"`, 'success');
-                                      }}>{folder.Icon || folder.icon} {folder.Name || folder.name}</div>
-                                  {/each}
-                              {/if}
-                          {/if}
+                  <div style="flex: 1; width: 100%; overflow: auto; display: flex; align-items: center; justify-content: center; touch-action: pan-x pan-y pinch-zoom;" on:dblclick={() => previewZoom = previewZoom > 1 ? 1 : 2.5}>
+                      <img
+                          src={previewImage}
+                          alt="Preview"
+                          style="max-width: 95%; max-height: 82vh; object-fit: contain; transform: scale({previewZoom}); transform-origin: center center; transition: transform 0.2s ease; cursor: zoom-in;"
+                      />
+                  </div>
 
-                          {#if inFolders.length > 0}
-                              <div class="context-item" style="color: #FCA5A5;" on:click|stopPropagation={() => showFolderRemList = !showFolderRemList}>
-                                  📁 Убрать из папки {showFolderRemList ? '▾' : '▸'}
-                              </div>
-                              {#if showFolderRemList}
-                                  {#each inFolders as folder}
-                                      <div class="context-item" style="padding-left: 28px;" on:click|stopPropagation={async () => {
-                                          await AppActions.RemoveChatFromFolder(folder.ID || folder.id, contextMenu.contact.ID);
-                                          await loadFolders();
-                                          showFolderRemList = false;
-                                          contextMenu.show = false;
-                                          showToast(`Убрано из папки "${folder.Name || folder.name}"`, 'info');
-                                      }}>{folder.Icon || folder.icon} {folder.Name || folder.name}</div>
-                                  {/each}
-                              {/if}
-                          {/if}
-                      {/if}
-                      <div class="context-item" on:click={() => {
-                          sidebarHandlers.onTogglePin(contextMenu.contact.ID);
-                          contextMenu.show = false;
-                      }}>
-                          📌 {pinnedChats.includes(contextMenu.contact.ID) ? 'Открепить' : 'Закрепить'}
-                      </div>
-                      <div class="context-item" on:click={() => {
-                          sidebarHandlers.onMovePin(contextMenu.contact.ID, -1);
-                          contextMenu.show = false;
-                      }}>⬆️ Переместить выше</div>
-                      <div class="context-item" on:click={() => {
-                          sidebarHandlers.onMovePin(contextMenu.contact.ID, 1);
-                          contextMenu.show = false;
-                      }}>⬇️ Переместить ниже</div>"""
-              ap = ap.replace(old_ctx_menu, new_ctx_menu)
+                  <div style="padding: 12px; text-align: center; color: #9CA3AF; font-size: 11px;">
+                      Двойное нажатие на фото или кнопка 🔍 для увеличения • 📤 чтобы поделиться или открыть в другом приложении
+                  </div>
+              </div>
+          {/if}"""
 
-              # Чиним CopyToClipboard -> ClipboardSet в контекстном меню сообщения (в логе была ошибка unknown method: CopyToClipboard!)
-              ap = ap.replace("AppActions.CopyToClipboard(", "AppActions.ClipboardSet(")
-
-              # Добавляем глобальные CSS-правки для Android 9+ (чтобы экран не разъезжался и работал скролл во всех вкладках)
-              android9_css = """
-              :global(.settings-content-area), :global(.contacts-list), :global(.messages-container) {
-                  overflow-y: auto !important;
-                  -webkit-overflow-scrolling: touch !important;
-                  touch-action: pan-y !important;
-                  overscroll-behavior-y: contain !important;
-              }
-              :global(.chat-avatar), :global(.contact-avatar) {
-                  flex-shrink: 0 !important;
-                  min-width: 42px !important;
-                  min-height: 42px !important;
-                  aspect-ratio: 1 / 1 !important;
-              }
-              """
-              ap = ap.replace("</style>", android9_css + "\n</style>", 1)
-
+              ap = ap.replace(old_preview_html, new_preview_html)
               with open(app_path, "w", encoding="utf-8") as f:
                   f.write(ap)
-              print("[OK] 5. App.svelte: сохранение открытого экрана при блокировке, тач-меню папок, перемещение групп вверх/вниз и Android 9 скролл!")
+              print("[OK] 7. App.svelte: добавлен зум фотографий (🔍 1x..3x и двойной тап) + кнопки '📤 Поделиться / Открыть в...' и '📥 В Галерею'!")
 
-          # 6. frontend/src/components/Sidebar.svelte:
-          #    - Убираем кружок "📡 Люди рядом" с главного экрана чатов (переносим его в меню Настроек -> Приватность/Профиль)!
-          #    - На мобилке используем sortedContacts вместо filteredContacts (чтобы кнопки Переместить выше/ниже реально двигали чаты и группы!)
-          #    - Используем formatPreviewText(contact.LastMessage), чтобы вместо [HYDRA_VOICE]... писалось "🎤 Голосовое сообщение" / "📹 Видео-кружок"!
-          #    - В Сторис: убираем стандартную панель плеера (controls), делаем 1 тап по видео = Пауза/Пуск, адаптивный блюр-фон под цвет кадра для маленьких видео и полноэкранный режим для вертикальных + кнопку "🗑️ Удалить историю"!
-          sb_path = "frontend/src/components/Sidebar.svelte"
-          if os.path.exists(sb_path):
-              with open(sb_path, "r", encoding="utf-8") as f:
-                  sb = f.read()
-
-              sb = sb.replace(
-                  "import { getInitials, formatTime, getStatusColor, getStatusText, getAvatarGradient } from '../utils.js';",
-                  "import { getInitials, formatTime, getStatusColor, getStatusText, getAvatarGradient, formatPreviewText } from '../utils.js';"
-              )
-
-              # На мобилке заменяем {#each filteredContacts as contact} на {#each sortedContacts as contact}
-              sb = sb.replace("{#each filteredContacts as contact}", "{#each sortedContacts as contact}")
-
-              # Заменяем сырой вывод LastMessage на красивый formatPreviewText(contact.LastMessage)
-              sb = sb.replace("{contact.LastMessage || 'Нет сообщений'}", "{formatPreviewText(contact.LastMessage)}")
-
-              # Убираем кружок "Люди рядом" из ленты Сторис на главном экране
-              sb = re.sub(
-                  r'<div on:click=\{openNearbyWifiRadar\}[\s\S]*?Люди рядом</span>\s*</div>',
-                  '',
-                  sb
-              )
-
-              # Добавляем функцию принудительного удаления Сторис и переключения паузы одним тапом
-              story_del_js = """
-              let storyPaused = false;
-              let storyIsVertical = false;
-
-              function deleteCurrentStory(stId) {
-                  hydraStories = hydraStories.filter(s => s.id !== stId);
-                  localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
-                  activeStoryModal = null;
-              }
-              """
-              if "function deleteCurrentStory(" not in sb:
-                  sb = sb.replace("function openHydraStory(st) {", story_del_js + "\n    function openHydraStory(st) {\n        storyPaused = false;", 1)
-
-              # Обновляем модальное окно просмотра Сторис: БЕЗ стандартных controls, 1 тап = Пауза/Пуск, атмосферный размытый фон сзади для небольших видео и кнопка Удалить историю!
-              old_story_modal = """{#if activeStoryModal}
-              <div on:click={() => activeStoryModal = null} style="position: fixed; inset: 0; background: rgba(18,18,18,0.96); z-index: 99999; display: flex; flex-direction: column; justify-content: space-between; padding: 24px;">
-                  <div style="display: flex; justify-content: space-between; align-items: center; padding-top: env(safe-area-inset-top, 10px);">
-                      <div>
-                          <div style="font-weight: 700; color: #E3E3E3; font-size: 16px;">{activeStoryModal.author}</div>
-                          <div style="font-size: 12px; color: #8AB4F8;">⏱ Активна 24 часа • Защищено E2EE</div>
-                      </div>
-                      <button type="button" style="background: #28292D; color: #fff; border: none; border-radius: 50%; width: 38px; height: 38px; font-size: 16px;">✕</button>
-                  </div>
-                  <div style="text-align: center; margin: auto 0;" on:click|stopPropagation>
-                      {#if activeStoryModal.video}
-                          <video controls autoplay playsinline src={activeStoryModal.video} style="max-width: 100%; max-height: 58vh; border-radius: 20px; background: #000;"></video>
-                      {:else if activeStoryModal.image}
-                          <img src={activeStoryModal.image} alt="story" style="max-width: 100%; max-height: 58vh; border-radius: 20px;" />
-                      {/if}
-                      {#if activeStoryModal.text}
-                          <div style="margin-top: 16px; font-size: 20px; color: #E3E3E3; font-weight: 600;">{activeStoryModal.text}</div>
-                      {/if}
-                  </div>
-                  <div style="background: #1E1F22; border-radius: 20px; padding: 14px; font-size: 13px; color: #E3E3E3;">
-                      <div>👁 Открытых просмотров: {activeStoryModal.openViews?.length || 0} {activeStoryModal.openViews?.length ? '(' + activeStoryModal.openViews.join(', ') + ')' : ''}</div>
-                      <div style="color: #8AB4F8; margin-top: 4px;">🕵️ Анонимных просмотров (Невидимка): {activeStoryModal.anonViews || 0}</div>
-                  </div>
-              </div>
-          {/if}"""
-
-              new_story_modal = """{#if activeStoryModal}
-              <div style="position: fixed; inset: 0; background: #0B0D12; z-index: 99999; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
-                  <!-- Динамический размытый атмосферный фон под цвет видео/фото -->
-                  {#if activeStoryModal.video}
-                      <video autoplay loop muted playsinline src={activeStoryModal.video} style="position: absolute; inset: -30px; width: calc(100% + 60px); height: calc(100% + 60px); object-fit: cover; filter: blur(38px) brightness(0.45) saturate(1.6); pointer-events: none; z-index: 0;"></video>
-                  {:else if activeStoryModal.image}
-                      <img src={activeStoryModal.image} alt="" style="position: absolute; inset: -30px; width: calc(100% + 60px); height: calc(100% + 60px); object-fit: cover; filter: blur(38px) brightness(0.45) saturate(1.6); pointer-events: none; z-index: 0;" />
-                  {/if}
-
-                  <!-- Шапка Сторис с кнопками Удалить и Закрыть -->
-                  <div style="position: relative; z-index: 2; display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; padding-top: calc(16px + env(safe-area-inset-top, 12px)); background: linear-gradient(to bottom, rgba(0,0,0,0.65), transparent);">
-                      <div>
-                          <div style="font-weight: 700; color: #fff; font-size: 16px;">{activeStoryModal.author}</div>
-                          <div style="font-size: 12px; color: #60A5FA;">⏱ 24ч • {storyPaused ? '⏸ Пауза (нажмите для пуска)' : '▶️ Идёт показ'}</div>
-                      </div>
-                      <div style="display: flex; gap: 10px; align-items: center;">
-                          <button type="button" on:click|stopPropagation={() => deleteCurrentStory(activeStoryModal.id)} style="background: rgba(239,68,68,0.25); color: #FCA5A5; border: 1px solid rgba(239,68,68,0.4); border-radius: 100px; padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer;">
-                              🗑️ Удалить
-                          </button>
-                          <button type="button" on:click={() => activeStoryModal = null} style="background: rgba(255,255,255,0.15); color: #fff; border: none; border-radius: 50%; width: 38px; height: 38px; font-size: 16px; cursor: pointer;">✕</button>
-                      </div>
-                  </div>
-
-                  <!-- Контент Сторис: 1 нажатие = Пауза / Продолжить (без панели плеера!) -->
-                  <div style="position: relative; z-index: 1; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: {storyIsVertical ? '0' : '16px'}; overflow: hidden;" on:click|stopPropagation={(e) => {
-                      const vid = e.currentTarget.querySelector('video');
-                      if (vid) {
-                          if (vid.paused) { vid.play(); storyPaused = false; }
-                          else { vid.pause(); storyPaused = true; }
-                      }
-                  }}>
-                      {#if activeStoryModal.video}
-                          <video
-                              autoplay
-                              loop
-                              playsinline
-                              src={activeStoryModal.video}
-                              on:loadedmetadata={(e) => {
-                                  const v = e.currentTarget;
-                                  storyIsVertical = (v.videoHeight > v.videoWidth * 1.15);
-                              }}
-                              style="width: {storyIsVertical ? '100%' : 'auto'}; height: {storyIsVertical ? '100%' : 'auto'}; max-width: 100%; max-height: {storyIsVertical ? '100%' : '70vh'}; object-fit: {storyIsVertical ? 'cover' : 'contain'}; border-radius: {storyIsVertical ? '0' : '22px'}; box-shadow: 0 12px 40px rgba(0,0,0,0.6); cursor: pointer;"
-                          ></video>
-                      {:else if activeStoryModal.image}
-                          <img src={activeStoryModal.image} alt="story" style="max-width: 100%; max-height: 72vh; object-fit: contain; border-radius: 22px; box-shadow: 0 12px 40px rgba(0,0,0,0.6);" />
-                      {/if}
-                      {#if activeStoryModal.text}
-                          <div style="position: absolute; bottom: 20px; left: 20px; right: 20px; text-align: center; background: rgba(10,12,18,0.75); backdrop-filter: blur(10px); padding: 12px 18px; border-radius: 16px; font-size: 17px; color: #fff; font-weight: 600;">{activeStoryModal.text}</div>
-                      {/if}
-                  </div>
-
-                  <div style="position: relative; z-index: 2; margin: 12px 16px calc(12px + env(safe-area-inset-bottom, 8px)); background: rgba(26,28,32,0.85); backdrop-filter: blur(14px); border-radius: 20px; padding: 12px 16px; font-size: 12px; color: #E5E7EB;">
-                      <div>👁 Открытых просмотров: {activeStoryModal.openViews?.length || 0} {activeStoryModal.openViews?.length ? '(' + activeStoryModal.openViews.join(', ') + ')' : ''}</div>
-                      <div style="color: #60A5FA; margin-top: 4px;">🕵️ Анонимных просмотров (Невидимка): {activeStoryModal.anonViews || 0}</div>
-                  </div>
-              </div>
-          {/if}"""
-              sb = sb.replace(old_story_modal, new_story_modal)
-
-              # Глобальный запрет иконкам плеера поверх видео в Сторис
-              story_css = """
-              video::-webkit-media-controls,
-              video::-webkit-media-controls-enclosure,
-              video::-webkit-media-controls-panel,
-              video::-webkit-media-controls-overlay-play-button {
-                  display: none !important;
-                  opacity: 0 !important;
-              }
-              """
-              sb = sb.replace("</style>", story_css + "\n</style>", 1)
-
-              with open(sb_path, "w", encoding="utf-8") as f:
-                  f.write(sb)
-              print("[OK] 6. Sidebar.svelte: Сторис без контролов с адаптивным блюром и кнопкой Удалить, убран кружок Люди рядом, сортировка чатов!")
-
-          # 7. frontend/src/components/Settings.svelte:
-          #    Добавляем кнопку "📡 Люди рядом (Wi-Fi радар)" прямо во вкладку Профиль / Сеть и Сервер!
-          st_path = "frontend/src/components/Settings.svelte"
-          if os.path.exists(st_path):
-              with open(st_path, "r", encoding="utf-8") as f:
-                  st = f.read()
-
-              nearby_in_settings_js = """
-              let showSettingsNearbyModal = false;
-              let settingsNearbyList = [];
-              let isScanningSettingsNearby = false;
-
-              async function scanSettingsNearbyWifi() {
-                  showSettingsNearbyModal = true;
-                  isScanningSettingsNearby = true;
-                  settingsNearbyList = [];
-                  try {
-                      refreshLanWifiInfo();
-                      if (!lanWifiInfo.lanActive || !lanWifiInfo.lanIp) {
-                          isScanningSettingsNearby = false;
-                          return;
-                      }
-                      const subnet = lanWifiInfo.lanIp.split('.').slice(0, 3).join('.');
-                      const hideMe = localStorage.getItem('hydra_hide_nearby_wifi') === '1';
-                      const myNick = (profileNickname || '').trim();
-                      const myPub = (myDestination || '').trim();
-                      if (!hideMe && myNick && myPub) {
-                          await fetch('http://191.223.137.164:8085/relay/send', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                  id: 'wifi_beacon_' + myPub.slice(0, 10),
-                                  from: myPub,
-                                  from_nick: myNick.startsWith('@') ? myNick : ('@' + myNick),
-                                  to: 'WIFI_SUBNET_' + subnet,
-                                  chat_id: 'WIFI_NEARBY',
-                                  content: 'WIFI_BEACON',
-                                  timestamp: Date.now()
-                              })
-                          }).catch(() => {});
-                      }
-                      const r = await fetch('http://191.223.137.164:8085/relay/poll?pub=' + encodeURIComponent('WIFI_SUBNET_' + subnet));
-                      if (r.ok) {
-                          const items = await r.json();
-                          const byPub = {};
-                          for (const it of (items || [])) {
-                              if (it.from && it.from !== myPub && it.from_nick) {
-                                  byPub[it.from] = { nick: it.from_nick, pub: it.from };
-                              }
-                          }
-                          settingsNearbyList = Object.values(byPub);
-                      }
-                  } catch (e) {} finally {
-                      isScanningSettingsNearby = false;
-                  }
-              }
-              """
-              if "function scanSettingsNearbyWifi()" not in st:
-                  st = st.replace("function refreshLanWifiInfo() {", nearby_in_settings_js + "\n    function refreshLanWifiInfo() {", 1)
-
-              # Добавляем кнопку открытия "📡 Люди рядом (Wi-Fi)" в Профиль
-              st = st.replace(
-                  '<button class="btn-primary" on:click={onSaveProfile}>💾 Сохранить изменения</button>',
-                  '''<button class="btn-primary" on:click={onSaveProfile}>💾 Сохранить изменения</button>
-                  <button type="button" class="btn-secondary" on:click={scanSettingsNearbyWifi} style="width: 100%; border-radius: 100px; background: #1A1C20; border: 1px solid rgba(59,130,246,0.35); color: #60A5FA; font-weight: 700; padding: 12px;">📡 Люди рядом (Поиск в сети Wi-Fi)</button>
-                  {#if showSettingsNearbyModal}
-                      <div style="background: #121316; border: 1px solid rgba(59,130,246,0.3); border-radius: 18px; padding: 14px; margin-top: 8px;">
-                          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                              <span style="font-weight: 700; font-size: 13px; color: #60A5FA;">📡 Люди в вашем Wi-Fi ({lanWifiInfo.lanIp || 'Нет Wi-Fi'})</span>
-                              <button type="button" on:click={() => showSettingsNearbyModal = false} style="background: transparent; color: #9CA3AF; border: none; font-size: 14px;">✕</button>
-                          </div>
-                          {#if !lanWifiInfo.lanActive}
-                              <div style="font-size: 12px; color: #FCA5A5;">Подключитесь к Wi-Fi для поиска людей рядом.</div>
-                          {:else if isScanningSettingsNearby}
-                              <div style="font-size: 12px; color: #9CA3AF;">⏳ Поиск пользователей в локальной сети...</div>
-                          {:else if settingsNearbyList.length === 0}
-                              <div style="font-size: 12px; color: #9CA3AF;">Никого не найдено рядом.</div>
-                          {:else}
-                              {#each settingsNearbyList as u}
-                                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
-                                      <span style="font-weight: 700; color: #E5E7EB;">{u.nick}</span>
-                                      <button type="button" on:click={async () => { await AppActions.AddContact(u.nick, u.pub); alert('✅ Контакт ' + u.nick + ' добавлен!'); }} style="background: #1D4ED8; color: #fff; border: none; border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700;">+ В чаты</button>
-                                  </div>
-                              {/each}
-                          {/if}
-                      </div>
-                  {/if}'''
-              )
-              with open(st_path, "w", encoding="utf-8") as f:
-                  f.write(st)
-              print("[OK] 7. Settings.svelte: радар '📡 Люди рядом' перенесён в Профиль!")
-
-          # 8. frontend/src/components/Chat.svelte:
-          #    - Настоящие P2P WebRTC-звонки между двумя телефонами с сигналами [HYDRA_CALL_RING], [HYDRA_CALL_ANSWER], [HYDRA_CALL_END], [HYDRA_CALL_MISSED] и карточками вызовов прямо в ленте чата!
-          #    - Кружки: ровная надпись '🔊 Звук' по центру снизу, плавное увеличение в 1.35x при удержании пальца >= 1 сек, двойной тап открывает меню (Ответить / Удалить / В Галерею)!
-          #    - Управление Группой/Каналом через '⋮': добавление участников и по @нику/ID, и в 1 клик прямо из списка существующих чатов!
-          #    - Отправка видеоролика в чат с выбором качества (480p сжатый ролик с обрезкой / Оригинал файлом)!
+          # 8. РАБОТАЮЩИЙ ТАЙМЕР ИСЧЕЗАЮЩИХ СООБЩЕНИЙ (⏱ Выкл / 1м / 1ч) + ФИЛЬТР CALL_ANSWER В Chat.svelte:
           ch_path = "frontend/src/components/Chat.svelte"
           if os.path.exists(ch_path):
               with open(ch_path, "r", encoding="utf-8") as f:
                   ch = f.read()
 
-              if "EventsOn" not in ch:
-                  ch = ch.replace("import * as AppActions from '../../wailsjs/go/main/App.js';", "import * as AppActions from '../../wailsjs/go/main/App.js';\n    import { EventsOn } from '../../wailsjs/runtime/runtime.js';")
-
-              # Заменяем старые функции startHydraCall / endHydraCall на настоящий сетевой WebRTC сигналинг + зум кружка при удержании 1с + выбор участников группы из списка чатов + отправку видео!
-              old_call_block = """    let activeCallModal = false;
-              let callStatusText = 'Соединение по защищённому WebRTC-каналу...';
-
-              function startHydraCall() {
-                  activeCallModal = true;
-                  callStatusText = '🔐 Установка сквозного E2EE WebRTC-вызова...';
-                  navigator.mediaDevices?.getUserMedia({ audio: true }).then((stream) => {
-                      callStatusText = '🟢 Идёт вызов (' + (selectedContact?.Nickname || 'Контакт') + ')... Микрофон активен';
-                      window.__hydraCallStream = stream;
-                  }).catch(() => {
-                      callStatusText = '🔔 Вызов отправлен собеседнику...';
-                  });
+              # Запускаем интервал автоудаления сообщений при включённом таймере disappearingTimer (60 сек = 1м, 3600 сек = 1ч)!
+              ttl_engine_js = """
+              // Автоматическое удаление сообщений по таймеру (⏱ 1м / 1ч)
+              let ttlCleanupTimer = null;
+              $: if (selectedContact) {
+                  const savedTtl = localStorage.getItem('hydra_ttl_' + selectedContact.ID);
+                  if (savedTtl !== null) disappearingTimer = Number(savedTtl);
               }
-
-              function endHydraCall() {
-                  if (window.__hydraCallStream) {
-                      window.__hydraCallStream.getTracks().forEach(t => t.stop());
-                      window.__hydraCallStream = null;
-                  }
-                  activeCallModal = false;
-              }"""
-
-              new_call_block = """    let activeCallModal = false;
-              let incomingCallOffer = null;
-              let callConnected = false;
-              let callStatusText = 'Соединение по защищённому WebRTC-каналу...';
-              let hydraPeerConn = null;
-              let remoteAudioEl = null;
-              let callRingTimeout = null;
-
-              // Зум кружка при удержании пальца 1 сек
-              let zoomedCircleMsgId = null;
-              let circleHoldTimer = null;
-              function startCircleHold(msgId) {
-                  clearTimeout(circleHoldTimer);
-                  circleHoldTimer = setTimeout(() => {
-                      zoomedCircleMsgId = msgId;
-                      if (navigator.vibrate) navigator.vibrate(35);
-                  }, 750);
-              }
-              function endCircleHold() {
-                  clearTimeout(circleHoldTimer);
-                  zoomedCircleMsgId = null;
-              }
-
-              // Выбор участников для группы из существующих контактов
-              let allExistingContactsForGroup = [];
-              async function openGroupManagementModal() {
-                  showChatHeaderMenu = false;
-                  showRoomSettingsModal = true;
-                  try {
-                      const list = await AppActions.GetContacts();
-                      allExistingContactsForGroup = (list || []).filter(c => c.ID !== selectedContact?.ID && !String(c.Nickname || '').startsWith('👥') && !String(c.Nickname || '').startsWith('📢'));
-                  } catch (e) { allExistingContactsForGroup = []; }
-              }
-              async function inviteContactToGroup(targetContact) {
-                  if (!selectedContact || !targetContact) return;
-                  const invitePayload = `[HYDRA_GROUP_INVITE]:${selectedContact.Nickname}|${selectedContact.I2PAddress}`;
-                  try {
-                      await AppActions.SendText(targetContact.ID, invitePayload, '');
-                      alert(`✅ Приглашение в «${selectedContact.Nickname}» отправлено пользователю ${targetContact.Nickname}!`);
-                  } catch (e) {
-                      alert('Ошибка отправки приглашения: ' + e);
+              function toggleAndSaveDisappearingTimer() {
+                  if (disappearingTimer === 0) disappearingTimer = 60;
+                  else if (disappearingTimer === 60) disappearingTimer = 3600;
+                  else disappearingTimer = 0;
+                  if (selectedContact) {
+                      localStorage.setItem('hydra_ttl_' + selectedContact.ID, String(disappearingTimer));
                   }
               }
-
-              // Отправка видео с обрезкой и выбором качества (Ролик с плеером ИЛИ Исходный файл)
-              let showVideoTrimModal = false;
-              let videoFileToTrim = null;
-              let videoTrimQuality = 'compressed'; // 'compressed' | 'original'
-              let videoTrimMaxSec = 30;
-
-              function handleCustomVideoPick(e) {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  videoFileToTrim = file;
-                  showVideoTrimModal = true;
-              }
-
-              async function sendTrimmedOrQualityVideo() {
-                  if (!videoFileToTrim || !selectedContact) return;
-                  showVideoTrimModal = false;
-                  const reader = new FileReader();
-                  reader.onload = async () => {
-                      const b64 = reader.result;
-                      if (videoTrimQuality === 'original') {
-                          const tmp = await AppActions.SaveTempImage(b64, videoFileToTrim.name || 'video.mp4').catch(() => '');
-                          if (tmp) await AppActions.SendFileMessage(selectedContact.ID, '', '', [tmp], true);
-                      } else {
-                          await AppActions.SendText(selectedContact.ID, `[HYDRA_VIDEO]:${b64}`, '');
+              if (typeof window !== 'undefined') {
+                  setInterval(async () => {
+                      if (!disappearingTimer || disappearingTimer <= 0 || !messages || messages.length === 0) return;
+                      const nowMs = Date.now();
+                      const maxAgeMs = disappearingTimer * 1000;
+                      let deletedAny = false;
+                      for (const m of messages) {
+                          if (m.Timestamp && (nowMs - m.Timestamp >= maxAgeMs)) {
+                              await AppActions.DeleteMessage(m.ID).catch(() => {});
+                              deletedAny = true;
+                          }
                       }
-                      videoFileToTrim = null;
-                      dispatch('refresh');
-                  };
-                  reader.readAsDataURL(videoFileToTrim);
+                      if (deletedAny) {
+                          messages = messages.filter(m => !(m.Timestamp && (nowMs - m.Timestamp >= maxAgeMs)));
+                          dispatch('refresh');
+                      }
+                  }, 3000);
               }
+              """
+              if "function toggleAndSaveDisappearingTimer()" not in ch:
+                  ch = ch.replace("function cycleDisappearingTimer() {", ttl_engine_js + "\n    function cycleDisappearingTimer() {\n        toggleAndSaveDisappearingTimer();\n        return;", 1)
 
-              // Настоящий WebRTC P2P аудиовызов через VPS релей
-              async function startHydraCall() {
-                  if (!selectedContact) return;
-                  activeCallModal = true;
-                  callConnected = false;
-                  callStatusText = '🔔 Вызов ' + (selectedContact.Nickname || '') + '... Ожидание ответа';
-                  try {
-                      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                      window.__hydraCallStream = stream;
-                      hydraPeerConn = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-                      stream.getTracks().forEach(t => hydraPeerConn.addTrack(t, stream));
-                      hydraPeerConn.ontrack = (ev) => {
-                          if (remoteAudioEl && ev.streams[0]) {
-                              remoteAudioEl.srcObject = ev.streams[0];
-                              remoteAudioEl.play().catch(() => {});
-                          }
-                      };
-                      const offer = await hydraPeerConn.createOffer();
-                      await hydraPeerConn.setLocalDescription(offer);
-                      await new Promise(r => setTimeout(r, 600));
-                      const sdpJson = JSON.stringify(hydraPeerConn.localDescription);
-                      await AppActions.SendText(selectedContact.ID, '[HYDRA_CALL_RING]:' + btoa(unescape(encodeURIComponent(sdpJson))), '');
-                      dispatch('refresh');
-
-                      clearTimeout(callRingTimeout);
-                      callRingTimeout = setTimeout(async () => {
-                          if (activeCallModal && !callConnected) {
-                              await AppActions.SendText(selectedContact.ID, '[HYDRA_CALL_MISSED]:Абонент не ответил', '');
-                              endHydraCall(false);
-                              dispatch('refresh');
-                          }
-                      }, 28000);
-                  } catch (err) {
-                      callStatusText = '❌ Ошибка микрофона/вызова: ' + err;
-                  }
-              }
-
-              async function acceptIncomingHydraCall() {
-                  if (!incomingCallOffer || !selectedContact) return;
-                  try {
-                      callStatusText = '🔐 Подключение защищённого аудиопотока...';
-                      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                      window.__hydraCallStream = stream;
-                      hydraPeerConn = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-                      stream.getTracks().forEach(t => hydraPeerConn.addTrack(t, stream));
-                      hydraPeerConn.ontrack = (ev) => {
-                          if (remoteAudioEl && ev.streams[0]) {
-                              remoteAudioEl.srcObject = ev.streams[0];
-                              remoteAudioEl.play().catch(() => {});
-                          }
-                      };
-                      const remoteDesc = JSON.parse(decodeURIComponent(escape(atob(incomingCallOffer))));
-                      await hydraPeerConn.setRemoteDescription(new RTCSessionDescription(remoteDesc));
-                      const answer = await hydraPeerConn.createAnswer();
-                      await hydraPeerConn.setLocalDescription(answer);
-                      await new Promise(r => setTimeout(r, 600));
-                      const ansJson = JSON.stringify(hydraPeerConn.localDescription);
-                      await AppActions.SendText(selectedContact.ID, '[HYDRA_CALL_ANSWER]:' + btoa(unescape(encodeURIComponent(ansJson))), '');
-                      incomingCallOffer = null;
-                      callConnected = true;
-                      callStatusText = '🟢 Разговор идёт (E2EE Audio активно)';
-                  } catch (e) {
-                      callStatusText = '❌ Сбой ответа на звонок: ' + e;
-                  }
-              }
-
-              async function endHydraCall(notifyPeer = true) {
-                  clearTimeout(callRingTimeout);
-                  if (notifyPeer && selectedContact) {
-                      const tag = (incomingCallOffer && !callConnected) ? '[HYDRA_CALL_MISSED]:Вызов отклонён' : '[HYDRA_CALL_END]:Звонок завершён';
-                      await AppActions.SendText(selectedContact.ID, tag, '').catch(() => {});
-                      dispatch('refresh');
-                  }
-                  if (hydraPeerConn) {
-                      hydraPeerConn.close();
-                      hydraPeerConn = null;
-                  }
-                  if (window.__hydraCallStream) {
-                      window.__hydraCallStream.getTracks().forEach(t => t.stop());
-                      window.__hydraCallStream = null;
-                  }
-                  incomingCallOffer = null;
-                  callConnected = false;
-                  activeCallModal = false;
-              }
-
-              EventsOn('hydra_call_signal', async (sig) => {
-                  if (!sig || !sig.content) return;
-                  const c = String(sig.content);
-                  if (c.startsWith('[HYDRA_CALL_RING]:')) {
-                      incomingCallOffer = c.slice('[HYDRA_CALL_RING]:'.length);
-                      activeCallModal = true;
-                      callConnected = false;
-                      callStatusText = '📲 Входящий вызов от ' + (sig.nick || selectedContact?.Nickname || 'контакта');
-                  } else if (c.startsWith('[HYDRA_CALL_ANSWER]:') && hydraPeerConn) {
-                      try {
-                          const b64 = c.slice('[HYDRA_CALL_ANSWER]:'.length);
-                          const ansDesc = JSON.parse(decodeURIComponent(escape(atob(b64))));
-                          await hydraPeerConn.setRemoteDescription(new RTCSessionDescription(ansDesc));
-                          clearTimeout(callRingTimeout);
-                          callConnected = true;
-                          callStatusText = '🟢 Собеседник ответил • Идёт разговор (E2EE)';
-                      } catch (e) {}
-                  } else if (c.startsWith('[HYDRA_CALL_END]:') || c.startsWith('[HYDRA_CALL_MISSED]:')) {
-                      endHydraCall(false);
-                      dispatch('refresh');
-                  }
-              });"""
-
-              ch = ch.replace(old_call_block, new_call_block)
-
-              # Обновляем логику присутствия (если человек ответил из уведомления меньше часа назад — показываем точное время даже при скрытом статусе, а через час снова 'Был(а) за последние 24ч')
+              # В шаблоне Chat.svelte перехватываем также [HYDRA_CALL_ANSWER]: и [HYDRA_CALL_ICE]:, чтобы они НИКОГДА не рисовались синими простынями Base64!
               ch = ch.replace(
-                  "if (hideExactTime) return 'Был(а) за последние 24ч';",
-                  """const replyBoostTs = Number(localStorage.getItem('hydra_direct_reply_ts') || 0);
-                  if (hideExactTime && (Date.now() - replyBoostTs > 3600000)) return 'Был(а) за последние 24ч';"""
+                  "{:else if msg.Content && (msg.Content.startsWith('[HYDRA_CALL_RING]:') || msg.Content.startsWith('[HYDRA_CALL_MISSED]:') || msg.Content.startsWith('[HYDRA_CALL_END]:'))}",
+                  "{:else if msg.Content && (msg.Content.startsWith('[HYDRA_CALL_RING]:') || msg.Content.startsWith('[HYDRA_CALL_ANSWER]:') || msg.Content.startsWith('[HYDRA_CALL_ICE]:') || msg.Content.startsWith('[HYDRA_CALL_MISSED]:') || msg.Content.startsWith('[HYDRA_CALL_END]:'))}"
               )
 
-              # В меню '⋮' шапки чата добавляем пункт "👥 Добавить участников / Управление группой"
+              # Если в базе с прошлых тестов уже застряло сообщение с [HYDRA_CALL_ANSWER]: — рисуем его аккуратной плашкой "🟢 Вызов принят" вместо Base64!
               ch = ch.replace(
-                  '<button type="button" on:click={clearCurrentChatHistory}',
-                  '''{#if String(selectedContact?.Nickname || '').startsWith('👥') || String(selectedContact?.Nickname || '').startsWith('📢')}
-                      <button type="button" on:click={openGroupManagementModal} style="width: 100%; text-align: left; padding: 10px 12px; background: transparent; color: #60A5FA; border: none; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer;">👥 Добавить участников (по ID / из чатов)</button>
-                  {/if}
-                  <button type="button" on:click={clearCurrentChatHistory}'''
+                  "{msg.Content.startsWith('[HYDRA_CALL_RING]:') ? (msg.IsOutgoing ? 'Исходящий вызов' : 'Входящий вызов') : (msg.Content.startsWith('[HYDRA_CALL_MISSED]:') ? 'Пропущенный вызов' : 'Аудиозвонок завершён')}",
+                  "{msg.Content.startsWith('[HYDRA_CALL_RING]:') ? (msg.IsOutgoing ? 'Исходящий вызов' : 'Входящий вызов') : (msg.Content.startsWith('[HYDRA_CALL_ANSWER]:') ? '🟢 Вызов принят (E2EE)' : (msg.Content.startsWith('[HYDRA_CALL_MISSED]:') ? 'Пропущенный вызов' : 'Аудиозвонок завершён'))}"
               )
-
-              # Обновляем модалку звонка (добавляем кнопку "🟢 Принять вызов" для входящего звонка и скрытый <audio bind:this={remoteAudioEl}>)
-              old_call_modal_html = """{#if activeCallModal}
-              <div style="position: fixed; inset: 0; background: rgba(18,18,18,0.96); z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 24px;">
-                  <div style="width: 96px; height: 96px; border-radius: 50%; background: #1E1F22; border: 3px solid #8AB4F8; display: flex; align-items: center; justify-content: center; font-size: 36px; color: #8AB4F8; font-weight: 700;">
-                      {getInitials(selectedContact?.Nickname)}
-                  </div>
-                  <div style="font-size: 22px; font-weight: 800; color: #E3E3E3;">{selectedContact?.Nickname}</div>
-                  <div style="font-size: 14px; color: #8AB4F8; text-align: center;">{callStatusText}</div>
-                  <button type="button" on:click={endHydraCall} style="margin-top: 24px; background: #ff4757; color: #fff; border: none; border-radius: 100px; padding: 14px 36px; font-size: 15px; font-weight: 700; cursor: pointer;">
-                      📴 Завершить звонок
-                  </button>
-              </div>
-          {/if}"""
-
-              new_call_modal_html = """{#if activeCallModal}
-              <div style="position: fixed; inset: 0; background: rgba(12,14,20,0.96); backdrop-filter: blur(16px); z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 24px;">
-                  <audio bind:this={remoteAudioEl} autoplay></audio>
-                  <div style="width: 96px; height: 96px; border-radius: 50%; background: #1A1C20; border: 3px solid #3B82F6; display: flex; align-items: center; justify-content: center; font-size: 36px; color: #60A5FA; font-weight: 700; box-shadow: 0 0 32px rgba(29,78,216,0.4);">
-                      {getInitials(selectedContact?.Nickname)}
-                  </div>
-                  <div style="font-size: 22px; font-weight: 800; color: #E5E7EB;">{selectedContact?.Nickname}</div>
-                  <div style="font-size: 14px; color: #60A5FA; text-align: center;">{callStatusText}</div>
-                  <div style="display: flex; gap: 16px; margin-top: 24px;">
-                      {#if incomingCallOffer && !callConnected}
-                          <button type="button" on:click={acceptIncomingHydraCall} style="background: #10B981; color: #fff; border: none; border-radius: 100px; padding: 14px 28px; font-size: 15px; font-weight: 800; cursor: pointer;">
-                              🟢 Принять
-                          </button>
-                      {/if}
-                      <button type="button" on:click={() => endHydraCall(true)} style="background: #ff4757; color: #fff; border: none; border-radius: 100px; padding: 14px 28px; font-size: 15px; font-weight: 800; cursor: pointer;">
-                          📴 {incomingCallOffer && !callConnected ? 'Отклонить' : 'Завершить'}
-                      </button>
-                  </div>
-              </div>
-          {/if}"""
-              ch = ch.replace(old_call_modal_html, new_call_modal_html)
-
-              # Обновляем рендер видео-кружков (ровная плашка 🔊 Звук строго по центру, зум 1.35x при удержании 1 сек и двойной тап -> меню сообщения!) + рендер карточек звонков и видеороликов в чате!
-              old_circle_chat = """                {:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
-                              <div style="padding: 4px; display: flex; flex-direction: column; align-items: center;">
-                                  <div style="width: 216px; height: 216px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #8AB4F8; background: #12131A; position: relative; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 24px rgba(0,0,0,0.5);">
-                                      <video
-                                          preload="metadata"
-                                          autoplay
-                                          muted
-                                          loop
-                                          playsinline
-                                          src={msg.Content.slice('[HYDRA_CIRCLE]:'.length) + '#t=0.1'}
-                                          on:loadedmetadata={(e) => { const v = e.currentTarget; v.currentTime = 0.1; v.play().catch(() => {}); }}
-                                          on:click|stopPropagation={(e) => {
-                                              const v = e.currentTarget;
-                                              if (v.muted) {
-                                                  v.muted = false;
-                                                  v.currentTime = 0;
-                                                  v.play();
-                                              } else if (v.paused) {
-                                                  v.play();
-                                              } else {
-                                                  v.muted = true;
-                                                  v.pause();
-                                              }
-                                          }}
-                                          style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; cursor: pointer;"
-                                      ></video>
-                                      <div style="position: absolute; bottom: 10px; right: 28px; background: rgba(0,0,0,0.65); color: #8AB4F8; border-radius: 100px; padding: 2px 8px; font-size: 10px; font-weight: 700; pointer-events: none;">🔊 Нажмите для звука</div>
-                                  </div>
-                              </div>"""
-
-              new_circle_chat = """                {:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
-                              <div
-                                  style="padding: 8px 4px; display: flex; flex-direction: column; align-items: center;"
-                                  on:touchstart={() => startCircleHold(msg.ID)}
-                                  on:touchend={endCircleHold}
-                                  on:touchcancel={endCircleHold}
-                                  on:mousedown={() => startCircleHold(msg.ID)}
-                                  on:mouseup={endCircleHold}
-                                  on:dblclick|stopPropagation={(e) => onShowMessageMenu(e, msg)}
-                              >
-                                  <div style="width: 216px; height: 216px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #3B82F6; background: #12131A; position: relative; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 24px rgba(0,0,0,0.5); transform: scale({zoomedCircleMsgId === msg.ID ? 1.32 : 1}); transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2); z-index: {zoomedCircleMsgId === msg.ID ? 50 : 2};">
-                                      <video
-                                          preload="metadata"
-                                          autoplay
-                                          muted
-                                          loop
-                                          playsinline
-                                          src={msg.Content.slice('[HYDRA_CIRCLE]:'.length) + '#t=0.1'}
-                                          on:loadedmetadata={(e) => { const v = e.currentTarget; v.currentTime = 0.1; v.play().catch(() => {}); }}
-                                          on:click|stopPropagation={(e) => {
-                                              const v = e.currentTarget;
-                                              if (v.muted) {
-                                                  v.muted = false;
-                                                  v.currentTime = 0;
-                                                  v.play();
-                                              } else if (v.paused) {
-                                                  v.play();
-                                              } else {
-                                                  v.muted = true;
-                                                  v.pause();
-                                              }
-                                          }}
-                                          style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; cursor: pointer;"
-                                      ></video>
-                                      <div style="position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: rgba(12,14,20,0.75); color: #60A5FA; border-radius: 100px; padding: 3px 10px; font-size: 10px; font-weight: 700; white-space: nowrap; pointer-events: none;">🔊 Звук • 2x тап меню</div>
-                                  </div>
-                              </div>
-                          {:else if msg.Content && msg.Content.startsWith('[HYDRA_VIDEO]:')}
-                              <div style="padding: 4px; max-width: 260px;">
-                                  <video controls playsinline src={msg.Content.slice('[HYDRA_VIDEO]:'.length)} style="width: 100%; max-height: 320px; border-radius: 14px; background: #000;"></video>
-                              </div>
-                          {:else if msg.Content && (msg.Content.startsWith('[HYDRA_CALL_RING]:') || msg.Content.startsWith('[HYDRA_CALL_MISSED]:') || msg.Content.startsWith('[HYDRA_CALL_END]:'))}
-                              <div style="display: flex; align-items: center; gap: 10px; padding: 6px 10px;">
-                                  <span style="font-size: 20px;">{msg.Content.startsWith('[HYDRA_CALL_MISSED]:') ? '☎️' : '📞'}</span>
-                                  <div>
-                                      <div style="font-weight: 700; font-size: 13px; color: {msg.Content.startsWith('[HYDRA_CALL_MISSED]:') ? '#FCA5A5' : '#E5E7EB'};">
-                                          {msg.Content.startsWith('[HYDRA_CALL_RING]:') ? (msg.IsOutgoing ? 'Исходящий вызов' : 'Входящий вызов') : (msg.Content.startsWith('[HYDRA_CALL_MISSED]:') ? 'Пропущенный вызов' : 'Аудиозвонок завершён')}
-                                      </div>
-                                      <button type="button" on:click|stopPropagation={startHydraCall} style="margin-top: 4px; background: rgba(59,130,246,0.2); color: #60A5FA; border: 1px solid rgba(59,130,246,0.35); border-radius: 100px; padding: 3px 10px; font-size: 11px; font-weight: 700; cursor: pointer;">Перезвонить</button>
-                                  </div>
-                              </div>"""
-              ch = ch.replace(old_circle_chat, new_circle_chat)
-
-              # В панели над полем ввода добавляем кнопку "🎬 Видео" (с выбором качества и обрезкой) и модальное окно добавления участников в Группу/Канал (из чатов + по ID)!
-              ch = ch.replace(
-                  ">{isRecordingMedia && recordMode==='video' ? '⏹ Стоп' : '📹 Кружок'}</button>\n    </div>",
-                  """>{isRecordingMedia && recordMode==='video' ? '⏹ Стоп' : '📹 Кружок'}</button>
-                  <label style="flex: 1; background: #28292D; color: #E3E3E3; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer; text-align: center; white-space: nowrap;">
-                      🎬 Видео
-                      <input type="file" accept="video/*" style="display: none;" on:change={handleCustomVideoPick} />
-                  </label>
-              </div>"""
-              )
-
-              modals_for_chat_html = """
-          {#if showVideoTrimModal && videoFileToTrim}
-              <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
-                  <div style="background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 24px; padding: 20px; width: 100%; max-width: 360px;">
-                      <h3 style="margin: 0 0 8px; color: #E5E7EB; font-size: 16px;">🎬 Параметры отправки видео</h3>
-                      <p style="font-size: 12px; color: #9CA3AF; margin: 0 0 12px;">Файл: <b>{videoFileToTrim.name}</b> ({(videoFileToTrim.size / 1024 / 1024).toFixed(2)} МБ)</p>
-                      <label style="display: block; font-size: 12px; color: #9CA3AF; margin-bottom: 10px;">
-                          Формат и качество:
-                          <select bind:value={videoTrimQuality} style="width: 100%; margin-top: 6px; padding: 10px; border-radius: 12px; background: #121316; color: #fff; border: 1px solid rgba(59,130,246,0.3);">
-                              <option value="compressed">🎬 Видеоролик с плеером в чате (сжатый)</option>
-                              <option value="original">📄 Исходное качество (в виде файла)</option>
-                          </select>
-                      </label>
-                      <label style="display: block; font-size: 12px; color: #9CA3AF; margin-bottom: 14px;">
-                          Обрезать длительность (сек): <b>до {videoTrimMaxSec} сек</b>
-                          <input type="range" min="5" max="120" step="5" bind:value={videoTrimMaxSec} style="width: 100%; margin-top: 6px; accent-color: #1D4ED8;" />
-                      </label>
-                      <div style="display: flex; gap: 8px;">
-                          <button type="button" on:click={() => { showVideoTrimModal = false; videoFileToTrim = null; }} style="flex: 1; padding: 10px; border-radius: 100px; background: #28292D; color: #fff; border: none;">Отмена</button>
-                          <button type="button" on:click={sendTrimmedOrQualityVideo} style="flex: 1; padding: 10px; border-radius: 100px; background: #1D4ED8; color: #fff; border: none; font-weight: 700;">Отправить</button>
-                      </div>
-                  </div>
-              </div>
-          {/if}
-
-          {#if showRoomSettingsModal && selectedContact}
-              <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
-                  <div style="background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 24px; padding: 20px; width: 100%; max-width: 380px; max-height: 85vh; overflow-y: auto;">
-                      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                          <h3 style="margin: 0; color: #E5E7EB; font-size: 16px;">👥 Участники: {selectedContact.Nickname}</h3>
-                          <button type="button" on:click={() => showRoomSettingsModal = false} style="background: #28292D; color: #fff; border: none; border-radius: 50%; width: 32px; height: 32px;">✕</button>
-                      </div>
-                      <div style="font-size: 12px; color: #9CA3AF; margin-bottom: 6px;">Добавить по @нику или крипто-ID:</div>
-                      <div style="display: flex; gap: 8px; margin-bottom: 14px;">
-                          <input type="text" placeholder="@никнейм или ключ..." bind:value={newRoomMemberInput} style="flex: 1; padding: 10px; border-radius: 12px; background: #121316; color: #fff; border: 1px solid rgba(59,130,246,0.3); font-size: 12px;" />
-                          <button type="button" on:click={async () => {
-                              if (!newRoomMemberInput.trim()) return;
-                              try {
-                                  const c = await AppActions.AddContact(newRoomMemberInput.trim(), newRoomMemberInput.trim());
-                                  if (c) await inviteContactToGroup(c);
-                                  newRoomMemberInput = '';
-                              } catch (e) { alert('Ошибка: ' + e); }
-                          }} style="background: #1D4ED8; color: #fff; border: none; border-radius: 12px; padding: 0 14px; font-size: 12px; font-weight: 700;">+ По ID</button>
-                      </div>
-                      <div style="font-size: 12px; color: #9CA3AF; margin-bottom: 8px;">Или выберите прямо из ваших чатов:</div>
-                      {#if allExistingContactsForGroup.length === 0}
-                          <div style="font-size: 12px; color: #6B7280; padding: 8px 0;">Нет других контактов в списке чатов.</div>
-                      {:else}
-                          <div style="display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto;">
-                              {#each allExistingContactsForGroup as c}
-                                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #121316; border-radius: 12px;">
-                                      <span style="font-size: 13px; color: #E5E7EB; font-weight: 600;">{c.Nickname}</span>
-                                      <button type="button" on:click={() => inviteContactToGroup(c)} style="background: #1E3A8A; color: #60A5FA; border: 1px solid rgba(59,130,246,0.3); border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700;">+ Добавить</button>
-                                  </div>
-                              {/each}
-                          </div>
-                      {/if}
-                  </div>
-              </div>
-          {/if}
-          """
-              ch = ch.replace("<style>", modals_for_chat_html + "\n<style>", 1)
 
               with open(ch_path, "w", encoding="utf-8") as f:
                   f.write(ch)
-              print("[OK] 8. Chat.svelte: реальные WebRTC звонки с карточками в чате, зум кружка при удержании 1с, выбор качества видео и добавление в группу из чатов!")
+              print("[OK] 8. Chat.svelte: включён реальный таймер автоудаления сообщений (⏱ 1м / 1ч) и скрыт код [HYDRA_CALL_ANSWER]!")
+
+          # 9. В MainActivity.kt сбрасываем AudioManager.MODE_NORMAL при закрытии/паузе, чтобы системное английское уведомление Android 'A call is in progress' сразу пропадало после звонка!
+          kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
+          if os.path.exists(kt_path):
+              with open(kt_path, "r", encoding="utf-8") as f:
+                  kt = f.read()
+              if "AudioManager" not in kt:
+                  kt = kt.replace(
+                      "override fun onPause() {",
+                      """override fun onPause() {
+                  try {
+                      val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+                      if (am.mode != android.media.AudioManager.MODE_NORMAL) {
+                          am.mode = android.media.AudioManager.MODE_NORMAL
+                      }
+                  } catch (_: Exception) {}"""
+                  )
+              with open(kt_path, "w", encoding="utf-8") as f:
+                  f.write(kt)
+              print("[OK] 9. MainActivity.kt: авто-сброс режима AudioManager после завершения WebRTC-звонка")
           PYEOF
-          python3 apply_complete_upgrade.py
-          rm -f apply_complete_upgrade.py
+          python3 apply_security_and_ux.py
+          rm -f apply_security_and_ux.py
           gofmt -w internal/ mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -1391,13 +374,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Complete Stage 5 & UX Polish
+      - name: Commit Security Hardening & UX Fixes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Complete Stage 5: Real WebRTC calls + call cards, 30s lock timer, Direct Reply notifications, Android 9 scroll/storage fix, Story blur & Circle hold-zoom [skip ci]"
+            git commit -m "Fix CALL_ANSWER bubble code, auto-resolve QR nickname, add Image Zoom & Share, enable TTL timer & harden API/XSS security [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
