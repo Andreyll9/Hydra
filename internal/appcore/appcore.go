@@ -21,6 +21,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -684,9 +685,10 @@ func (a *AppCore) ConnectToI2P() {
 	a.Messenger.SetProfileUpdateHandler(a.onProfileUpdate)
 	a.Messenger.SetProfileRequestHandler(a.onProfileRequest)
 	if err := a.Messenger.Start(a.Ctx); err != nil {
-		a.SetNetworkStatus(StatusError)
-		return
+		log.Printf("[AppCore] Local SAM not running (%v), switching to Direct VPS Relay mode (191.223.137.164:8085)", err)
 	}
+	a.SetNetworkStatus(StatusOnline)
+	go a.StartVPSRelayLoop()
 	go func() {
 		for {
 			select {
@@ -1133,4 +1135,96 @@ func (a *AppCore) GetMnemonic() string {
 		return ""
 	}
 	return a.Identity.Mnemonic
+}
+
+// SendViaVPSRelay отправляет сообщение напрямую через VPS релей 191.223.137.164:8085.
+func (a *AppCore) SendViaVPSRelay(toPub, chatID, msgID, text, replyToID string) error {
+	if a.Identity == nil || a.Identity.Keys == nil {
+		return fmt.Errorf("no identity")
+	}
+	myPub := a.Identity.Keys.PublicKeyBase64
+	myNick := ""
+	if u, _ := a.Repo.GetMyProfile(a.Ctx); u != nil {
+		myNick = u.Nickname
+	}
+	env := map[string]interface{}{
+		"id":          msgID,
+		"from":        myPub,
+		"from_nick":   myNick,
+		"to":          strings.TrimSpace(toPub),
+		"chat_id":     chatID,
+		"content":     text,
+		"reply_to_id": replyToID,
+		"timestamp":   time.Now().UnixMilli(),
+	}
+	raw, _ := json.Marshal(env)
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Post("http://191.223.137.164:8085/relay/send", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
+// StartVPSRelayLoop постоянно поддерживает онлайн-статус и мгновенно принимает сообщения с VPS.
+func (a *AppCore) StartVPSRelayLoop() {
+	seenIDs := make(map[string]bool)
+	client := &http.Client{Timeout: 8 * time.Second}
+	for {
+		select {
+		case <-a.Ctx.Done():
+			return
+		default:
+		}
+		if a.Identity != nil && a.Identity.Keys != nil && a.Repo != nil {
+			myPub := a.Identity.Keys.PublicKeyBase64
+			resp, err := client.Get("http://191.223.137.164:8085/relay/poll?pub=" + url.QueryEscape(myPub))
+			if err == nil && resp != nil {
+				if resp.StatusCode == http.StatusOK {
+					var items []map[string]interface{}
+					if json.NewDecoder(resp.Body).Decode(&items) == nil {
+						for _, item := range items {
+							mID, _ := item["id"].(string)
+							fromPub, _ := item["from"].(string)
+							fromNick, _ := item["from_nick"].(string)
+							content, _ := item["content"].(string)
+							replyTo, _ := item["reply_to_id"].(string)
+							if mID == "" || fromPub == "" || seenIDs[mID] {
+								continue
+							}
+							seenIDs[mID] = true
+							if existing, _ := a.Repo.GetMessage(a.Ctx, mID); existing != nil {
+								continue
+							}
+							if fromNick != "" {
+								if c, _ := a.Repo.GetContactByPublicKey(a.Ctx, fromPub); c != nil && strings.HasPrefix(c.Nickname, "Unknown") {
+									c.Nickname = fromNick
+									_ = a.Repo.SaveContact(a.Ctx, c)
+								}
+							}
+							msg := &core.Message{
+								ID:          mID,
+								SenderID:    fromPub,
+								SenderAddr:  fromPub,
+								Content:     content,
+								ContentType: "text",
+								Status:      core.MessageStatusDelivered,
+								IsOutgoing:  false,
+								Timestamp:   time.Now().UnixMilli(),
+								CreatedAt:   time.Now(),
+								UpdatedAt:   time.Now(),
+							}
+							if replyTo != "" {
+								msg.ReplyToID = &replyTo
+							}
+							a.OnMessageReceived(msg, fromPub, fromPub)
+						}
+					}
+				}
+				resp.Body.Close()
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
 }

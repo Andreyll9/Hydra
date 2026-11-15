@@ -111,8 +111,9 @@
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
                 const mustLock = localStorage.getItem('hydra_always_lock') !== '0';
-                if (mustLock && typeof isAuthenticated !== 'undefined' && isAuthenticated) {
-                    isAuthenticated = false;
+                if (mustLock && screen === 'main') {
+                    screen = 'login';
+                    showSettings = false;
                 }
             }
         });
@@ -152,6 +153,7 @@
             console.log("[App] Found existing session, skipping login to:", myInfo.Nickname);
             await loadMyInfo();
             screen = 'main';
+            if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
           if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
             loadContacts();
         }
@@ -309,6 +311,7 @@
       try {
           await loadMyInfo();
           screen = 'main';
+            if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
           if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
           networkStatus = await AppActions.GetNetworkStatus();
           mobileView.set('list');
@@ -332,6 +335,7 @@
           console.error("[App] onLoginSuccess failed:", err);
           showToast("Ошибка при загрузке данных: " + err, 'error');
           screen = 'main';
+            if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
           if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
       } finally {
           isInitializing = false;

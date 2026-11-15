@@ -1,4 +1,5 @@
 <script>
+    import jsQR from 'jsqr';
     import { Icons } from '../Icons.js';
     import { getInitials, getAvatarGradient } from '../utils.js';
     import * as AppActions from '../../wailsjs/go/main/App.js';
@@ -191,6 +192,18 @@
             qrStatusMsg = '❌ Ошибка чтения файла: ' + err;
         }
     }
+
+    function formatHydraKey(raw) {
+        if (!raw) return '';
+        const clean = String(raw).trim();
+        if (clean.startsWith('HYDRA-KEY-')) return clean;
+        try {
+            return 'HYDRA-KEY-' + btoa(unescape(encodeURIComponent(clean))).replace(/=/g, '');
+        } catch (e) {
+            return 'HYDRA-KEY-' + clean;
+        }
+    }
+    
 </script>
 
 <!-- Custom Confirm Modal -->

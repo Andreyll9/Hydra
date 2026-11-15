@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"teleghost/internal/core"
+	"teleghost/internal/core/identity"
 
 	"github.com/google/uuid"
 )
@@ -42,7 +43,6 @@ func (a *AppCore) GetContacts() ([]*ContactInfo, error) {
 		}
 		if c.LastMessage != "" {
 			info.LastMessage = c.LastMessage
-			// Можно добавить форматирование времени
 			tm := c.LastMessageTime
 			info.LastMessageTime = &tm
 		}
@@ -52,61 +52,74 @@ func (a *AppCore) GetContacts() ([]*ContactInfo, error) {
 	return result, nil
 }
 
-// AddContact добавляет контакт по адресу.
+// AddContact добавляет контакт по его ключу или @никнейму, сохраняя красивое имя!
 func (a *AppCore) AddContact(name, destination string) (*ContactInfo, error) {
-
-	name = strings.TrimSpace(name)
-	if name == "__PING_SERVER__" {
-		start := time.Now()
-		myPub := ""
-		if a.Identity != nil && a.Identity.Keys != nil {
-			myPub = a.Identity.Keys.PublicKeyBase64
-		}
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Get("http://191.223.137.164:8085/health?pub=" + url.QueryEscape(myPub))
-		if err != nil {
-			return nil, fmt.Errorf("❌ Сервер недоступен: %v", err)
-		}
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
-		var h map[string]interface{}
-		_ = json.Unmarshal(body, &h)
-		rtt := time.Since(start).Milliseconds()
-		if wsOk, _ := h["ws_connected"].(bool); wsOk {
-			return nil, fmt.Errorf("✅ Канал E2EE активен! Отклик Relay: %d мс (узлов онлайн: %v)", rtt, h["online_peers"])
-		}
-		return nil, fmt.Errorf("✅ Сервер на связи (%d мс, онлайн: %v)", rtt, h["online_peers"])
-	}
-	if len(name) < 40 {
-		nick := strings.TrimPrefix(name, "@")
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Get("http://191.223.137.164:8085/nick/resolve?nick=" + url.QueryEscape(nick))
-		if err == nil {
-			defer resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
-				var res map[string]string
-				if json.Unmarshal(body, &res) == nil && res["pub_key"] != "" {
-					name = res["pub_key"]
-				}
-			} else {
-				return nil, fmt.Errorf("пользователь @%s не найден на сервере", nick)
-			}
-		}
-	}
-	if a.Repo == nil {
+	if a.Repo == nil || a.Identity == nil || a.Identity.Keys == nil {
 		return nil, fmt.Errorf("not logged in")
 	}
 
-	// Минимальная валидация адреса
+	name = strings.TrimSpace(name)
+	destination = strings.TrimSpace(destination)
+
+	// Если во втором поле (destination) введён @никнейм — резолвим его в публичный ключ на VPS
+	if strings.HasPrefix(destination, "@") || (len(destination) >= 3 && len(destination) < 32 && !strings.Contains(destination, "/")) {
+		cleanNick := strings.ToLower(strings.TrimPrefix(destination, "@"))
+		client := &http.Client{Timeout: 8 * time.Second}
+		resp, err := client.Get("http://191.223.137.164:8085/nick/resolve?nick=" + url.QueryEscape(cleanNick))
+		if err != nil {
+			return nil, fmt.Errorf("нет связи с сервером никнеймов: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("пользователь @%s не найден на сервере", cleanNick)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		var res map[string]string
+		if json.Unmarshal(body, &res) == nil && res["pub_key"] != "" {
+			destination = strings.TrimSpace(res["pub_key"])
+			if name == "" || strings.HasPrefix(name, "Контакт ") {
+				name = "@" + cleanNick
+			}
+		}
+	} else if strings.HasPrefix(name, "@") && len(destination) >= 32 {
+		// Имя уже введено как @ник, а destination — готовый ключ, оставляем имя как есть!
+	}
+
 	if len(destination) < 32 {
-		return nil, fmt.Errorf("некорректный I2P адрес (слишком короткий)")
+		return nil, fmt.Errorf("некорректный ID ключ Hydra (введите @никнейм или отсканируйте QR-код)")
+	}
+
+	// Если имя не задано или туда случайно вставили длинный ключ — делаем аккуратное имя
+	if name == "" || (len(name) > 28 && !strings.Contains(name, " ")) {
+		name = "Контакт " + destination[:6]
+	}
+
+	myPub := a.Identity.Keys.PublicKeyBase64
+	chatID := identity.CalculateChatID(myPub, destination)
+
+	// Проверяем, нет ли уже такого контакта
+	if existing, _ := a.Repo.GetContactByPublicKey(a.Ctx, destination); existing != nil {
+		existing.Nickname = name
+		existing.I2PAddress = destination
+		existing.PublicKey = destination
+		existing.ChatID = chatID
+		_ = a.Repo.SaveContact(a.Ctx, existing)
+		a.Emitter.Emit("contact_updated")
+		return &ContactInfo{
+			ID:         existing.ID,
+			Nickname:   existing.Nickname,
+			I2PAddress: existing.I2PAddress,
+			PublicKey:  existing.PublicKey,
+			ChatID:     existing.ChatID,
+		}, nil
 	}
 
 	contact := &core.Contact{
 		ID:         uuid.New().String(),
 		Nickname:   name,
 		I2PAddress: destination,
+		PublicKey:  destination,
+		ChatID:     chatID,
 		AddedAt:    time.Now(),
 		UpdatedAt:  time.Now(),
 	}
@@ -115,12 +128,9 @@ func (a *AppCore) AddContact(name, destination string) (*ContactInfo, error) {
 		return nil, err
 	}
 
-	// Отправляем handshake для установления связи
 	if a.Messenger != nil {
 		go func(dst string) {
-			if err := a.Messenger.SendHandshake(dst); err != nil {
-				log.Printf("[AppCore] Failed to send handshake to %s: %v", dst, err)
-			}
+			_ = a.Messenger.SendHandshake(dst)
 		}(destination)
 	}
 
@@ -130,6 +140,7 @@ func (a *AppCore) AddContact(name, destination string) (*ContactInfo, error) {
 		ID:         contact.ID,
 		Nickname:   contact.Nickname,
 		I2PAddress: contact.I2PAddress,
+		PublicKey:  contact.PublicKey,
 		ChatID:     contact.ChatID,
 	}, nil
 }

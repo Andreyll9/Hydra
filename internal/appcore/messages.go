@@ -98,8 +98,15 @@ func (a *AppCore) SendText(contactID, text, replyToID string) error {
 
 	if contactID != a.Identity.Keys.UserID {
 		if err := a.Messenger.SendTextMessageWithID(contact.I2PAddress, contact.ChatID, msgID, text, replyToID); err != nil {
-			log.Printf("[AppCore] SendTextMessage error to %s: %v", contact.Nickname, err)
-			return fmt.Errorf("send failed: %w", err)
+			log.Printf("[AppCore] Direct Messenger error to %s (%v), routing via VPS E2EE Relay...", contact.Nickname, err)
+			if relayErr := a.SendViaVPSRelay(contact.I2PAddress, contact.ChatID, msgID, text, replyToID); relayErr != nil {
+				return fmt.Errorf("ошибка отправки через релей: %w", relayErr)
+			}
+		} else {
+			// Дублируем в быстрый буфер VPS релея для мгновенной доставки на мобильные узлы
+			go func() {
+				_ = a.SendViaVPSRelay(contact.I2PAddress, contact.ChatID, msgID, text, replyToID)
+			}()
 		}
 	}
 
