@@ -586,8 +586,14 @@ func dispatch(app *appcore.AppCore, method string, args []json.RawMessage) (inte
 	case "SaveTempImage":
 		var base64Data, filename string
 		parseArgs(args, &base64Data, &filename)
-		// Для мобилки можно просто вернуть ошибку или реализовать временное сохранение
-		return "", fmt.Errorf("SaveTempImage not implemented on mobile")
+		if idx := strings.Index(base64Data, ","); idx != -1 {
+			base64Data = base64Data[idx+1:]
+		}
+		rawBytes, err := base64.StdEncoding.DecodeString(base64Data)
+		if err != nil {
+			return "", err
+		}
+		return app.SaveAttachment(filename, rawBytes)
 
 	case "SelectFiles":
 		path, err := app.Platform.OpenFileDialog("Select File", nil)

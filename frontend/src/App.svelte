@@ -111,7 +111,7 @@
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
                 const mustLock = localStorage.getItem('hydra_always_lock') !== '0';
-                if (mustLock && screen === 'main') {
+                if (mustLock && screen === 'main' && !window.__hydraSkipLock) {
                     screen = 'login';
                     showSettings = false;
                 }
@@ -122,6 +122,7 @@
     
     if (typeof window !== 'undefined') {
         window.__lockHydraNow = () => {
+            if (window.__hydraSkipLock) return;
             if (screen === 'main') {
                 screen = 'login';
                 showSettings = false;
@@ -394,10 +395,12 @@
 
   async function loadMessages(contactId) {
       isChatLoading = true;
-      const contact = contacts.find(c => c.ID === contactId);
-      if (contact && contact.ChatID) {
-          await AppActions.MarkChatAsRead(contact.ChatID);
-      }
+      try {
+          const contact = contacts.find(c => c.ID === contactId);
+          if (contact && contact.ChatID) {
+              await AppActions.MarkChatAsRead(contact.ChatID).catch(() => {});
+          }
+      } catch (e) {}
       
       try {
           canLoadMore = true;

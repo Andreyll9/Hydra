@@ -51,7 +51,7 @@
     let imagesLoading = false;
     let pendingImages = 0;
     let loadedImages = 0;
-    let chatReady = false;
+    let chatReady = true;
     let initialScrollDone = false;
     let currentContactId = null;
 
@@ -146,7 +146,7 @@
     $: if (selectedContact && selectedContact.ID !== currentContactId) {
         currentContactId = selectedContact.ID;
         // Reset state ONLY for new chat
-        chatReady = false; 
+        chatReady = true; 
         initialScrollDone = false;
         imagesLoading = true;
         pendingImages = 0;
@@ -275,15 +275,6 @@
     let activeMediaStream = null;
     let mediaRecorderInstance = null;
     let recordedChunks = [];
-            activeMediaStream = stream;
-            if (mode === 'video') {
-                setTimeout(() => {
-                    if (liveCirclePreviewEl && activeMediaStream) {
-                        liveCirclePreviewEl.srcObject = activeMediaStream;
-                        liveCirclePreviewEl.play().catch(() => {});
-                    }
-                }, 60);
-            }
     let recordMode = 'audio'; // 'audio' | 'video'
     let disappearingTimer = 0; // 0 = выкл, 60 = 1 мин, 3600 = 1 час
 

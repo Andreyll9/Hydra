@@ -369,6 +369,7 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
                     putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*", "application/pdf", "text/*", "application/zip"))
                 }
                 isOpeningSystemPicker = true
+                webView.evaluateJavascript("window.__hydraSkipLock = true;", null)
                 filePickerLauncher.launch(intent)
             } catch (e: Exception) {
                 pushNativeLog("GO-PICK-ERR", "Ошибка запуска пикера: ${e.message}")
@@ -559,6 +560,7 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
                         type = "image/*"
                     }
                     isOpeningSystemPicker = true
+                        webView?.evaluateJavascript("window.__hydraSkipLock = true;", null)
                         webViewFileChooserLauncher.launch(Intent.createChooser(intent, "Выберите изображение или QR-код"))
                     true
                 } catch (e: Exception) {
@@ -639,6 +641,7 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
         mobile.Mobile.setPlatformBridge(this)
         if (isOpeningSystemPicker) {
             isOpeningSystemPicker = false
+            webView.evaluateJavascript("setTimeout(function(){ window.__hydraSkipLock = false; }, 1000);", null)
             pushNativeLog("LIFECYCLE", "Возврат из Галереи (без блокировки)")
             return
         }

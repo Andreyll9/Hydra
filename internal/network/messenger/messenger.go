@@ -2,6 +2,7 @@ package messenger
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/url"
@@ -28,7 +29,7 @@ const (
 type Envelope struct {
 	To      string `json:"to"`
 	From    string `json:"from"`
-	Payload []byte `json:"payload"`
+	Payload []byte `json:"data"`
 }
 
 type FileOfferHandler func(senderPubKey, messageID, chatID string, filenames []string, totalSize int64, fileCount int32)
@@ -108,6 +109,7 @@ func (s *Service) connectWS() error {
 		return err
 	}
 	q := u.Query()
+	q.Set("pub", s.GetDestination())
 	q.Set("addr", s.GetDestination())
 	u.RawQuery = q.Encode()
 
@@ -183,7 +185,8 @@ func (s *Service) SendMessage(destination string, packet *pb.Packet) error {
 	defer s.writeMu.Unlock()
 
 	_ = conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
-	if err := conn.WriteJSON(env); err != nil {
+	rawEnv, _ := json.Marshal(env)
+	if err := conn.WriteMessage(websocket.BinaryMessage, rawEnv); err != nil {
 		_ = conn.Close()
 		s.wsConn = nil
 		return err
@@ -216,8 +219,19 @@ func (s *Service) readLoop() {
 			continue
 		}
 
+		_, rawMsg, err := conn.ReadMessage()
+		if err != nil {
+			s.writeMu.Lock()
+			if s.wsConn == conn {
+				_ = s.wsConn.Close()
+				s.wsConn = nil
+			}
+			s.writeMu.Unlock()
+			time.Sleep(2 * time.Second)
+			continue
+		}
 		var env Envelope
-		if err := conn.ReadJSON(&env); err != nil {
+		if err := json.Unmarshal(rawMsg, &env); err != nil {
 			s.writeMu.Lock()
 			if s.wsConn == conn {
 				_ = s.wsConn.Close()

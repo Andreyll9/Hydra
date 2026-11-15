@@ -65,6 +65,7 @@
     };
     document.addEventListener('visibilitychange', function() {
       if (document.visibilityState === 'hidden') {
+        if (window.__hydraSkipLock) return;
         if (window.__lockHydraNow) window.__lockHydraNow();
         window.__setHydraBlur(true);
       } else {
