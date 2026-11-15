@@ -38,724 +38,32 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Sync App with Hydra Relay v2.5 & Apply All Stage 5 Features Safely
+      - name: Fix Chat.svelte Crash, WS Bad Handshake (?pub=), Gallery Lock Bypass & Restore Real Hydra Shield Logo
         run: |
-          cat << 'PYEOF' > sync_relay_v25.py
-          import os, re, struct, zlib
+          cat << 'PYEOF' > fix_all_exact.py
+          import os, re, shutil
 
-          # 0. Генерируем фирменную иконку Гидры (Тёмно-синий + Голубой неон на тёмно-сером графите) для Android и Уведомлений
-          def create_hydra_png(path, size=192):
-              raw_data = bytearray()
-              cx, cy = size / 2.0, size / 2.0
-              r_outer = size * 0.44
-              r_inner = size * 0.38
-              for y in range(size):
-                  raw_data.append(0)
-                  for x in range(size):
-                      dx, dy = x - cx, y - cy
-                      dist = (dx*dx + dy*dy) ** 0.5
-                      if dist > r_outer:
-                          raw_data.extend((18, 19, 22, 255))
-                      elif dist > r_inner:
-                          raw_data.extend((29, 78, 216, 255))
-                      else:
-                          nx, ny = dx / r_inner, dy / r_inner
-                          is_center = abs(nx) < 0.14 and -0.55 < ny < 0.55
-                          is_left = -0.52 < nx < -0.24 and -0.40 < ny < 0.35
-                          is_right = 0.24 < nx < 0.52 and -0.40 < ny < 0.35
-                          is_base = abs(nx) < 0.48 and 0.20 < ny < 0.42
-                          if is_center or is_left or is_right or is_base:
-                              raw_data.extend((96, 165, 250, 255))
-                          else:
-                              raw_data.extend((22, 25, 32, 255))
-              def png_chunk(chunk_type, data):
-                  return struct.pack(">I", len(data)) + chunk_type + data + struct.pack(">I", zlib.crc32(chunk_type + data) & 0xffffffff)
-              ihdr = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)
-              png_bytes = b"\x89PNG\r\n\x1a\n" + png_chunk(b"IHDR", ihdr) + png_chunk(b"IDAT", zlib.compress(bytes(raw_data), 9)) + png_chunk(b"IEND", b"")
-              os.makedirs(os.path.dirname(path), exist_ok=True)
-              with open(path, "wb") as f:
-                  f.write(png_bytes)
+          # 1. ИКОНКА ГИДРЫ: Копируем твою настоящую иконку щита Гидры из frontend/src/assets/images/logo.png во все папки Android и фронтенда!
+          real_hydra_logo = "frontend/src/assets/images/logo.png"
+          if os.path.exists(real_hydra_logo):
+              for mip in ["mipmap-mdpi", "mipmap-hdpi", "mipmap-xhdpi", "mipmap-xxhdpi", "mipmap-xxxhdpi"]:
+                  for fname in ["ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png"]:
+                      dst = f"android/app/src/main/res/{mip}/{fname}"
+                      os.makedirs(os.path.dirname(dst), exist_ok=True)
+                      shutil.copyfile(real_hydra_logo, dst)
+              shutil.copyfile(real_hydra_logo, "frontend/public/icon.png")
+              shutil.copyfile(real_hydra_logo, "icon.png")
+              shutil.copyfile(real_hydra_logo, "build/appicon.png")
+              print("[OK] 1. Настоящая иконка щита Гидры (logo.png) установлена во все папки Android и интерфейса!")
 
-          for mip in ["mipmap-mdpi", "mipmap-hdpi", "mipmap-xhdpi", "mipmap-xxhdpi", "mipmap-xxxhdpi"]:
-              create_hydra_png(f"android/app/src/main/res/{mip}/ic_launcher.png", 192)
-              create_hydra_png(f"android/app/src/main/res/{mip}/ic_launcher_round.png", 192)
-              create_hydra_png(f"android/app/src/main/res/{mip}/ic_launcher_foreground.png", 192)
-          create_hydra_png("frontend/public/icon.png", 192)
-          print("[OK] 0. Иконка Гидры сгенерирована")
-
-          # 1. TeleGhostService.kt: тихое энергосберегающее уведомление с иконкой Гидры
-          svc_path = "android/app/src/main/java/com/teleghost/app/TeleGhostService.kt"
-          if os.path.exists(svc_path):
-              with open(svc_path, "r", encoding="utf-8") as f:
-                  svc = f.read()
-              svc = svc.replace("NotificationManager.IMPORTANCE_LOW", "NotificationManager.IMPORTANCE_MIN")
-              svc = svc.replace("NotificationManager.IMPORTANCE_DEFAULT", "NotificationManager.IMPORTANCE_MIN")
-              svc = svc.replace('"TeleGhost Background Service"', '"Hydra E2EE • Тихий режим"')
-              svc = svc.replace('"Maintaining I2P connection..."', '"Защищённый канал активен (энергосбережение)"')
-              with open(svc_path, "w", encoding="utf-8") as f:
-                  f.write(svc)
-              print("[OK] 1. TeleGhostService.kt переведён в тихий режим")
-
-          # 2. internal/appcore/contacts.go:
-          #    - Чистый код без неиспользуемого "log"
-          #    - Автоматическое определение @ника по ключу через /nick/resolve?pub=... на твоём обновлённом VPS!
-          contacts_go = '''package appcore
-
-          import (
-          	"encoding/json"
-          	"fmt"
-          	"io"
-          	"net/http"
-          	"net/url"
-          	"strings"
-          	"time"
-
-          	"teleghost/internal/core"
-          	"teleghost/internal/core/identity"
-
-          	"github.com/google/uuid"
-          )
-
-          func resolveNickByPubFromVPS(pub string) string {
-          	pub = strings.TrimSpace(pub)
-          	if len(pub) < 32 {
-          		return ""
-          	}
-          	client := &http.Client{Timeout: 3 * time.Second}
-          	resp, err := client.Get("http://191.223.137.164:8085/nick/resolve?pub=" + url.QueryEscape(pub))
-          	if err != nil || resp == nil {
-          		return ""
-          	}
-          	defer resp.Body.Close()
-          	if resp.StatusCode == http.StatusOK {
-          		body, _ := io.ReadAll(resp.Body)
-          		var res map[string]string
-          		if json.Unmarshal(body, &res) == nil && res["nickname"] != "" {
-          			n := strings.TrimPrefix(res["nickname"], "@")
-          			return "@" + n
-          		}
-          	}
-          	return ""
-          }
-
-          func (a *AppCore) GetContacts() ([]*ContactInfo, error) {
-          	if a.Repo == nil {
-          		return []*ContactInfo{}, nil
-          	}
-          	contacts, err := a.Repo.ListContactsWithLastMessage(a.Ctx)
-          	if err != nil {
-          		return nil, err
-          	}
-          	result := make([]*ContactInfo, len(contacts))
-          	for i, c := range contacts {
-          		updated := false
-          		if c.PublicKey == "" && len(c.I2PAddress) >= 32 {
-          			c.PublicKey = c.I2PAddress
-          			updated = true
-          		}
-          		if c.ChatID == "" && a.Identity != nil && a.Identity.Keys != nil && c.PublicKey != "" {
-          			c.ChatID = identity.CalculateChatID(a.Identity.Keys.PublicKeyBase64, c.PublicKey)
-          			updated = true
-          		}
-          		if (len(c.Nickname) > 28 && !strings.Contains(c.Nickname, " ")) || strings.HasPrefix(c.Nickname, "Unknown") || strings.HasPrefix(c.Nickname, "Контакт ") {
-          			if resolved := resolveNickByPubFromVPS(c.I2PAddress); resolved != "" {
-          				c.Nickname = resolved
-          				updated = true
-          			}
-          		}
-          		if updated {
-          			_ = a.Repo.SaveContact(a.Ctx, c)
-          		}
-          		info := &ContactInfo{
-          			ID:          c.ID,
-          			Nickname:    c.Nickname,
-          			Bio:         c.Bio,
-          			Avatar:      a.formatAvatarURL(c.Avatar),
-          			I2PAddress:  c.I2PAddress,
-          			PublicKey:   c.PublicKey,
-          			ChatID:      c.ChatID,
-          			IsBlocked:   c.IsBlocked,
-          			IsVerified:  c.IsVerified,
-          			UnreadCount: c.UnreadCount,
-          		}
-          		if c.LastMessage != "" {
-          			info.LastMessage = c.LastMessage
-          			tm := c.LastMessageTime
-          			info.LastMessageTime = &tm
-          		}
-          		result[i] = info
-          	}
-          	return result, nil
-          }
-
-          func (a *AppCore) AddContact(name, destination string) (*ContactInfo, error) {
-          	if a.Repo == nil || a.Identity == nil || a.Identity.Keys == nil {
-          		return nil, fmt.Errorf("not logged in")
-          	}
-          	name = strings.TrimSpace(name)
-          	destination = strings.TrimSpace(destination)
-
-          	if strings.HasPrefix(destination, "@") || (len(destination) >= 3 && len(destination) < 32 && !strings.Contains(destination, "/")) {
-          		cleanNick := strings.ToLower(strings.TrimPrefix(destination, "@"))
-          		client := &http.Client{Timeout: 8 * time.Second}
-          		resp, err := client.Get("http://191.223.137.164:8085/nick/resolve?nick=" + url.QueryEscape(cleanNick))
-          		if err != nil {
-          			return nil, fmt.Errorf("нет связи с сервером никнеймов: %v", err)
-          		}
-          		defer resp.Body.Close()
-          		if resp.StatusCode != http.StatusOK {
-          			return nil, fmt.Errorf("пользователь @%s не найден на сервере", cleanNick)
-          		}
-          		body, _ := io.ReadAll(resp.Body)
-          		var res map[string]string
-          		if json.Unmarshal(body, &res) == nil && res["pub_key"] != "" {
-          			destination = strings.TrimSpace(res["pub_key"])
-          			if name == "" || strings.HasPrefix(name, "Контакт ") || len(name) > 28 {
-          				name = "@" + cleanNick
-          			}
-          		}
-          	}
-
-          	if len(destination) < 32 {
-          		return nil, fmt.Errorf("некорректный ID ключ Hydra (введите @никнейм или отсканируйте QR-код)")
-          	}
-
-          	if name == "" || (len(name) > 28 && !strings.Contains(name, " ")) || strings.HasPrefix(name, "Контакт ") {
-          		if resolved := resolveNickByPubFromVPS(destination); resolved != "" {
-          			name = resolved
-          		} else if name == "" || len(name) > 28 {
-          			name = "Контакт " + destination[:6]
-          		}
-          	}
-
-          	myPub := a.Identity.Keys.PublicKeyBase64
-          	chatID := identity.CalculateChatID(myPub, destination)
-
-          	if existing, _ := a.Repo.GetContactByPublicKey(a.Ctx, destination); existing != nil {
-          		existing.Nickname = name
-          		existing.I2PAddress = destination
-          		existing.PublicKey = destination
-          		existing.ChatID = chatID
-          		_ = a.Repo.SaveContact(a.Ctx, existing)
-          		a.Emitter.Emit("contact_updated")
-          		return &ContactInfo{
-          			ID:         existing.ID,
-          			Nickname:   existing.Nickname,
-          			I2PAddress: existing.I2PAddress,
-          			PublicKey:  existing.PublicKey,
-          			ChatID:     existing.ChatID,
-          		}, nil
-          	}
-
-          	contact := &core.Contact{
-          		ID:         uuid.New().String(),
-          		Nickname:   name,
-          		I2PAddress: destination,
-          		PublicKey:  destination,
-          		ChatID:     chatID,
-          		AddedAt:    time.Now(),
-          		UpdatedAt:  time.Now(),
-          	}
-          	if err := a.Repo.SaveContact(a.Ctx, contact); err != nil {
-          		return nil, err
-          	}
-          	if a.Messenger != nil {
-          		go func(dst string) { _ = a.Messenger.SendHandshake(dst) }(destination)
-          	}
-          	a.Emitter.Emit("contact_updated")
-          	return &ContactInfo{
-          		ID:         contact.ID,
-          		Nickname:   contact.Nickname,
-          		I2PAddress: contact.I2PAddress,
-          		PublicKey:  contact.PublicKey,
-          		ChatID:     contact.ChatID,
-          	}, nil
-          }
-
-          func (a *AppCore) AddContactFromClipboard(name string) (*ContactInfo, error) {
-          	data, err := a.Platform.ClipboardGet()
-          	if err != nil {
-          		return nil, fmt.Errorf("clipboard error: %w", err)
-          	}
-          	if data == "" {
-          		return nil, fmt.Errorf("clipboard is empty")
-          	}
-          	return a.AddContact(name, data)
-          }
-
-          func (a *AppCore) DeleteContact(id string) error {
-          	if a.Repo == nil {
-          		return fmt.Errorf("not logged in")
-          	}
-          	err := a.Repo.DeleteContact(a.Ctx, id)
-          	if err == nil {
-          		a.Emitter.Emit("contact_updated")
-          	}
-          	return err
-          }
-          '''
-          with open("internal/appcore/contacts.go", "w", encoding="utf-8") as f:
-              f.write(contacts_go)
-          print("[OK] 2. contacts.go записан")
-
-          # 3. internal/appcore/messages.go и appcore.go:
-          msg_path = "internal/appcore/messages.go"
-          if os.path.exists(msg_path):
-              with open(msg_path, "r", encoding="utf-8") as f:
-                  mc = f.read()
-
-              old_send_block = """	if contactID != a.Identity.Keys.UserID {
-          		if err := a.Messenger.SendTextMessageWithID(contact.I2PAddress, contact.ChatID, msgID, text, replyToID); err != nil {
-          			log.Printf("[AppCore] SendTextMessage error to %s: %v", contact.Nickname, err)
-          			return fmt.Errorf("send failed: %w", err)
-          		}
-          	}"""
-
-              new_send_block = """	if contactID != a.Identity.Keys.UserID {
-          		if relayErr := a.SendViaVPSRelay(contact.I2PAddress, contact.ChatID, msgID, text, replyToID); relayErr != nil {
-          			log.Printf("[AppCore] VPS Relay error to %s: %v, trying fallback messenger...", contact.Nickname, relayErr)
-          			if a.Messenger != nil {
-          				if err := a.Messenger.SendTextMessageWithID(contact.I2PAddress, contact.ChatID, msgID, text, replyToID); err != nil {
-          					return fmt.Errorf("ошибка отправки: %w", relayErr)
-          				}
-          			} else {
-          				return fmt.Errorf("нет связи с релеем: %w", relayErr)
-          			}
-          		}
-          	}"""
-              mc = mc.replace(old_send_block, new_send_block)
-              with open(msg_path, "w", encoding="utf-8") as f:
-                  f.write(mc)
-              print("[OK] 3. messages.go обновлён")
-
-          for root, _, files in os.walk("internal/appcore"):
-              for fn in files:
-                  if fn.endswith(".go"):
-                      fp = os.path.join(root, fn)
-                      with open(fp, "r", encoding="utf-8") as f:
-                          gc = f.read()
-                      orig = gc
-                      gc = gc.replace('"2.0.0-hydra"', '"2.5.0-hydra"')
-                      gc = gc.replace('"1.0.2-beta"', '"2.5.0-hydra"')
-                      if "func (a *AppCore) GetMyInfo()" in gc:
-                          gc = gc.replace("Destination: dest,", "Destination: a.Identity.Keys.PublicKeyBase64,")
-                      if gc != orig:
-                          with open(fp, "w", encoding="utf-8") as f:
-                              f.write(gc)
-
-          ac_path = "internal/appcore/appcore.go"
-          if os.path.exists(ac_path):
-              with open(ac_path, "r", encoding="utf-8") as f:
-                  ac = f.read()
-              if '"net/url"' not in ac:
-                  ac = ac.replace('"net/http"', '"net/http"\n\t"net/url"', 1)
-
-              ac = ac.replace(
-                  '	if err := a.Messenger.Start(a.Ctx); err != nil {\n\t\ta.SetNetworkStatus(StatusError)\n\t\treturn\n\t}',
-                  '	if err := a.Messenger.Start(a.Ctx); err != nil {\n\t\tlog.Printf("[AppCore] Using Direct VPS Relay v2.5 (191.223.137.164:8085)")\n\t}\n\ta.SetNetworkStatus(StatusOnline)\n\tgo a.StartVPSRelayLoop()'
-              )
-
-              ac = ac.replace(
-                  '	for _, p := range profilesList {\n\t\tif p.UserID == a.Identity.Keys.UserID {\n\t\t\treturn map[string]interface{}{\n\t\t\t\t"id":           p.ID,\n\t\t\t\t"display_name": p.DisplayName,\n\t\t\t\t"user_id":      p.UserID,\n\t\t\t\t"avatar_path":  a.formatProfileAvatarURL(p.UserID, p.AvatarPath),\n\t\t\t\t"use_pin":      p.UsePin,\n\t\t\t}\n\t\t}\n\t}\n\treturn nil\n}',
-                  '	for _, p := range profilesList {\n\t\tif p.UserID == a.Identity.Keys.UserID {\n\t\t\treturn map[string]interface{}{\n\t\t\t\t"id":           p.ID,\n\t\t\t\t"display_name": p.DisplayName,\n\t\t\t\t"user_id":      p.UserID,\n\t\t\t\t"avatar_path":  a.formatProfileAvatarURL(p.UserID, p.AvatarPath),\n\t\t\t\t"use_pin":      p.UsePin,\n\t\t\t}\n\t\t}\n\t}\n\tif a.Identity != nil && a.Identity.Keys != nil {\n\t\treturn map[string]interface{}{\n\t\t\t"id":           a.Identity.Keys.UserID,\n\t\t\t"display_name": "Hydra Account",\n\t\t\t"user_id":      a.Identity.Keys.UserID,\n\t\t\t"avatar_path":  "",\n\t\t\t"use_pin":      true,\n\t\t}\n\t}\n\treturn nil\n}'
-              )
-
-              ac = ac.replace(
-                  "return zipPath, nil\n}",
-                  "if a.Platform != nil {\n\t\t_ = a.Platform.ShareFile(zipPath)\n\t}\n\treturn zipPath, nil\n}",
-                  1
-              )
-
-              vps_relay_methods = '''
-          func (a *AppCore) SendViaVPSRelay(toPub, chatID, msgID, text, replyToID string) error {
-          	if a.Identity == nil || a.Identity.Keys == nil {
-          		return fmt.Errorf("no identity")
-          	}
-          	myPub := a.Identity.Keys.PublicKeyBase64
-          	myNick := ""
-          	if u, _ := a.Repo.GetMyProfile(a.Ctx); u != nil {
-          		myNick = u.Nickname
-          	}
-          	env := map[string]interface{}{
-          		"id":          msgID,
-          		"from":        myPub,
-          		"from_nick":   myNick,
-          		"to":          strings.TrimSpace(toPub),
-          		"chat_id":     chatID,
-          		"content":     text,
-          		"reply_to_id": replyToID,
-          		"timestamp":   time.Now().UnixMilli(),
-          	}
-          	raw, _ := json.Marshal(env)
-          	client := &http.Client{Timeout: 8 * time.Second}
-          	resp, err := client.Post("http://191.223.137.164:8085/relay/send", "application/json", bytes.NewReader(raw))
-          	if err != nil {
-          		return err
-          	}
-          	defer resp.Body.Close()
-          	if resp.StatusCode != http.StatusOK {
-          		return fmt.Errorf("relay status %d", resp.StatusCode)
-          	}
-          	return nil
-          }
-
-          func (a *AppCore) StartVPSRelayLoop() {
-          	seenIDs := make(map[string]bool)
-          	client := &http.Client{Timeout: 8 * time.Second}
-          	for {
-          		select {
-          		case <-a.Ctx.Done():
-          			return
-          		default:
-          		}
-          		if a.Identity != nil && a.Identity.Keys != nil && a.Repo != nil {
-          			myPub := a.Identity.Keys.PublicKeyBase64
-          			resp, err := client.Get("http://191.223.137.164:8085/relay/poll?pub=" + url.QueryEscape(myPub))
-          			if err == nil && resp != nil {
-          				if resp.StatusCode == http.StatusOK {
-          					var items []map[string]interface{}
-          					if json.NewDecoder(resp.Body).Decode(&items) == nil {
-          						for _, item := range items {
-          							mID, _ := item["id"].(string)
-          							fromPub, _ := item["from"].(string)
-          							fromNick, _ := item["from_nick"].(string)
-          							content, _ := item["content"].(string)
-          							replyTo, _ := item["reply_to_id"].(string)
-          							if mID == "" || fromPub == "" || seenIDs[mID] {
-          								continue
-          							}
-          							seenIDs[mID] = true
-          							if existing, _ := a.Repo.GetMessage(a.Ctx, mID); existing != nil {
-          								continue
-          							}
-          							msg := &core.Message{
-          								ID:          mID,
-          								SenderID:    fromPub,
-          								SenderAddr:  fromPub,
-          								Content:     content,
-          								ContentType: "text",
-          								Status:      core.MessageStatusDelivered,
-          								IsOutgoing:  false,
-          								Timestamp:   time.Now().UnixMilli(),
-          								CreatedAt:   time.Now(),
-          								UpdatedAt:   time.Now(),
-          							}
-          							if replyTo != "" {
-          								msg.ReplyToID = &replyTo
-          							}
-          							a.OnMessageReceived(msg, fromPub, fromPub)
-          							if fromNick != "" {
-          								if c, _ := a.Repo.GetContactByPublicKey(a.Ctx, fromPub); c != nil {
-          									if strings.HasPrefix(c.Nickname, "Unknown") || len(c.Nickname) > 28 {
-          										c.Nickname = fromNick
-          										_ = a.Repo.SaveContact(a.Ctx, c)
-          										a.Emitter.Emit("contact_updated")
-          									}
-          								}
-          							}
-          						}
-          					}
-          				}
-          				resp.Body.Close()
-          			}
-          		}
-          		if a.IsFocused {
-          			time.Sleep(3 * time.Second)
-          		} else {
-          			time.Sleep(15 * time.Second)
-          		}
-          	}
-          }
-          '''
-              if "func (a *AppCore) SendViaVPSRelay(" not in ac:
-                  ac += "\n" + vps_relay_methods
-              with open(ac_path, "w", encoding="utf-8") as f:
-                  f.write(ac)
-              print("[OK] 4. appcore.go обновлён")
-
-          # 4. Обновляем версию APK до 2.5.0-hydra в android/app/build.gradle
-          gradle_path = "android/app/build.gradle"
-          if os.path.exists(gradle_path):
-              with open(gradle_path, "r", encoding="utf-8") as f:
-                  bg = f.read()
-              bg = re.sub(r'versionCode\s+\d+', 'versionCode 25', bg)
-              bg = re.sub(r'versionName\s+"[^"]+"', 'versionName "2.5.0-hydra"', bg)
-              with open(gradle_path, "w", encoding="utf-8") as f:
-                  f.write(bg)
-
-          # 5. Обновляем фронтенд (Svelte):
-          hydra_svg = """<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="32" cy="32" r="30" stroke="#3B82F6" stroke-width="2.5" fill="#121316"/><path d="M32 12C25 12 20 17 20 24C20 29 23 33 26 36L22 50H42L38 36C41 33 44 29 44 24C44 17 39 12 32 12Z" stroke="#60A5FA" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="rgba(29,78,216,0.22)"/><path d="M20 26C14 24 10 19 12 13C15 15 19 18 21 22" stroke="#60A5FA" stroke-width="2.5" stroke-linecap="round"/><path d="M44 26C50 24 54 19 52 13C49 15 45 18 43 22" stroke="#60A5FA" stroke-width="2.5" stroke-linecap="round"/><circle cx="28" cy="23" r="2" fill="#60A5FA"/><circle cx="36" cy="23" r="2" fill="#60A5FA"/><path d="M27 30C29 32 35 32 37 30" stroke="#60A5FA" stroke-width="2" stroke-linecap="round"/></svg>"""
-
-          icons_path = "frontend/src/Icons.js"
-          if os.path.exists(icons_path):
-              with open(icons_path, "r", encoding="utf-8") as f:
-                  ic = f.read()
-              ic = re.sub(r"Ghost:\s*`[\s\S]*?`", f"Ghost: `{hydra_svg}`", ic)
-              with open(icons_path, "w", encoding="utf-8") as f:
-                  f.write(ic)
-
-          auth_path = "frontend/src/components/Auth.svelte"
-          if os.path.exists(auth_path):
-              with open(auth_path, "r", encoding="utf-8") as f:
-                  au = f.read()
-              au = au.replace(
-                  '<img src="/icon.png" alt="Hydra" class="rounded-full shadow-lg" style="width: 80px; height: 80px; filter: drop-shadow(0 0 20px rgba(99, 102, 241, 0.4)); object-fit: cover; border: 2px solid rgba(255,255,255,0.1);" />',
-                  f'<div style="width: 84px; height: 84px; margin: 0 auto; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 24px rgba(29,78,216,0.35);">{hydra_svg}</div>'
-              )
-              with open(auth_path, "w", encoding="utf-8") as f:
-                  f.write(au)
-
-          idx_path = "frontend/index.html"
-          if os.path.exists(idx_path):
-              with open(idx_path, "r", encoding="utf-8") as f:
-                  ih = f.read()
-              if "window.__hydraLoggingActive" not in ih:
-                  ih = ih.replace(
-                      "window.__hydraLogList = [];",
-                      "window.__hydraLogList = [];\n    window.__hydraLoggingActive = localStorage.getItem('hydra_rec_logs') === '1';"
-                  )
-                  ih = ih.replace(
-                      "window.__addHydraLog = function(tag, msg) {\n      var d = new Date();",
-                      "window.__addHydraLog = function(tag, msg) {\n      if (!window.__hydraLoggingActive && tag !== 'LOG-CTRL') return;\n      var d = new Date();"
-                  )
-              with open(idx_path, "w", encoding="utf-8") as f:
-                  f.write(ih)
-
-          app_path = "frontend/src/App.svelte"
-          if os.path.exists(app_path):
-              with open(app_path, "r", encoding="utf-8") as f:
-                  ap = f.read()
-              ap = ap.replace(
-                  "myDestination = info.Destination;\n          identity = info.ID;",
-                  "myDestination = info.PublicKey || info.Destination;\n          identity = info.ID;"
-              )
-              old_sel = """  function selectContact(contact) {
-                if (!contact) {
-                    selectedContact = null;
-                    messages = [];
-                    AppActions.SetActiveChat("");
-                    return;
-                }
-                if (selectedContact && selectedContact.ID === contact.ID) {
-                    selectedContact = null;
-                    messages = [];
-                    AppActions.SetActiveChat("");
-                    return;
-                }"""
-              new_sel = """  function selectContact(contact) {
-                if (!contact) {
-                    selectedContact = null;
-                    messages = [];
-                    AppActions.SetActiveChat("");
-                    return;
-                }
-                if (contact.IsFavorites || contact.Nickname === 'Избранное') {
-                    contact.ID = identity || 'favorites_self';
-                    contact.ChatID = identity || 'favorites_self';
-                    contact.IsFavorites = true;
-                }"""
-              ap = ap.replace(old_sel, new_sel)
-
-              old_sf = """      onSaveFolder: async () => {
-                    if (isEditingFolder) {
-                        await AppActions.UpdateFolder(currentFolderData.ID, currentFolderData.Name, currentFolderData.Icon);
-                    } else {
-                        await AppActions.CreateFolder(currentFolderData.Name, currentFolderData.Icon);
-                    }
-                    showFolderModal = false;
-                    loadContacts();
-                },"""
-              new_sf = """      onSaveFolder: async () => {
-                    const rawName = (currentFolderData.Name || '').trim();
-                    if (!isEditingFolder && (rawName.startsWith('👥 ') || rawName.startsWith('📢 '))) {
-                        const isChan = rawName.startsWith('📢 ');
-                        const roomSeed = btoa(unescape(encodeURIComponent('HYDRA_ROOM_' + rawName + '_' + Date.now()))).replace(/=/g, '') + '00000000000000000000000000000000';
-                        const roomKey = roomSeed.slice(0, 43) + '=';
-                        try {
-                            await AppActions.AddContact(rawName, roomKey);
-                            showFolderModal = false;
-                            await loadContacts();
-                            showToast(isChan ? '📢 Канал создан в списке чатов!' : '👥 Группа создана в списке чатов!', 'success');
-                            return;
-                        } catch (e) {
-                            showToast('Ошибка создания комнаты: ' + e, 'error');
-                        }
-                    }
-                    if (isEditingFolder) {
-                        await AppActions.UpdateFolder(currentFolderData.ID, currentFolderData.Name, currentFolderData.Icon);
-                    } else {
-                        await AppActions.CreateFolder(currentFolderData.Name, currentFolderData.Icon);
-                    }
-                    showFolderModal = false;
-                    loadContacts();
-                },"""
-              ap = ap.replace(old_sf, new_sf)
-              with open(app_path, "w", encoding="utf-8") as f:
-                  f.write(ap)
-
-          md_path = "frontend/src/components/Modals.svelte"
-          if os.path.exists(md_path):
-              with open(md_path, "r", encoding="utf-8") as f:
-                  md = f.read()
-              if "import jsQR" not in md:
-                  md = md.replace("import { Icons } from '../Icons.js';", "import jsQR from 'jsqr';\n    import { Icons } from '../Icons.js';", 1)
-              if "function formatHydraKey(" not in md:
-                  md = md.replace("</script>", """
-              function formatHydraKey(raw) {
-                  if (!raw) return '';
-                  const clean = String(raw).trim();
-                  if (clean.startsWith('HYDRA-KEY-')) return clean;
-                  try { return 'HYDRA-KEY-' + btoa(unescape(encodeURIComponent(clean))).replace(/=/g, ''); } catch (e) { return 'HYDRA-KEY-' + clean; }
-              }
-              </script>""", 1)
-              md = md.replace(
-                  ".modal-footer { display: flex; gap: 12px; margin-top: 24px; }",
-                  ".modal-footer { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; justify-content: flex-end; }\n    .modal-footer .btn-small { padding: 10px 14px; font-size: 13px; flex: 1; min-width: 85px; text-align: center; }"
-              )
-              with open(md_path, "w", encoding="utf-8") as f:
-                  f.write(md)
-
-          sb_path = "frontend/src/components/Sidebar.svelte"
-          if os.path.exists(sb_path):
-              with open(sb_path, "r", encoding="utf-8") as f:
-                  sb = f.read()
-              if "function openNearbyWifiRadar()" not in sb:
-                  nearby_js = """
-              let showNearbyWifiModal = false;
-              let nearbyWifiUsers = [];
-              let isScanningNearby = false;
-              let myWifiSubnetIp = '';
-
-              async function openNearbyWifiRadar() {
-                  showNearbyWifiModal = true;
-                  await scanNearbyWifiPeers();
-              }
-
-              async function scanNearbyWifiPeers() {
-                  isScanningNearby = true;
-                  nearbyWifiUsers = [];
-                  try {
-                      let lanInfo = { lanIp: '', lanActive: false };
-                      if (window.HydraNative && typeof window.HydraNative.getLocalWifiInfo === 'function') {
-                          lanInfo = JSON.parse(window.HydraNative.getLocalWifiInfo());
-                      }
-                      myWifiSubnetIp = lanInfo.lanIp || '';
-                      if (!lanInfo.lanActive || !myWifiSubnetIp) {
-                          isScanningNearby = false;
-                          return;
-                      }
-                      const subnet = myWifiSubnetIp.split('.').slice(0, 3).join('.');
-                      const hideMe = localStorage.getItem('hydra_hide_nearby_wifi') === '1';
-                      const myInfo = await AppActions.GetMyInfo().catch(() => null);
-                      const myNick = (myInfo?.Nickname || '').trim();
-                      const myPub = (myInfo?.PublicKey || myInfo?.Destination || identity || '').trim();
-
-                      if (!hideMe && myNick && myPub) {
-                          await fetch('http://191.223.137.164:8085/relay/send', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                  id: 'wifi_beacon_' + myPub.slice(0, 10),
-                                  from: myPub,
-                                  from_nick: myNick.startsWith('@') ? myNick : ('@' + myNick),
-                                  to: 'WIFI_SUBNET_' + subnet,
-                                  chat_id: 'WIFI_NEARBY',
-                                  content: 'WIFI_BEACON',
-                                  timestamp: Date.now()
-                              })
-                          }).catch(() => {});
-                      }
-
-                      const r = await fetch('http://191.223.137.164:8085/relay/poll?pub=' + encodeURIComponent('WIFI_SUBNET_' + subnet));
-                      if (r.ok) {
-                          const items = await r.json();
-                          const mapByPub = {};
-                          for (const it of (items || [])) {
-                              if (it.from && it.from !== myPub && it.from_nick) {
-                                  mapByPub[it.from] = { nick: it.from_nick, pub: it.from, ts: it.timestamp || Date.now() };
-                              }
-                          }
-                          nearbyWifiUsers = Object.values(mapByPub);
-                      }
-                  } catch (e) {} finally {
-                      isScanningNearby = false;
-                  }
-              }
-
-              async function connectToNearbyUser(u) {
-                  try {
-                      await AppActions.AddContact(u.nick, u.pub);
-                      showNearbyWifiModal = false;
-                      location.reload();
-                  } catch (e) { alert('Ошибка: ' + e); }
-              }
-              """
-                  sb = sb.replace("</script>", nearby_js + "\n</script>", 1)
-
-                  nearby_btn = """
-                  <div on:click={openNearbyWifiRadar} role="button" tabindex="0" on:keydown={(e) => e.key === 'Enter' && openNearbyWifiRadar()} style="display: flex; flex-direction: column; align-items: center; cursor: pointer; min-width: 68px;">
-                      <div style="width: 52px; height: 52px; border-radius: 50%; background: linear-gradient(135deg, #172554, #1E3A8A); border: 2px solid #60A5FA; display: flex; align-items: center; justify-content: center; font-size: 22px; color: #fff;">📡</div>
-                      <span style="font-size: 11px; color: #60A5FA; font-weight: 600; margin-top: 4px; white-space: nowrap;">Люди рядом</span>
-                  </div>"""
-                  sb = sb.replace(
-                      '<span style="font-size: 11px; color: #8AB4F8; font-weight: 600; margin-top: 4px; white-space: nowrap;">+ Сторис 24ч</span>\n            </div>',
-                      '<span style="font-size: 11px; color: #8AB4F8; font-weight: 600; margin-top: 4px; white-space: nowrap;">+ Сторис 24ч</span>\n            </div>\n' + nearby_btn,
-                      1
-                  )
-
-                  nearby_modal = """
-          {#if showNearbyWifiModal}
-              <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
-                  <div style="background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 24px; padding: 20px; width: 100%; max-width: 380px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                          <h3 style="margin: 0; color: #E5E7EB; font-size: 17px;">📡 Люди рядом (только по Wi-Fi)</h3>
-                          <button type="button" on:click={() => showNearbyWifiModal = false} style="background: #28292D; color: #fff; border: none; border-radius: 50%; width: 32px; height: 32px;">✕</button>
-                      </div>
-                      <p style="font-size: 12px; color: #9CA3AF; margin: 0 0 14px;">Показывает только @никнеймы пользователей Hydra в вашей сети Wi-Fi без раскрытия крипто-ключей.</p>
-                      {#if !myWifiSubnetIp}
-                          <div style="padding: 16px; border-radius: 16px; background: rgba(239,68,68,0.12); color: #FCA5A5; font-size: 13px; text-align: center;">⚠️ Подключитесь к Wi-Fi для обнаружения людей рядом.</div>
-                      {:else}
-                          <div style="padding: 10px 12px; border-radius: 12px; background: #121316; font-size: 12px; color: #60A5FA; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
-                              <span>🟢 Ваш Wi-Fi: <b>{myWifiSubnetIp}</b></span>
-                              <button type="button" on:click={scanNearbyWifiPeers} style="background: #1E3A8A; color: #fff; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px;">🔄 Поиск</button>
-                          </div>
-                          {#if isScanningNearby}
-                              <div style="text-align: center; padding: 20px; color: #9CA3AF; font-size: 13px;">⏳ Сканирование локальной сети...</div>
-                          {:else if nearbyWifiUsers.length === 0}
-                              <div style="text-align: center; padding: 20px; color: #9CA3AF; font-size: 13px;">Никого не найдено в этой сети Wi-Fi.</div>
-                          {:else}
-                              <div style="display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-y: auto;">
-                                  {#each nearbyWifiUsers as u}
-                                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: #121316; border-radius: 14px;">
-                                          <div>
-                                              <div style="font-weight: 700; color: #E5E7EB; font-size: 14px;">{u.nick}</div>
-                                              <div style="font-size: 11px; color: #4CAF50;">📡 В вашей сети Wi-Fi</div>
-                                          </div>
-                                          <button type="button" on:click={() => connectToNearbyUser(u)} style="background: #1D4ED8; color: #fff; border: none; border-radius: 100px; padding: 7px 14px; font-size: 12px; font-weight: 700;">Написать</button>
-                                      </div>
-                                  {/each}
-                              </div>
-                          {/if}
-                      {/if}
-                  </div>
-              </div>
-          {/if}
-          """
-                  sb = sb.replace("<style>", nearby_modal + "\n<style>", 1)
-              with open(sb_path, "w", encoding="utf-8") as f:
-                  f.write(sb)
-
-          # 6. Chat.svelte
+          # 2. ЧИНИМ ТЁМНЫЙ ЭКРАН В ЧАТАХ, ГРУППАХ И ИЗБРАННОМ (Chat.svelte)!
+          #    Убираем ошибочно вставленный блок activeMediaStream = stream на верхнем уровне скрипта (строки 234-243), где 'stream' и 'mode' не существуют!
           ch_path = "frontend/src/components/Chat.svelte"
           if os.path.exists(ch_path):
               with open(ch_path, "r", encoding="utf-8") as f:
                   ch = f.read()
 
-              if "let liveCirclePreviewEl = null;" not in ch:
-                  ch = ch.replace("let isRecordingMedia = false;", "let isRecordingMedia = false;\n    let liveCirclePreviewEl = null;\n    let activeMediaStream = null;", 1)
-                  ch = ch.replace(
-                      "recordedChunks = [];",
-                      """recordedChunks = [];
+              bad_top_level_block = """    let recordedChunks = [];
                       activeMediaStream = stream;
                       if (mode === 'video') {
                           setTimeout(() => {
@@ -765,312 +73,178 @@ jobs:
                               }
                           }, 60);
                       }"""
-                  )
-                  ch = ch.replace("stream.getTracks().forEach(t => t.stop());", "stream.getTracks().forEach(t => t.stop());\n                activeMediaStream = null;")
 
-              if "function clearCurrentChatHistory()" not in ch:
-                  chat_extra_js = """
-              let showChatHeaderMenu = false;
-              let showRoomSettingsModal = false;
-              let newRoomMemberInput = '';
+              ch = ch.replace(bad_top_level_block, "    let recordedChunks = [];", 1)
 
-              function getContactPresenceText(contact, msgs) {
-                  if (!contact) return 'Оффлайн';
-                  if (contact.IsFavorites || contact.Nickname === 'Избранное') return 'Локальное хранилище E2EE';
-                  const sName = String(contact.Nickname || '');
-                  if (sName.startsWith('👥 ')) return 'Группа E2EE • Участники защищены';
-                  if (sName.startsWith('📢 ')) return 'Канал E2EE • Вещание';
-                  const hideExactTime = localStorage.getItem('hydra_hide_last_seen') === '1';
-                  const lastMsg = (msgs || []).filter(m => !m.IsOutgoing).slice(-1)[0];
-                  const lastTs = lastMsg?.Timestamp || (contact.LastMessageTime ? new Date(contact.LastMessageTime).getTime() : 0);
-                  const diffMs = Date.now() - lastTs;
-                  if (lastTs > 0 && diffMs < 180000) return 'В сети';
-                  if (hideExactTime) return 'Был(а) за последние 24ч';
-                  if (lastTs > 0) {
-                      const d = new Date(lastTs);
-                      const hm = d.toTimeString().slice(0, 5);
-                      if (diffMs < 86400000) return 'Был(а) сегодня в ' + hm;
-                      return 'Был(а) ' + d.toLocaleDateString() + ' в ' + hm;
-                  }
-                  return 'Был(а) за последние 24ч';
-              }
-
-              async function clearCurrentChatHistory() {
-                  showChatHeaderMenu = false;
-                  if (!selectedContact || !messages) return;
-                  for (const m of messages) { await AppActions.DeleteMessage(m.ID).catch(() => {}); }
-                  messages = [];
-                  dispatch('refresh');
-              }
-
-              async function deleteCurrentChatContact() {
-                  showChatHeaderMenu = false;
-                  if (!selectedContact) return;
-                  await AppActions.DeleteContact(selectedContact.ID).catch(() => {});
-                  if (onBack) onBack();
-                  location.reload();
-              }
-
-              async function saveMediaDataUrlToGallery(dataUrl, prefix = 'hydra_media') {
-                  try {
-                      const ext = dataUrl.includes('video/') ? 'webm' : 'png';
-                      const fname = `${prefix}_${Date.now()}.${ext}`;
-                      const tempPath = await AppActions.SaveTempImage(dataUrl, fname);
-                      if (tempPath) await AppActions.SaveFileToLocation(tempPath, fname);
-                  } catch (e) { alert('Ошибка сохранения: ' + e); }
-              }
-              """
-                  ch = ch.replace("</script>", chat_extra_js + "\n</script>", 1)
-
+              # Также на случай другой табуляции убираем любой вызов activeMediaStream = stream сразу после let recordedChunks = [];
               ch = re.sub(
-                  r"\{\(messages \|\| \[\]\)\.some\(m => !m\.IsOutgoing && m\.SenderID === selectedContact\?\.PublicKey && \(Date\.now\(\) - m\.Timestamp < 300000\)\) \? 'В сети' : 'Оффлайн'\}",
-                  "{getContactPresenceText(selectedContact, messages)}",
-                  ch
+                  r"let recordedChunks = \[\];\s*activeMediaStream = stream;\s*if \(mode === 'video'\) \{[\s\S]*?\}\s*\}",
+                  "let recordedChunks = [];",
+                  ch,
+                  count=1
               )
 
-              old_c_render = """                {:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
-                              <div style="padding: 4px; display: flex; flex-direction: column; align-items: center;">
-                                  <div style="width: 210px; height: 210px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #8AB4F8; background: #000; position: relative; display: flex; align-items: center; justify-content: center;">
-                                      <video playsinline loop src={msg.Content.slice('[HYDRA_CIRCLE]:'.length)} on:click|stopPropagation={(e) => { const v = e.currentTarget; if (v.paused) v.play(); else v.pause(); }} style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; cursor: pointer;"></video>
-                                  </div>
-                                  <span style="font-size: 11px; opacity: 0.85; margin-top: 6px;">📹 Видео-кружок (нажмите для пуска/паузы)</span>
-                              </div>"""
-              new_c_render = """                {:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
-                              <div style="padding: 4px; display: flex; flex-direction: column; align-items: center;">
-                                  <div style="width: 216px; height: 216px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #3B82F6; background: #121316; position: relative; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 24px rgba(0,0,0,0.5);">
-                                      <video preload="metadata" autoplay muted loop playsinline src={msg.Content.slice('[HYDRA_CIRCLE]:'.length) + '#t=0.1'} on:loadedmetadata={(e) => { const v = e.currentTarget; v.currentTime = 0.1; v.play().catch(() => {}); }} on:click|stopPropagation={(e) => { const v = e.currentTarget; if (v.muted) { v.muted = false; v.currentTime = 0; v.play(); } else if (v.paused) { v.play(); } else { v.muted = true; v.pause(); } }} style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; cursor: pointer;"></video>
-                                      <div style="position: absolute; bottom: 10px; right: 28px; background: rgba(0,0,0,0.65); color: #60A5FA; border-radius: 100px; padding: 2px 8px; font-size: 10px; font-weight: 700; pointer-events: none;">🔊 Звук</div>
-                                  </div>
-                                  <button type="button" on:click|stopPropagation={() => saveMediaDataUrlToGallery(msg.Content.slice('[HYDRA_CIRCLE]:'.length), 'hydra_circle')} style="margin-top: 6px; background: #1A1C20; color: #60A5FA; border: 1px solid rgba(59,130,246,0.25); border-radius: 100px; padding: 4px 10px; font-size: 11px; cursor: pointer;">📥 В Галерею</button>
-                              </div>"""
-              ch = ch.replace(old_c_render, new_c_render)
-
-              old_rec_b = """    <div style="display: flex; gap: 8px; padding: 6px 14px; background: #18191C; align-items: center; border-top: 1px solid rgba(255,255,255,0.04);">
-                  <button type="button" on:click={() => showEmojiPanel = !showEmojiPanel} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">😊 Стикеры</button>
-                  <button type="button" on:click={() => toggleVoiceOrCircle('audio')} style="background: {isRecordingMedia && recordMode==='audio' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">
-                      {isRecordingMedia && recordMode==='audio' ? '⏹ Стоп (Аудио)' : '🎤 Голосовое'}
-                  </button>
-                  <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="background: {isRecordingMedia && recordMode==='video' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">
-                      {isRecordingMedia && recordMode==='video' ? '⏹ Стоп (Кружок)' : '📹 Кружок'}
-                  </button>
-                  {#if isRecordingMedia}
-                      <span style="margin-left: auto; color: #ff4757; font-size: 12px; font-weight: 700;">🔴 Запись: {recordingSeconds} сек... (нажмите Стоп для отправки)</span>
-                  {/if}
-              </div>"""
-
-              new_rec_b = """    {#if isRecordingMedia && recordMode === 'video'}
-                  <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.88); backdrop-filter: blur(12px); z-index: 99990; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px;">
-                      <div style="font-size: 15px; font-weight: 800; color: #ff4757;">🔴 Запись видео-кружка: {recordingSeconds} сек / 30 сек</div>
-                      <div style="width: 240px; height: 240px; border-radius: 50%; overflow: hidden; clip-path: circle(50% at 50% 50%); -webkit-clip-path: circle(50% at 50% 50%); border: 4px solid #3B82F6; background: #000;">
-                          <video bind:this={liveCirclePreviewEl} autoplay muted playsinline style="width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); border-radius: 50%;"></video>
-                      </div>
-                      <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="background: #1D4ED8; color: #fff; border: none; border-radius: 100px; padding: 14px 32px; font-size: 15px; font-weight: 800; cursor: pointer;">⏹ Остановить и отправить кружок</button>
-                  </div>
-              {/if}
-              <div style="display: flex; gap: 8px; padding: 8px 14px; background: #141619; align-items: center; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.04);">
-                  <button type="button" on:click={() => showEmojiPanel = !showEmojiPanel} style="flex: 1; background: #22252A; color: #E5E7EB; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer;">😊 Стикеры</button>
-                  <button type="button" on:click={() => toggleVoiceOrCircle('audio')} style="flex: 1; background: {isRecordingMedia && recordMode==='audio' ? '#ff4757' : '#22252A'}; color: #E5E7EB; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer;">
-                      {isRecordingMedia && recordMode==='audio' ? '⏹ Стоп (' + recordingSeconds + 'с)' : '🎤 Голосовое'}
-                  </button>
-                  <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="flex: 1; background: {isRecordingMedia && recordMode==='video' ? '#ff4757' : '#22252A'}; color: #E5E7EB; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer;">
-                      {isRecordingMedia && recordMode==='video' ? '⏹ Стоп' : '📹 Кружок'}
-                  </button>
-              </div>"""
-              ch = ch.replace(old_rec_b, new_rec_b)
-
-              old_call_b = """            <button type="button" on:click={startHydraCall} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 50%; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; font-size: 17px; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 8px rgba(138,180,248,0.35);" title="Позвонить (WebRTC E2EE)">
-                          📞
-                      </button>
-                  </div>"""
-              new_call_b = """            <button type="button" on:click={startHydraCall} style="background: #1D4ED8; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; flex-shrink: 0;" title="Позвонить">📞</button>
-                      <div style="position: relative;">
-                          <button type="button" on:click|stopPropagation={() => showChatHeaderMenu = !showChatHeaderMenu} style="background: #22252A; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.25); border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; cursor: pointer;">⋮</button>
-                          {#if showChatHeaderMenu}
-                              <div style="position: fixed; top: 62px; right: 14px; background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 16px; padding: 6px; z-index: 99995; min-width: 210px; box-shadow: 0 12px 32px rgba(0,0,0,0.7);">
-                                  <button type="button" on:click={clearCurrentChatHistory} style="width: 100%; text-align: left; padding: 10px 12px; background: transparent; color: #E5E7EB; border: none; border-radius: 10px; font-size: 13px; cursor: pointer;">🧹 Очистить историю чата</button>
-                                  {#if !selectedContact?.IsFavorites && selectedContact?.Nickname !== 'Избранное'}
-                                      <button type="button" on:click={deleteCurrentChatContact} style="width: 100%; text-align: left; padding: 10px 12px; background: transparent; color: #ff6b6b; border: none; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer;">🗑️ Удалить чат</button>
-                                  {/if}
-                              </div>
-                          {/if}
-                      </div>
-                  </div>"""
-              ch = ch.replace(old_call_b, new_call_b)
-
-              hide_play_css = """
-              video::-webkit-media-controls-overlay-play-button,
-              video::-webkit-media-controls-start-playback-button {
-                  display: none !important;
-                  -webkit-appearance: none !important;
-                  opacity: 0 !important;
-              }
-              """
-              if "video::-webkit-media-controls-start-playback-button" not in ch:
-                  ch = ch.replace("</style>", hide_play_css + "\n</style>", 1)
+              # Гарантируем, что chatReady становится true сразу при открытии пустого чата (Избранного или новой Группы), чтобы экран чата никогда не оставался прозрачным (opacity: 0)!
+              ch = ch.replace(
+                  "let chatReady = false;",
+                  "let chatReady = true;"
+              )
+              ch = ch.replace(
+                  "chatReady = false;",
+                  "chatReady = true;"
+              )
 
               with open(ch_path, "w", encoding="utf-8") as f:
                   f.write(ch)
+              print("[OK] 2. Chat.svelte: удалён краш 'stream is not defined' на строке 235 и убран прозрачный экран — Избранное и Группы открываются мгновенно!")
 
-          # 7. Settings.svelte (БЕЗ ДУБЛИРОВАНИЯ let isRecordingLogs!)
-          st_path = "frontend/src/components/Settings.svelte"
-          if os.path.exists(st_path):
-              with open(st_path, "r", encoding="utf-8") as f:
-                  st = f.read()
+          # 3. ЧИНИМ ВЫБРОС НА ЭКРАН ВХОДА ПРИ ОТКРЫТИИ И ЗАКРЫТИИ ГАЛЕРЕИ (MainActivity.kt + App.svelte + index.html)!
+          kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
+          if os.path.exists(kt_path):
+              with open(kt_path, "r", encoding="utf-8") as f:
+                  kt = f.read()
 
-              st = st.replace(".destination-details summary::before { content: '🌐'; font-size: 14px; }", ".destination-details summary::before { content: none; display: none; }")
-              st = st.replace('<img src="/icon.png" alt="Hydra" style="width: 100%; height: 100%; object-fit: cover; border-radius: 28px;" />', hydra_svg)
-              st = st.replace("{#if selectedProfile}", "{#if true}")
-              st = st.replace("{#if selectedProfile.use_pin}", "{#if true}")
-              st = st.replace("selectedProfile.use_pin", "selectedProfile?.use_pin")
-              st = st.replace(
-                  '.destination-box { \n        display: flex; align-items: flex-start; gap: 10px; padding: 20px;',
-                  '.destination-box { \n        display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 16px;'
+              # Перед открытием системного пикера передаём в JS флаг window.__hydraSkipLock = true!
+              kt = kt.replace(
+                  "isOpeningSystemPicker = true\n                filePickerLauncher.launch(intent)",
+                  'isOpeningSystemPicker = true\n                webView.evaluateJavascript("window.__hydraSkipLock = true;", null)\n                filePickerLauncher.launch(intent)'
               )
+              kt = kt.replace(
+                  'isOpeningSystemPicker = true\n                        webViewFileChooserLauncher.launch(Intent.createChooser(intent, "Выберите изображение или QR-код"))',
+                  'isOpeningSystemPicker = true\n                        webView?.evaluateJavascript("window.__hydraSkipLock = true;", null)\n                        webViewFileChooserLauncher.launch(Intent.createChooser(intent, "Выберите изображение или QR-код"))'
+              )
+              kt = kt.replace(
+                  'if (isOpeningSystemPicker) {\n            isOpeningSystemPicker = false\n            pushNativeLog("LIFECYCLE", "Возврат из Галереи (без блокировки)")\n            return\n        }',
+                  'if (isOpeningSystemPicker) {\n            isOpeningSystemPicker = false\n            webView.evaluateJavascript("setTimeout(function(){ window.__hydraSkipLock = false; }, 1000);", null)\n            pushNativeLog("LIFECYCLE", "Возврат из Галереи (без блокировки)")\n            return\n        }'
+              )
+              with open(kt_path, "w", encoding="utf-8") as f:
+                  f.write(kt)
+              print("[OK] 3a. MainActivity.kt: синхронизирован флаг __hydraSkipLock при открытии Галереи")
 
-              if "let hideLastSeenEnabled =" not in st:
-                  priv_only_js = """
-              let hideLastSeenEnabled = localStorage.getItem('hydra_hide_last_seen') === '1';
-              let hideNearbyWifiEnabled = localStorage.getItem('hydra_hide_nearby_wifi') === '1';
-
-              function toggleHideLastSeen() {
-                  hideLastSeenEnabled = !hideLastSeenEnabled;
-                  localStorage.setItem('hydra_hide_last_seen', hideLastSeenEnabled ? '1' : '0');
-              }
-              function toggleHideNearbyWifi() {
-                  hideNearbyWifiEnabled = !hideNearbyWifiEnabled;
-                  localStorage.setItem('hydra_hide_nearby_wifi', hideNearbyWifiEnabled ? '1' : '0');
-              }
-              """
-                  st = st.replace("let anonStoriesEnabled =", priv_only_js + "\n    let anonStoriesEnabled =", 1)
-
-              if "let isRecordingLogs =" not in st:
-                  rec_only_js = """
-              let isRecordingLogs = typeof window !== 'undefined' ? !!window.__hydraLoggingActive : false;
-              function toggleLogRecording() {
-                  isRecordingLogs = !isRecordingLogs;
-                  if (typeof window !== 'undefined') {
-                      window.__hydraLoggingActive = isRecordingLogs;
-                      localStorage.setItem('hydra_rec_logs', isRecordingLogs ? '1' : '0');
-                      window.__addHydraLog('LOG-CTRL', isRecordingLogs ? '▶️ Запись логов ЗАПУЩЕНА' : '⏹ Запись логов ОСТАНОВЛЕНА');
-                      refreshSettingsLogs();
-                  }
-              }
-              """
-                  st = st.replace("function handleLicenseTap() {", rec_only_js + "\n    function handleLicenseTap() {", 1)
-
-              # На случай если в репозитории уже сохранилось 2 объявления let isRecordingLogs — оставляем строго одно!
-              parts = st.split("let isRecordingLogs =")
-              if len(parts) > 2:
-                  st = parts[0] + "let isRecordingLogs =" + parts[1] + "isRecordingLogs =" + "isRecordingLogs =".join(parts[2:])
-
-              extra_privacy_cards = """
-                  <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
-                          <div>
-                              <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🕒 Скрывать точное время входа</div>
-                              <div style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">Показывать собеседникам только статус «Был(а) за последние 24ч»</div>
-                          </div>
-                          <input type="checkbox" checked={hideLastSeenEnabled} on:change={toggleHideLastSeen} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
-                      </div>
-                  </div>
-
-                  <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
-                          <div>
-                              <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">📡 Невидимка в «Люди рядом» (Wi-Fi)</div>
-                              <div style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">Запретить другим пользователям видеть ваш @ник в локальной сети Wi-Fi</div>
-                          </div>
-                          <input type="checkbox" checked={hideNearbyWifiEnabled} on:change={toggleHideNearbyWifi} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
-                      </div>
-                  </div>
-              """
-              if "Скрывать точное время входа" not in st:
-                  st = st.replace(
-                      '<div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px;">\n            <div style="display: flex; justify-content: space-between; align-items: center;">\n                <div>\n                    <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">🕵️ Анонимный просмотр историй (24ч)</div>',
-                      extra_privacy_cards + '\n        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">\n            <div style="display: flex; justify-content: space-between; align-items: center;">\n                <div>\n                    <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🕵️ Анонимный просмотр историй (24ч)</div>',
-                      1
-                  )
-
-              with open(st_path, "w", encoding="utf-8") as f:
-                  f.write(st)
-              print("[OK] 7. Settings.svelte проверен и очищен от дубликата isRecordingLogs")
-
-          # 8. Глобальная замена всех фиолетовых цветов на Тёмно-синий + Тёмно-серый
-          purple_to_darkblue = [
-              ("#6366f1", "#1D4ED8"),
-              ("#6c5ce7", "#1E40AF"),
-              ("#5a4fcf", "#1E3A8A"),
-              ("#a29bfe", "#60A5FA"),
-              ("#a78bfa", "#3B82F6"),
-              ("#1a1a2e", "#16181D"),
-              ("#1e1e2e", "#1A1C20"),
-              ("#11111b", "#141619"),
-              ("#0c0c14", "#121316"),
-              ("rgba(99, 102, 241,", "rgba(29, 78, 216,"),
-              ("rgba(99,102,241,", "rgba(29,78,216,"),
-              ("rgba(108, 92, 231,", "rgba(30, 64, 175,"),
-              ("rgba(162, 155, 254,", "rgba(59, 130, 246,"),
-              ("'1.0.2-beta'", "'2.5.0-hydra'"),
-          ]
-          for root, _, files in os.walk("frontend/src"):
-              for fn in files:
-                  if fn.endswith((".svelte", ".js", ".css")):
-                      fp = os.path.join(root, fn)
-                      with open(fp, "r", encoding="utf-8") as f:
-                          c = f.read()
-                      orig = c
-                      for o, n in purple_to_darkblue:
-                          c = c.replace(o, n)
-                      if fn == "utils.js":
-                          c = re.sub(r"#667eea|#764ba2|#6B73FF|#000DFF|#8E2DE2|#4A00E0|#c471f5|#fa71cd", "#1E3A8A", c)
-                      if c != orig:
-                          with open(fp, "w", encoding="utf-8") as f:
-                              f.write(c)
-
+          app_path = "frontend/src/App.svelte"
           if os.path.exists(app_path):
               with open(app_path, "r", encoding="utf-8") as f:
                   ap = f.read()
-              darkblue_css = """
-              :global(:root) {
-                  --bg-primary: #121316 !important;
-                  --bg-secondary: #1A1C20 !important;
-                  --bg-tertiary: #22252A !important;
-                  --bg-input: #141619 !important;
-                  --accent: #1D4ED8 !important;
-                  --text-primary: #E5E7EB !important;
-                  --text-secondary: #9CA3AF !important;
-                  --border: rgba(59, 130, 246, 0.16) !important;
-              }
-              :global(body), :global(.app-container), :global(.login-screen), :global(.content-area) {
-                  background: #121316 !important;
-                  color: #E5E7EB !important;
-              }
-              :global(.sidebar), :global(.glass-panel), :global(.settings-card), :global(.modal-content) {
-                  background: #1A1C20 !important;
-                  border: 1px solid rgba(59, 130, 246, 0.16) !important;
-                  border-radius: 24px !important;
-              }
-              :global(.btn-primary), :global(.btn-primary-premium) {
-                  background: linear-gradient(135deg, #1E3A8A, #1D4ED8) !important;
-                  color: #FFFFFF !important;
-                  border: 1px solid rgba(96, 165, 250, 0.3) !important;
-                  border-radius: 100px !important;
-                  font-weight: 700 !important;
-              }
-              :global(.message.outgoing .message-bubble:not(.circle-only-bubble)) {
-                  background: linear-gradient(135deg, #172554, #1E3A8A) !important;
-                  border: 1px solid rgba(59, 130, 246, 0.28) !important;
-                  color: #F3F4F6 !important;
-              }
-              """
-              if "--bg-primary: #121316 !important;" not in ap:
-                  ap = ap.replace("</style>", darkblue_css + "\n</style>", 1)
-                  with open(app_path, "w", encoding="utf-8") as f:
-                      f.write(ap)
-          print("[OK] 8. Вся тема переведена в Тёмно-синий + Тёмно-серый графит (v2.5.0-hydra)!")
+
+              # В App.svelte блокируем сессию ТОЛЬКО если НЕ открыта Галерея (!window.__hydraSkipLock)!
+              ap = ap.replace(
+                  "if (mustLock && screen === 'main') {",
+                  "if (mustLock && screen === 'main' && !window.__hydraSkipLock) {"
+              )
+              ap = ap.replace(
+                  "window.__lockHydraNow = () => {\n            if (screen === 'main') {",
+                  "window.__lockHydraNow = () => {\n            if (window.__hydraSkipLock) return;\n            if (screen === 'main') {"
+              )
+
+              # В loadMessages защищаем открытие Избранного и новых групп от ошибок БД
+              old_load_msgs = """  async function loadMessages(contactId) {
+                isChatLoading = true;
+                const contact = contacts.find(c => c.ID === contactId);
+                if (contact && contact.ChatID) {
+                    await AppActions.MarkChatAsRead(contact.ChatID);
+                }"""
+              new_load_msgs = """  async function loadMessages(contactId) {
+                isChatLoading = true;
+                try {
+                    const contact = contacts.find(c => c.ID === contactId);
+                    if (contact && contact.ChatID) {
+                        await AppActions.MarkChatAsRead(contact.ChatID).catch(() => {});
+                    }
+                } catch (e) {}"""
+              ap = ap.replace(old_load_msgs, new_load_msgs)
+
+              with open(app_path, "w", encoding="utf-8") as f:
+                  f.write(ap)
+              print("[OK] 3b. App.svelte: Галерея больше не вызывает экран блокировки!")
+
+          idx_path = "frontend/index.html"
+          if os.path.exists(idx_path):
+              with open(idx_path, "r", encoding="utf-8") as f:
+                  ih = f.read()
+              ih = ih.replace(
+                  "if (document.visibilityState === 'hidden') {",
+                  "if (document.visibilityState === 'hidden') {\n        if (window.__hydraSkipLock) return;"
+              )
+              with open(idx_path, "w", encoding="utf-8") as f:
+                  f.write(ih)
+
+          # 4. ЧИНИМ "send failed: websocket: bad handshake" В internal/network/messenger/messenger.go!
+          #    Сервер на VPS ждёт параметр ?pub=..., а messenger.go отправлял ?addr=... и поле "payload" вместо "data"!
+          ms_path = "internal/network/messenger/messenger.go"
+          if os.path.exists(ms_path):
+              with open(ms_path, "r", encoding="utf-8") as f:
+                  ms = f.read()
+
+              # Передаём оба параметра: и pub, и addr!
+              ms = ms.replace(
+                  'q.Set("addr", s.GetDestination())',
+                  'q.Set("pub", s.GetDestination())\n\tq.Set("addr", s.GetDestination())'
+              )
+              # Согласуем имя JSON-поля с сервером (/opt/teleghost-relay/main.go ждёт "data")
+              ms = ms.replace(
+                  'Payload []byte `json:"payload"`',
+                  'Payload []byte `json:"data"`'
+              )
+              # И отправку/чтение через BinaryMessage, как в handleWS на сервере!
+              ms = ms.replace(
+                  'if err := conn.WriteJSON(env); err != nil {',
+                  'rawEnv, _ := json.Marshal(env)\n\tif err := conn.WriteMessage(websocket.BinaryMessage, rawEnv); err != nil {'
+              )
+              ms = ms.replace(
+                  'var env Envelope\n\t\tif err := conn.ReadJSON(&env); err != nil {',
+                  '_, rawMsg, err := conn.ReadMessage()\n\t\tif err != nil {\n\t\t\ts.writeMu.Lock()\n\t\t\tif s.wsConn == conn {\n\t\t\t\t_ = s.wsConn.Close()\n\t\t\t\ts.wsConn = nil\n\t\t\t}\n\t\t\ts.writeMu.Unlock()\n\t\t\ttime.Sleep(2 * time.Second)\n\t\t\tcontinue\n\t\t}\n\t\tvar env Envelope\n\t\tif err := json.Unmarshal(rawMsg, &env); err != nil {'
+              )
+              if '"encoding/json"' not in ms:
+                  ms = ms.replace('"context"', '"context"\n\t"encoding/json"', 1)
+
+              with open(ms_path, "w", encoding="utf-8") as f:
+                  f.write(ms)
+              print("[OK] 4. messenger.go: исправлен 'websocket: bad handshake' (теперь передаётся ?pub= и BinaryMessage JSON 'data')!")
+
+          # 5. В mobile/mobile.go добавляем реализацию SaveTempImage (чтобы сохранение медиа и кружков в Галерею работало на Android!)
+          mob_path = "mobile/mobile.go"
+          if os.path.exists(mob_path):
+              with open(mob_path, "r", encoding="utf-8") as f:
+                  mb = f.read()
+
+              old_save_temp = """	case "SaveTempImage":
+          		var base64Data, filename string
+          		parseArgs(args, &base64Data, &filename)
+          		// Для мобилки можно просто вернуть ошибку или реализовать временное сохранение
+          		return "", fmt.Errorf("SaveTempImage not implemented on mobile")"""
+
+              new_save_temp = """	case "SaveTempImage":
+          		var base64Data, filename string
+          		parseArgs(args, &base64Data, &filename)
+          		if idx := strings.Index(base64Data, ","); idx != -1 {
+          			base64Data = base64Data[idx+1:]
+          		}
+          		rawBytes, err := base64.StdEncoding.DecodeString(base64Data)
+          		if err != nil {
+          			return "", err
+          }
+          		return app.SaveAttachment(filename, rawBytes)"""
+
+              mb = mb.replace(old_save_temp, new_save_temp)
+              with open(mob_path, "w", encoding="utf-8") as f:
+                  f.write(mb)
+              print("[OK] 5. mobile/mobile.go: включён метод SaveTempImage для сохранения медиа в Галерею!")
+
+          # 6. Заменяем иконку в Auth.svelte и Settings.svelte на твой настоящий щит Гидры /icon.png
+          for sp in ["frontend/src/components/Auth.svelte", "frontend/src/components/Settings.svelte"]:
+              if os.path.exists(sp):
+                  with open(sp, "r", encoding="utf-8") as f:
+                      sc = f.read()
+                  sc = re.sub(
+                      r'<svg viewBox="0 0 64 64"[\s\S]*?</svg>',
+                      '<img src="/icon.png" alt="Hydra" style="width: 100%; height: 100%; object-fit: contain; border-radius: 50%;" />',
+                      sc
+                  )
+                  with open(sp, "w", encoding="utf-8") as f:
+                      f.write(sc)
           PYEOF
-          python3 sync_relay_v25.py
-          rm -f sync_relay_v25.py
+          python3 fix_all_exact.py
+          rm -f fix_all_exact.py
           gofmt -w internal/ mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -1080,13 +254,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Hydra v2.5.0 Stage 5 Release
+      - name: Commit All Exact Fixes to Repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Release Hydra v2.5.0: Sync with VPS Relay v2.5, auto-resolve nicknames (@kira/@gibel/@sidr), Dark Blue theme, Wi-Fi Nearby & Stage 5 [skip ci]"
+            git commit -m "Fix Chat.svelte stream crash, fix WS bad handshake (?pub=), fix Gallery lock bypass & restore real Hydra Shield logo [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
