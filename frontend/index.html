@@ -50,6 +50,7 @@
     if (window.__hydraGlobalLoggerReady) return;
     window.__hydraGlobalLoggerReady = true;
     window.__hydraLogList = [];
+    window.__hydraLoggingActive = localStorage.getItem('hydra_rec_logs') === '1';
 
     
     window.__setHydraBlur = function(active) {
@@ -75,6 +76,7 @@
     });
     
     window.__addHydraLog = function(tag, msg) {
+      if (!window.__hydraLoggingActive && tag !== 'LOG-CTRL') return;
       var d = new Date();
       var t = d.toTimeString().split(' ')[0] + '.' + String(d.getMilliseconds()).padStart(3, '0');
       var line = '[' + t + '] [' + tag + '] ' + msg;

@@ -16,17 +16,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// GetContacts возвращает список контактов с последним сообщением.
 func (a *AppCore) GetContacts() ([]*ContactInfo, error) {
 	if a.Repo == nil {
 		return []*ContactInfo{}, nil
 	}
-
 	contacts, err := a.Repo.ListContactsWithLastMessage(a.Ctx)
 	if err != nil {
 		return nil, err
 	}
-
 	result := make([]*ContactInfo, len(contacts))
 	for i, c := range contacts {
 		info := &ContactInfo{
@@ -48,20 +45,16 @@ func (a *AppCore) GetContacts() ([]*ContactInfo, error) {
 		}
 		result[i] = info
 	}
-
 	return result, nil
 }
 
-// AddContact добавляет контакт по его ключу или @никнейму, сохраняя красивое имя!
 func (a *AppCore) AddContact(name, destination string) (*ContactInfo, error) {
 	if a.Repo == nil || a.Identity == nil || a.Identity.Keys == nil {
 		return nil, fmt.Errorf("not logged in")
 	}
-
 	name = strings.TrimSpace(name)
 	destination = strings.TrimSpace(destination)
 
-	// Если во втором поле (destination) введён @никнейм — резолвим его в публичный ключ на VPS
 	if strings.HasPrefix(destination, "@") || (len(destination) >= 3 && len(destination) < 32 && !strings.Contains(destination, "/")) {
 		cleanNick := strings.ToLower(strings.TrimPrefix(destination, "@"))
 		client := &http.Client{Timeout: 8 * time.Second}
@@ -81,15 +74,11 @@ func (a *AppCore) AddContact(name, destination string) (*ContactInfo, error) {
 				name = "@" + cleanNick
 			}
 		}
-	} else if strings.HasPrefix(name, "@") && len(destination) >= 32 {
-		// Имя уже введено как @ник, а destination — готовый ключ, оставляем имя как есть!
 	}
 
 	if len(destination) < 32 {
 		return nil, fmt.Errorf("некорректный ID ключ Hydra (введите @никнейм или отсканируйте QR-код)")
 	}
-
-	// Если имя не задано или туда случайно вставили длинный ключ — делаем аккуратное имя
 	if name == "" || (len(name) > 28 && !strings.Contains(name, " ")) {
 		name = "Контакт " + destination[:6]
 	}
@@ -97,7 +86,6 @@ func (a *AppCore) AddContact(name, destination string) (*ContactInfo, error) {
 	myPub := a.Identity.Keys.PublicKeyBase64
 	chatID := identity.CalculateChatID(myPub, destination)
 
-	// Проверяем, нет ли уже такого контакта
 	if existing, _ := a.Repo.GetContactByPublicKey(a.Ctx, destination); existing != nil {
 		existing.Nickname = name
 		existing.I2PAddress = destination
@@ -123,19 +111,13 @@ func (a *AppCore) AddContact(name, destination string) (*ContactInfo, error) {
 		AddedAt:    time.Now(),
 		UpdatedAt:  time.Now(),
 	}
-
 	if err := a.Repo.SaveContact(a.Ctx, contact); err != nil {
 		return nil, err
 	}
-
 	if a.Messenger != nil {
-		go func(dst string) {
-			_ = a.Messenger.SendHandshake(dst)
-		}(destination)
+		go func(dst string) { _ = a.Messenger.SendHandshake(dst) }(destination)
 	}
-
 	a.Emitter.Emit("contact_updated")
-
 	return &ContactInfo{
 		ID:         contact.ID,
 		Nickname:   contact.Nickname,
@@ -145,7 +127,6 @@ func (a *AppCore) AddContact(name, destination string) (*ContactInfo, error) {
 	}, nil
 }
 
-// AddContactFromClipboard добавляет контакт из буфера обмена.
 func (a *AppCore) AddContactFromClipboard(name string) (*ContactInfo, error) {
 	data, err := a.Platform.ClipboardGet()
 	if err != nil {
@@ -157,7 +138,6 @@ func (a *AppCore) AddContactFromClipboard(name string) (*ContactInfo, error) {
 	return a.AddContact(name, data)
 }
 
-// DeleteContact удаляет контакт.
 func (a *AppCore) DeleteContact(id string) error {
 	if a.Repo == nil {
 		return fmt.Errorf("not logged in")

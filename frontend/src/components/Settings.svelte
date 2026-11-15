@@ -216,12 +216,23 @@
         refreshLanWifiInfo();
     }
 
+    let isRecordingLogs = typeof window !== 'undefined' ? !!window.__hydraLoggingActive : false;
+
+    function toggleLogRecording() {
+        isRecordingLogs = !isRecordingLogs;
+        if (typeof window !== 'undefined') {
+            window.__hydraLoggingActive = isRecordingLogs;
+            localStorage.setItem('hydra_rec_logs', isRecordingLogs ? '1' : '0');
+            window.__addHydraLog('LOG-CTRL', isRecordingLogs ? '▶️ Запись логов ЗАПУЩЕНА пользователем' : '⏹ Запись логов ОСТАНОВЛЕНА пользователем');
+            refreshSettingsLogs();
+        }
+    }
+
     function handleLicenseTap() {
         licenseTapCount++;
         if (licenseTapCount >= 6) {
-            devMenuUnlocked = true;
-            localStorage.setItem('hydra_dev_unlocked', '1');
             showSecretDevModal = true;
+            isRecordingLogs = typeof window !== 'undefined' ? !!window.__hydraLoggingActive : false;
             refreshSettingsLogs();
             refreshLanWifiInfo();
             licenseTapCount = 0;
@@ -358,23 +369,23 @@
                                 </div>
                                 {#if selectedProfile.use_pin}
                                     <button class="btn-secondary full-width" on:click={onChangePin}>Сменить ПИН-код</button>
-        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div>
+        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px; box-sizing: border-box; max-width: 100%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                <div style="flex: 1; min-width: 0;">
                     <div style="font-weight: 700; color: #E3E3E3; font-size: 15px;">👆 Разблокировка по отпечатку пальца</div>
                     <div style="font-size: 13px; color: #9AA0A6; margin-top: 4px;">Автоматически запрашивать биометрию при входе</div>
-            <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center;">
-                <input type="password" placeholder="Ваш ПИН для биометрии..." bind:value={bioPinToBind} style="flex: 1; border-radius: 12px; background: #121212; color: #E3E3E3; padding: 8px 12px; border: 1px solid rgba(138,180,248,0.3); font-size: 12px;" />
-                <button type="button" on:click={setupAndTestBiometric} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;">
+                </div>
+                <input type="checkbox" checked={biometricEnabled} on:change={toggleBiometric} style="width: 22px; height: 22px; accent-color: #8AB4F8; flex-shrink: 0;" />
+            </div>
+            <div style="margin-top: 12px; display: flex; gap: 8px; align-items: center; width: 100%; box-sizing: border-box;">
+                <input type="password" placeholder="Ваш ПИН для биометрии..." bind:value={bioPinToBind} style="flex: 1; min-width: 0; border-radius: 12px; background: #121212; color: #E3E3E3; padding: 10px 12px; border: 1px solid rgba(138,180,248,0.3); font-size: 13px; box-sizing: border-box;" />
+                <button type="button" on:click={setupAndTestBiometric} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 10px 16px; font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap; flex-shrink: 0;">
                     👆 Привязать
                 </button>
             </div>
             {#if bioBindStatus}
-                <div style="margin-top: 6px; font-size: 12px; color: #8AB4F8;">{bioBindStatus}</div>
+                <div style="margin-top: 8px; font-size: 12px; color: #8AB4F8; line-height: 1.4;">{bioBindStatus}</div>
             {/if}
-                </div>
-                <input type="checkbox" checked={biometricEnabled} on:change={toggleBiometric} style="width: 22px; height: 22px; accent-color: #8AB4F8;" />
-            </div>
         </div>
 
         <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1E1F22; border-radius: 24px;">
@@ -480,7 +491,7 @@
                     <div class="settings-section animate-fade-in">
                         <div class="about-branding">
                             <div class="about-logo animate-float">
-                                <img src="/icon.png" alt="Hydra" style="width: 100%; height: 100%; object-fit: cover; border-radius: 28px;" />
+                                <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="32" cy="32" r="30" stroke="#8AB4F8" stroke-width="2.5" fill="#12131A"/><path d="M32 12C25 12 20 17 20 24C20 29 23 33 26 36L22 50H42L38 36C41 33 44 29 44 24C44 17 39 12 32 12Z" stroke="#8AB4F8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="rgba(138,180,248,0.12)"/><path d="M20 26C14 24 10 19 12 13C15 15 19 18 21 22" stroke="#8AB4F8" stroke-width="2.5" stroke-linecap="round"/><path d="M44 26C50 24 54 19 52 13C49 15 45 18 43 22" stroke="#8AB4F8" stroke-width="2.5" stroke-linecap="round"/><circle cx="28" cy="23" r="2" fill="#8AB4F8"/><circle cx="36" cy="23" r="2" fill="#8AB4F8"/><path d="M27 30C29 32 35 32 37 30" stroke="#8AB4F8" stroke-width="2" stroke-linecap="round"/></svg>
                             </div>
                             <h2 class="about-title">Hydra</h2>
                             <p class="about-version">Version {aboutInfo.app_version || '1.0.2-beta'}</p>
@@ -503,15 +514,7 @@
                                 </div>
                             </div>
 
-                            {#if devMenuUnlocked}
-                                <div class="update-action-row" role="button" tabindex="0" on:click={() => { refreshSettingsLogs(); refreshLanWifiInfo(); showSecretDevModal = true; }} on:keydown={(e) => e.key === 'Enter' && (showSecretDevModal = true)} style="background: rgba(138,180,248,0.14); border: 1.5px solid #8AB4F8;">
-                                    <div class="info-icon accent">🛠️</div>
-                                    <div class="info-content">
-                                        <span class="info-value-fancy accent">Меню разработчика (Логи и Тест потоков)</span>
-                                    </div>
-                                    <div class="chevron">{@html Icons.ChevronRight}</div>
-                                </div>
-                            {/if}
+                            
 
                             <div class="info-item-fancy">
                                 <div class="info-icon">{@html Icons.Globe}</div>
@@ -562,7 +565,7 @@
                 <div style="font-size: 17px; font-weight: 800; color: #8AB4F8;">🛠️ Меню разработчика Hydra</div>
                 <div style="font-size: 11px; color: #9AA0A6;">Диагностика связи, WebRTC-потока звонков, сообщений и LAN</div>
             </div>
-            <button type="button" on:click={() => showSecretDevModal = false} style="background: #ff4757; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; font-weight: 800; font-size: 16px; cursor: pointer;">✕</button>
+            <button type="button" on:click={() => { showSecretDevModal = false; licenseTapCount = 0; }} style="background: #ff4757; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; font-weight: 800; font-size: 16px; cursor: pointer;">✕</button>
         </div>
 
         <div style="background: #181920; border: 1px solid rgba(138,180,248,0.25); border-radius: 18px; padding: 14px; margin-bottom: 14px;">
@@ -585,8 +588,13 @@
         </div>
 
         <div style="flex: 1; display: flex; flex-direction: column; background: #09090D; border: 1px solid rgba(138,180,248,0.3); border-radius: 18px; padding: 12px; min-height: 260px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 6px; flex-wrap: wrap;">
-                <span style="font-size: 12px; font-weight: 800; color: #8AB4F8;">🐞 Системный журнал ({settingsLogLines.length})</span>
+            <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 12px; font-weight: 800; color: #8AB4F8;">🐞 Системный журнал ({settingsLogLines.length})</span>
+                    <button type="button" on:click={toggleLogRecording} style="background: {isRecordingLogs ? '#ff4757' : '#4CAF50'}; color: #fff; border: none; border-radius: 100px; padding: 6px 14px; font-size: 11px; font-weight: 800; cursor: pointer;">
+                        {isRecordingLogs ? '⏹ Остановить запись' : '🔴 Начать запись логов'}
+                    </button>
+                </div>
                 <div style="display: flex; gap: 6px; flex-wrap: wrap;">
                     <button type="button" on:click={refreshSettingsLogs} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 6px 10px; font-size: 11px;">🔄</button>
                     <button type="button" on:click={saveSettingsLogsToFile} style="background: #4CAF50; color: #fff; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700;">💾 В файл (.txt)</button>
@@ -702,7 +710,7 @@
     }
     .destination-details summary:hover { background: rgba(255,255,255,0.03); color: white; }
     .destination-details summary::-webkit-details-marker { display: none; }
-    .destination-details summary::before { content: '🌐'; font-size: 14px; }
+    .destination-details summary::before { content: none; display: none; }
     .destination-details[open] summary { border-bottom: 1px solid rgba(255,255,255,0.05); }
     .hint-inline { font-size: 11px; opacity: 0.5; font-weight: 400; font-family: var(--font-main); margin-left: auto; }
 

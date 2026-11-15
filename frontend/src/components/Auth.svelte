@@ -349,7 +349,7 @@
        style="max-width: {authScreen === 'profiles' ? '540px' : '440px'}; padding: 40px; border-radius: 28px;">
     
     <div class="login-logo" style="margin-bottom: 32px;">
-      <img src="/icon.png" alt="Hydra" class="rounded-full shadow-lg" style="width: 80px; height: 80px; filter: drop-shadow(0 0 20px rgba(99, 102, 241, 0.4)); object-fit: cover; border: 2px solid rgba(255,255,255,0.1);" />
+      <div style="width: 84px; height: 84px; margin: 0 auto; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 24px rgba(138,180,248,0.25);"><svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="32" cy="32" r="30" stroke="#8AB4F8" stroke-width="2.5" fill="#12131A"/><path d="M32 12C25 12 20 17 20 24C20 29 23 33 26 36L22 50H42L38 36C41 33 44 29 44 24C44 17 39 12 32 12Z" stroke="#8AB4F8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="rgba(138,180,248,0.12)"/><path d="M20 26C14 24 10 19 12 13C15 15 19 18 21 22" stroke="#8AB4F8" stroke-width="2.5" stroke-linecap="round"/><path d="M44 26C50 24 54 19 52 13C49 15 45 18 43 22" stroke="#8AB4F8" stroke-width="2.5" stroke-linecap="round"/><circle cx="28" cy="23" r="2" fill="#8AB4F8"/><circle cx="36" cy="23" r="2" fill="#8AB4F8"/><path d="M27 30C29 32 35 32 37 30" stroke="#8AB4F8" stroke-width="2" stroke-linecap="round"/></svg></div>
     </div>
     
     <h1 class="login-title" style="font-size: 32px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 8px; background: linear-gradient(to right, #fff, #a29bfe); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Hydra</h1>

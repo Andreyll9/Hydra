@@ -271,8 +271,19 @@
     // === ЭТАП 4: СМАЙЛИКИ, ГОЛОСОВЫЕ, ВИДЕО-КРУЖКИ И ТАЙМЕР ===
     let showEmojiPanel = false;
     let isRecordingMedia = false;
+    let liveCirclePreviewEl = null;
+    let activeMediaStream = null;
     let mediaRecorderInstance = null;
     let recordedChunks = [];
+            activeMediaStream = stream;
+            if (mode === 'video') {
+                setTimeout(() => {
+                    if (liveCirclePreviewEl && activeMediaStream) {
+                        liveCirclePreviewEl.srcObject = activeMediaStream;
+                        liveCirclePreviewEl.play().catch(() => {});
+                    }
+                }, 60);
+            }
     let recordMode = 'audio'; // 'audio' | 'video'
     let disappearingTimer = 0; // 0 = выкл, 60 = 1 мин, 3600 = 1 час
 
@@ -329,6 +340,15 @@
                 video: mode === 'video' ? { facingMode: 'user', width: { ideal: 180 }, height: { ideal: 180 }, frameRate: { ideal: 15 } } : false
             });
             recordedChunks = [];
+            activeMediaStream = stream;
+            if (mode === 'video') {
+                setTimeout(() => {
+                    if (liveCirclePreviewEl && activeMediaStream) {
+                        liveCirclePreviewEl.srcObject = activeMediaStream;
+                        liveCirclePreviewEl.play().catch(() => {});
+                    }
+                }, 60);
+            }
             const options = mode === 'video'
                 ? { videoBitsPerSecond: 96000, audioBitsPerSecond: 16000 }
                 : { audioBitsPerSecond: 16000 };
@@ -342,6 +362,7 @@
             };
             mediaRecorderInstance.onstop = () => {
                 stream.getTracks().forEach(t => t.stop());
+                activeMediaStream = null;
                 const mime = recordMode === 'video' ? 'video/webm' : 'audio/webm';
                 const blob = new Blob(recordedChunks, { type: mime });
                 if (window.__addHydraLog) window.__addHydraLog('MEDIA-BLOB', `Готов ${mime}, размер: ${blob.size} байт`);
@@ -585,10 +606,32 @@
                     </div>
                 {:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
                     <div style="padding: 4px; display: flex; flex-direction: column; align-items: center;">
-                        <div style="width: 210px; height: 210px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #8AB4F8; background: #000; position: relative; display: flex; align-items: center; justify-content: center;">
-                            <video playsinline loop src={msg.Content.slice('[HYDRA_CIRCLE]:'.length)} on:click|stopPropagation={(e) => { const v = e.currentTarget; if (v.paused) v.play(); else v.pause(); }} style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; cursor: pointer;"></video>
+                        <div style="width: 216px; height: 216px; border-radius: 50% !important; overflow: hidden !important; clip-path: circle(50% at 50% 50%) !important; -webkit-clip-path: circle(50% at 50% 50%) !important; border: 3px solid #8AB4F8; background: #12131A; position: relative; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 24px rgba(0,0,0,0.5);">
+                            <video
+                                preload="metadata"
+                                autoplay
+                                muted
+                                loop
+                                playsinline
+                                src={msg.Content.slice('[HYDRA_CIRCLE]:'.length) + '#t=0.1'}
+                                on:loadedmetadata={(e) => { const v = e.currentTarget; v.currentTime = 0.1; v.play().catch(() => {}); }}
+                                on:click|stopPropagation={(e) => {
+                                    const v = e.currentTarget;
+                                    if (v.muted) {
+                                        v.muted = false;
+                                        v.currentTime = 0;
+                                        v.play();
+                                    } else if (v.paused) {
+                                        v.play();
+                                    } else {
+                                        v.muted = true;
+                                        v.pause();
+                                    }
+                                }}
+                                style="width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; cursor: pointer;"
+                            ></video>
+                            <div style="position: absolute; bottom: 10px; right: 28px; background: rgba(0,0,0,0.65); color: #8AB4F8; border-radius: 100px; padding: 2px 8px; font-size: 10px; font-weight: 700; pointer-events: none;">🔊 Нажмите для звука</div>
                         </div>
-                        <span style="font-size: 11px; opacity: 0.85; margin-top: 6px;">📹 Видео-кружок (нажмите для пуска/паузы)</span>
                     </div>
                 {:else}
                     <div class="message-content">{@html parseMarkdown(msg.Content)}</div>
@@ -669,17 +712,33 @@
             {/each}
         </div>
     {/if}
-    <div style="display: flex; gap: 8px; padding: 6px 14px; background: #18191C; align-items: center; border-top: 1px solid rgba(255,255,255,0.04);">
-        <button type="button" on:click={() => showEmojiPanel = !showEmojiPanel} style="background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">😊 Стикеры</button>
-        <button type="button" on:click={() => toggleVoiceOrCircle('audio')} style="background: {isRecordingMedia && recordMode==='audio' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">
-            {isRecordingMedia && recordMode==='audio' ? '⏹ Стоп (Аудио)' : '🎤 Голосовое'}
+    {#if isRecordingMedia && recordMode === 'video'}
+        <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.88); backdrop-filter: blur(12px); z-index: 99990; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px;">
+            <div style="font-size: 15px; font-weight: 800; color: #ff4757; display: flex; align-items: center; gap: 8px;">
+                <span>🔴 Запись видео-кружка: {recordingSeconds} сек / 30 сек</span>
+            </div>
+            <div style="width: 240px; height: 240px; border-radius: 50%; overflow: hidden; clip-path: circle(50% at 50% 50%); -webkit-clip-path: circle(50% at 50% 50%); border: 4px solid #8AB4F8; background: #000; box-shadow: 0 0 32px rgba(138,180,248,0.4);">
+                <video bind:this={liveCirclePreviewEl} autoplay muted playsinline style="width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); border-radius: 50%;"></video>
+            </div>
+            <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 14px 32px; font-size: 15px; font-weight: 800; cursor: pointer; box-shadow: 0 6px 20px rgba(138,180,248,0.4);">
+                ⏹ Остановить и отправить кружок
+            </button>
+        </div>
+    {/if}
+    {#if isRecordingMedia && recordMode === 'audio'}
+        <div style="padding: 8px 14px; background: rgba(255,71,87,0.15); border-top: 1px solid rgba(255,71,87,0.3); display: flex; align-items: center; justify-content: space-between;">
+            <span style="color: #ff6b6b; font-size: 12px; font-weight: 700;">🎤 Запись голосового: {recordingSeconds} сек...</span>
+            <button type="button" on:click={() => toggleVoiceOrCircle('audio')} style="background: #ff4757; color: #fff; border: none; border-radius: 100px; padding: 5px 14px; font-size: 11px; font-weight: 700;">⏹ Отправить</button>
+        </div>
+    {/if}
+    <div style="display: flex; gap: 8px; padding: 8px 14px; background: #18191C; align-items: center; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.04);">
+        <button type="button" on:click={() => showEmojiPanel = !showEmojiPanel} style="flex: 1; background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">😊 Стикеры</button>
+        <button type="button" on:click={() => toggleVoiceOrCircle('audio')} style="flex: 1; background: {isRecordingMedia && recordMode==='audio' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">
+            {isRecordingMedia && recordMode==='audio' ? '⏹ Стоп' : '🎤 Голосовое'}
         </button>
-        <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="background: {isRecordingMedia && recordMode==='video' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; cursor: pointer;">
-            {isRecordingMedia && recordMode==='video' ? '⏹ Стоп (Кружок)' : '📹 Кружок'}
+        <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="flex: 1; background: {isRecordingMedia && recordMode==='video' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">
+            {isRecordingMedia && recordMode==='video' ? '⏹ Стоп' : '📹 Кружок'}
         </button>
-        {#if isRecordingMedia}
-            <span style="margin-left: auto; color: #ff4757; font-size: 12px; font-weight: 700;">🔴 Запись: {recordingSeconds} сек... (нажмите Стоп для отправки)</span>
-        {/if}
     </div>
     
     <div class="input-area">
@@ -973,6 +1032,14 @@
     }
     .chat-area.mobile .chat-status {
         flex-direction: row !important;
+    }
+    
+
+    video::-webkit-media-controls-overlay-play-button,
+    video::-webkit-media-controls-start-playback-button {
+        display: none !important;
+        -webkit-appearance: none !important;
+        opacity: 0 !important;
     }
     
 </style>

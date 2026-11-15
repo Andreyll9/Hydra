@@ -154,6 +154,7 @@
             await loadMyInfo();
             screen = 'main';
             if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
+            if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
           if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
             loadContacts();
         }
@@ -312,6 +313,7 @@
           await loadMyInfo();
           screen = 'main';
             if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
+            if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
           if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
           networkStatus = await AppActions.GetNetworkStatus();
           mobileView.set('list');
@@ -335,6 +337,7 @@
           console.error("[App] onLoginSuccess failed:", err);
           showToast("Ошибка при загрузке данных: " + err, 'error');
           screen = 'main';
+            if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
             if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
           if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
       } finally {
