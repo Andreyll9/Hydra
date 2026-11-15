@@ -14,7 +14,7 @@ export function getInitials(name) {
 
 export function formatPreviewText(raw) {
     if (!raw) return 'Нет сообщений';
-    const s = String(raw).trim();
+    const s = String(raw).replace(/^\[HYDRA_TTL:\d+\]/, '').trim();
     if (s.startsWith('[HYDRA_VOICE]:')) return '🎤 Голосовое сообщение';
     if (s.startsWith('[HYDRA_CIRCLE]:')) return '📹 Видео-кружок';
     if (s.startsWith('[HYDRA_VIDEO]:')) return '🎬 Видеоролик';
@@ -86,7 +86,7 @@ export function parseMarkdown(text) {
     html = html.replace(/(?<!\w)\*([^*]+)\*(?!\w)/g, '<em>$1</em>');
     html = html.replace(/(?<!\w)_([^_]+)_(?!\w)/g, '<em>$1</em>');
     html = html.replace(/~~([^~]+)~~/g, '<del>$1</del>');
-    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
     html = html.replace(/<[^>]+>|https?:\/\/[^\s<]+/g, (match) => {
         if (match.startsWith('<')) return match;
         return `<a href="${match}" target="_blank" rel="noopener noreferrer">${match}</a>`;

@@ -703,6 +703,12 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
     }
 
     override fun onPause() {
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            if (am.mode != android.media.AudioManager.MODE_NORMAL) {
+                am.mode = android.media.AudioManager.MODE_NORMAL
+            }
+        } catch (_: Exception) {}
         if (!isOpeningSystemPicker) {
             pausedAtMs = System.currentTimeMillis()
             webView.evaluateJavascript("if(window.__setHydraBlur) window.__setHydraBlur(true);", null)

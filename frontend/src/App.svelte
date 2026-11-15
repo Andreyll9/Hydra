@@ -52,6 +52,8 @@
   let editMessageContent = '';
   let isCompressed = true;
   let previewImage = null;
+  let previewImagePath = '';
+  let previewZoom = 1;
   let replyingTo = null;
   let canLoadMore = true;
   let isLoadingMore = false;
@@ -796,6 +798,8 @@
           }
       },
       onPreviewImage: async (path) => {
+          previewImagePath = path;
+          previewZoom = 1;
           const base64 = await AppActions.GetFileBase64(path);
           previewImage = "data:image/jpeg;base64," + base64;
       },

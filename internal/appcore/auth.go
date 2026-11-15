@@ -195,7 +195,14 @@ func (a *AppCore) Login(mnemonic string) error {
 	}
 
 	// Подключаемся к сети
-	go a.ConnectToI2P()
+	go func() {
+		a.ConnectToI2P()
+		if a.Repo != nil {
+			if u, _ := a.Repo.GetMyProfile(a.Ctx); u != nil && u.Nickname != "" && u.Nickname != "User" {
+				_ = a.UpdateMyProfile(u.Nickname, u.Bio, u.Avatar)
+			}
+		}
+	}()
 
 	return nil
 }

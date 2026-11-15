@@ -327,7 +327,12 @@ func IsRunning() bool {
 
 func handleAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	origin := r.Header.Get("Origin")
+	if origin != "" && !strings.HasPrefix(origin, "http://127.0.0.1") && !strings.HasPrefix(origin, "http://localhost") {
+		http.Error(w, "forbidden origin", http.StatusForbidden)
+		return
+	}
+	w.Header().Set("Access-Control-Allow-Origin", "http://127.0.0.1:8080")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
@@ -686,7 +691,12 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	origin := r.Header.Get("Origin")
+	if origin != "" && !strings.HasPrefix(origin, "http://127.0.0.1") && !strings.HasPrefix(origin, "http://localhost") {
+		http.Error(w, "forbidden origin", http.StatusForbidden)
+		return
+	}
+	w.Header().Set("Access-Control-Allow-Origin", "http://127.0.0.1:8080")
 
 	if sseEmit == nil {
 		return

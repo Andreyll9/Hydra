@@ -286,7 +286,43 @@
         showEmojiPanel = false;
     }
 
+    
+    // Автоматическое удаление сообщений по таймеру (⏱ 1м / 1ч)
+    let ttlCleanupTimer = null;
+    $: if (selectedContact) {
+        const savedTtl = localStorage.getItem('hydra_ttl_' + selectedContact.ID);
+        if (savedTtl !== null) disappearingTimer = Number(savedTtl);
+    }
+    function toggleAndSaveDisappearingTimer() {
+        if (disappearingTimer === 0) disappearingTimer = 60;
+        else if (disappearingTimer === 60) disappearingTimer = 3600;
+        else disappearingTimer = 0;
+        if (selectedContact) {
+            localStorage.setItem('hydra_ttl_' + selectedContact.ID, String(disappearingTimer));
+        }
+    }
+    if (typeof window !== 'undefined') {
+        setInterval(async () => {
+            if (!disappearingTimer || disappearingTimer <= 0 || !messages || messages.length === 0) return;
+            const nowMs = Date.now();
+            const maxAgeMs = disappearingTimer * 1000;
+            let deletedAny = false;
+            for (const m of messages) {
+                if (m.Timestamp && (nowMs - m.Timestamp >= maxAgeMs)) {
+                    await AppActions.DeleteMessage(m.ID).catch(() => {});
+                    deletedAny = true;
+                }
+            }
+            if (deletedAny) {
+                messages = messages.filter(m => !(m.Timestamp && (nowMs - m.Timestamp >= maxAgeMs)));
+                dispatch('refresh');
+            }
+        }, 3000);
+    }
+    
     function cycleDisappearingTimer() {
+        toggleAndSaveDisappearingTimer();
+        return;
         if (disappearingTimer === 0) disappearingTimer = 60;
         else if (disappearingTimer === 60) disappearingTimer = 3600;
         else disappearingTimer = 0;
@@ -871,12 +907,12 @@
                     <div style="padding: 4px; max-width: 260px;">
                         <video controls playsinline src={msg.Content.slice('[HYDRA_VIDEO]:'.length)} style="width: 100%; max-height: 320px; border-radius: 14px; background: #000;"></video>
                     </div>
-                {:else if msg.Content && (msg.Content.startsWith('[HYDRA_CALL_RING]:') || msg.Content.startsWith('[HYDRA_CALL_MISSED]:') || msg.Content.startsWith('[HYDRA_CALL_END]:'))}
+                {:else if msg.Content && (msg.Content.startsWith('[HYDRA_CALL_RING]:') || msg.Content.startsWith('[HYDRA_CALL_ANSWER]:') || msg.Content.startsWith('[HYDRA_CALL_ICE]:') || msg.Content.startsWith('[HYDRA_CALL_MISSED]:') || msg.Content.startsWith('[HYDRA_CALL_END]:'))}
                     <div style="display: flex; align-items: center; gap: 10px; padding: 6px 10px;">
                         <span style="font-size: 20px;">{msg.Content.startsWith('[HYDRA_CALL_MISSED]:') ? '☎️' : '📞'}</span>
                         <div>
                             <div style="font-weight: 700; font-size: 13px; color: {msg.Content.startsWith('[HYDRA_CALL_MISSED]:') ? '#FCA5A5' : '#E5E7EB'};">
-                                {msg.Content.startsWith('[HYDRA_CALL_RING]:') ? (msg.IsOutgoing ? 'Исходящий вызов' : 'Входящий вызов') : (msg.Content.startsWith('[HYDRA_CALL_MISSED]:') ? 'Пропущенный вызов' : 'Аудиозвонок завершён')}
+                                {msg.Content.startsWith('[HYDRA_CALL_RING]:') ? (msg.IsOutgoing ? 'Исходящий вызов' : 'Входящий вызов') : (msg.Content.startsWith('[HYDRA_CALL_ANSWER]:') ? '🟢 Вызов принят (E2EE)' : (msg.Content.startsWith('[HYDRA_CALL_MISSED]:') ? 'Пропущенный вызов' : 'Аудиозвонок завершён'))}
                             </div>
                             <button type="button" on:click|stopPropagation={startHydraCall} style="margin-top: 4px; background: rgba(59,130,246,0.2); color: #60A5FA; border: 1px solid rgba(59,130,246,0.35); border-radius: 100px; padding: 3px 10px; font-size: 11px; font-weight: 700; cursor: pointer;">Перезвонить</button>
                         </div>

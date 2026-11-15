@@ -127,6 +127,10 @@ func (a *AppCore) SendText(contactID, text, replyToID string) error {
 		msg.ReplyToID = &replyToID
 	}
 
+	// Технические пакеты WebRTC (CALL_ANSWER / CALL_ICE / GROUP_INVITE) не сохраняем как текстовые пузыри в истории чата
+	if strings.HasPrefix(text, "[HYDRA_CALL_ANSWER]:") || strings.HasPrefix(text, "[HYDRA_CALL_ICE]:") || strings.HasPrefix(text, "[HYDRA_GROUP_INVITE]:") {
+		return nil
+	}
 	if err := a.Repo.SaveMessage(a.Ctx, msg); err != nil {
 		log.Printf("[AppCore] Failed to save message: %v", err)
 	}

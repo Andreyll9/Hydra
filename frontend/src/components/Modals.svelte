@@ -126,8 +126,23 @@
                 const code = jsQR(imageData.data, imageData.width, imageData.height);
                 if (code && code.data) {
                     addContactAddress = code.data.trim();
-                    if (!addContactName.trim()) addContactName = 'Контакт ' + addContactAddress.slice(0, 6);
-                    qrStatusMsg = '✅ QR-код успешно считан камерой!';
+                    qrStatusMsg = '⏳ QR считан! Поиск @никнейма на сервере...';
+                    stopLiveQRScanner();
+                    fetch('http://191.223.137.164:8085/nick/resolve?pub=' + encodeURIComponent(addContactAddress))
+                        .then(r => r.ok ? r.json() : null)
+                        .then(d => {
+                            if (d && d.nickname) {
+                                addContactName = '@' + d.nickname.replace(/^@/, '');
+                                qrStatusMsg = '✅ Найдено имя пользователя: ' + addContactName;
+                            } else {
+                                if (!addContactName.trim() || addContactName.startsWith('Контакт ')) addContactName = 'Пользователь Hydra';
+                                qrStatusMsg = '✅ QR-код считан! Введите имя друга выше.';
+                            }
+                        })
+                        .catch(() => {
+                            if (!addContactName.trim()) addContactName = 'Пользователь Hydra';
+                            qrStatusMsg = '✅ QR-код успешно считан!';
+                        });
                     if (window.__addHydraLog) window.__addHydraLog('QR-CAM-OK', 'Считан QR с живой камеры: ' + addContactAddress);
                     stopLiveQRScanner();
                 }
@@ -182,8 +197,18 @@
             const code = jsQR(imageData.data, imageData.width, imageData.height);
             if (code && code.data) {
                 addContactAddress = code.data.trim();
-                if (!addContactName.trim()) addContactName = 'Контакт ' + addContactAddress.slice(0, 6);
-                qrStatusMsg = '✅ QR-код распознан из картинки!';
+                qrStatusMsg = '⏳ Поиск @никнейма владельца QR...';
+                fetch('http://191.223.137.164:8085/nick/resolve?pub=' + encodeURIComponent(addContactAddress))
+                    .then(r => r.ok ? r.json() : null)
+                    .then(d => {
+                        if (d && d.nickname) {
+                            addContactName = '@' + d.nickname.replace(/^@/, '');
+                            qrStatusMsg = '✅ Найдено имя: ' + addContactName;
+                        } else {
+                            if (!addContactName.trim() || addContactName.startsWith('Контакт ')) addContactName = 'Пользователь Hydra';
+                            qrStatusMsg = '✅ QR-код распознан из картинки!';
+                        }
+                    }).catch(() => {});
                 if (window.__addHydraLog) window.__addHydraLog('QR-FILE-OK', 'Распознан адрес: ' + addContactAddress);
                 return;
             }

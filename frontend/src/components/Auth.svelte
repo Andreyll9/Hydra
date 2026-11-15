@@ -578,8 +578,8 @@
       </div>
     </div>
     <div class="modal-footer" style="position: relative; z-index: 10001;">
-      <button class="btn-primary-premium full-width accent-btn clickable-btn" on:click|preventDefault|stopPropagation={confirmMnemonicSaved} style="height: 52px; font-size: 16px; border-radius: 16px;">
-        Я сохранил(а) Мастер-ключ HYDRA-KEY
+      <button class="btn-primary-premium full-width accent-btn clickable-btn" on:click|preventDefault|stopPropagation={confirmMnemonicSaved} style="min-height: 50px; height: auto; padding: 14px 20px; font-size: 15px; line-height: 1.3; border-radius: 100px; display: flex; align-items: center; justify-content: center; text-align: center;">
+        ✅ Я сохранил(а) Мастер-ключ
       </button>
     </div>
   </div>

@@ -1246,6 +1246,9 @@ func (a *AppCore) StartVPSRelayLoop() {
 							if mID == "" || fromPub == "" || seenIDs[mID] {
 								continue
 							}
+							if len(seenIDs) > 1000 {
+								seenIDs = make(map[string]bool)
+							}
 							seenIDs[mID] = true
 							if existing, _ := a.Repo.GetMessage(a.Ctx, mID); existing != nil {
 								continue
