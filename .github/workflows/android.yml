@@ -43,8 +43,17 @@ jobs:
           cat << 'PYEOF' > apply_v28_fixes.py
           import os, re, shutil
 
-          # 1. ЧИНИМ ПРЕДУПРЕЖДЕНИЕ GOOGLE PLAY ЗАЩИТЫ (AndroidManifest.xml + network_security_config.xml):
-          #    - Удаляем подозрительный для Play Protect BootReceiver и RECEIVE_BOOT_COMPLETED (автозапуск в фоне при загрузке ОС)
+          # 0. Гарантируем, что фирменная иконка щита Гидры (logo.png) на месте
+          real_hydra_logo = "frontend/src/assets/images/logo.png"
+          if os.path.exists(real_hydra_logo):
+              for mip in ["mipmap-mdpi", "mipmap-hdpi", "mipmap-xhdpi", "mipmap-xxhdpi", "mipmap-xxxhdpi"]:
+                  for fname in ["ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png"]:
+                      dst = f"android/app/src/main/res/{mip}/{fname}"
+                      os.makedirs(os.path.dirname(dst), exist_ok=True)
+                      shutil.copyfile(real_hydra_logo, dst)
+
+          # 1. ЧИНИМ ПРЕДУПРЕЖДЕНИЕ GOOGLE PLAY ЗАЩИТЫ (AndroidManifest.xml):
+          #    - Удаляем BootReceiver, RECEIVE_BOOT_COMPLETED и WAKE_LOCK
           #    - Меняем stopWithTask="false" на stopWithTask="true"
           mf_path = "android/app/src/main/AndroidManifest.xml"
           if os.path.exists(mf_path):
@@ -61,12 +70,45 @@ jobs:
           # 2. MainActivity.kt:
           #    - Создание собственной структуры папок приложения в памяти телефона: /Download/Hydra/Photos, /Videos, /Voice, /Files, /Logs
           #    - Расширенное определение модели и бренда телефона (с расшифровкой кодов RMX3472, M2010J19SY и др.)
+          #    - Проверка наличия handleCallNotificationAction и setScreenshotProtection
           kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
           if os.path.exists(kt_path):
               with open(kt_path, "r", encoding="utf-8") as f:
                   kt = f.read()
 
-              # Расшифровка модели телефона в checkSystemStatus
+              if "fun handleCallNotificationAction(" not in kt:
+                  if "fun handleDirectReplyFromNotification(" in kt:
+                      kt = kt.replace(
+                          "fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {",
+                          """fun handleCallNotificationAction(senderNick: String, action: String) {
+              currentInstance?.runOnUiThread {
+                  val sNick = JSONObject.quote(senderNick)
+                  val sAct = JSONObject.quote(action)
+                  currentInstance?.webView?.evaluateJavascript(
+                      "if(window.__onHydraCallNotifAction) window.__onHydraCallNotifAction($sNick, $sAct);",
+                      null
+                  )
+              }
+          }
+          fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {"""
+                      )
+
+              if "fun setScreenshotProtection(" not in kt:
+                  kt = kt.replace(
+                      "inner class HydraNativeBridge {",
+                      """inner class HydraNativeBridge {
+          @JavascriptInterface
+          fun setScreenshotProtection(enabled: Boolean) {
+              runOnUiThread {
+                  if (enabled) {
+                      window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+                  } else {
+                      window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                  }
+              }
+          }"""
+                  )
+
               old_dev_str = 'obj.put("device", "${Build.MANUFACTURER} ${Build.MODEL}")'
               new_dev_str = '''val rawModel = Build.MODEL ?: ""
                   val brand = (Build.BRAND ?: Build.MANUFACTURER ?: "Android").replaceFirstChar { it.uppercase() }
@@ -78,7 +120,6 @@ jobs:
                   obj.put("device", "$prettyDevice • Android ${Build.VERSION.RELEASE}")'''
               kt = kt.replace(old_dev_str, new_dev_str)
 
-              # Сохранение всех файлов и медиа в именную папку Hydra (/Download/Hydra/Photos | Videos | Voice | Files)
               old_save_file = """                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                               put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
                               put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
@@ -102,8 +143,6 @@ jobs:
                   'android.widget.Toast.makeText(this, "Сохранено в Загрузки", android.widget.Toast.LENGTH_SHORT).show()',
                   'android.widget.Toast.makeText(this, "✅ Сохранено в папку Download/Hydra!", android.widget.Toast.LENGTH_SHORT).show()'
               )
-
-              # На Android 9 (SDK < 29) также создаём папку /Download/Hydra/
               kt = kt.replace(
                   'val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)',
                   'val dlDir = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "Hydra")'
@@ -111,7 +150,7 @@ jobs:
 
               with open(kt_path, "w", encoding="utf-8") as f:
                   f.write(kt)
-              print("[OK] 2. MainActivity.kt: добавлено создание папок /Download/Hydra/(Photos, Videos, Voice, Logs) и точное определение модели телефона!")
+              print("[OK] 2. MainActivity.kt: добавлены папки /Download/Hydra/, модель смартфона и функции уведомлений!")
 
           # 3. ЛИМИТ 2 ПРОФИЛЯ НА УСТРОЙСТВО + СКРЫТИЕ КНОПКИ "+ СОЗДАТЬ" С ЭКРАНА БЛОКИРОВКИ, КОГДА ЕСТЬ ХОТЯ БЫ 1 ПРОФИЛЬ (Auth.svelte + Settings.svelte):
           au_path = "frontend/src/components/Auth.svelte"
@@ -119,7 +158,6 @@ jobs:
               with open(au_path, "r", encoding="utf-8") as f:
                   au = f.read()
 
-              # На экране входа показываем кнопку "+ Создать" ТОЛЬКО если профилей ещё 0 (allProfiles.length === 0)!
               old_add_prof_btn = """            <div 
                       class="profile-item add-profile" 
                       role="button"
@@ -143,34 +181,34 @@ jobs:
                     <div class="add-text">Создать</div>
                   </div>
                   {/if}"""
-              au = au.replace(old_add_prof_btn, new_add_prof_btn)
+              if "{#if allProfiles.length === 0}" not in au:
+                  au = au.replace(old_add_prof_btn, new_add_prof_btn)
 
-              # В функции startCreateProfile жёстко проверяем лимит 2 профиля на 1 устройство!
-              au = au.replace(
-                  "function startCreateProfile() {",
-                  """function startCreateProfile() {
+              if "allProfiles.length >= 2" not in au:
+                  au = au.replace(
+                      "function startCreateProfile() {",
+                      """function startCreateProfile() {
                   if (allProfiles.length >= 2) {
                       showToast('На одном устройстве можно создать максимум 2 профиля', 'error');
                       return;
                   }"""
-              )
+                  )
 
-              # Если из Настроек запросили создание 2-го профиля (localStorage.getItem('hydra_open_create_second') === '1'), сразу открываем форму создания
-              au = au.replace(
-                  "if (allProfiles.length === 0) {\n                authScreen = 'profiles';\n            }",
-                  """if (localStorage.getItem('hydra_open_create_second') === '1' && allProfiles.length < 2) {
+              if "hydra_open_create_second" not in au:
+                  au = au.replace(
+                      "if (allProfiles.length === 0) {\n                authScreen = 'profiles';\n            }",
+                      """if (localStorage.getItem('hydra_open_create_second') === '1' && allProfiles.length < 2) {
                       localStorage.removeItem('hydra_open_create_second');
                       startCreateProfile();
                   } else if (allProfiles.length === 0) {
                       authScreen = 'profiles';
                   }"""
-              )
+                  )
 
               with open(au_path, "w", encoding="utf-8") as f:
                   f.write(au)
-              print("[OK] 3a. Auth.svelte: кнопка '+ Создать' убрана с главного экрана при наличии профиля, установлен жёсткий лимит в 2 профиля на устройство!")
+              print("[OK] 3a. Auth.svelte: лимит 2 профиля и скрытие кнопки '+ Создать' при наличии профиля готовы!")
 
-          # В Settings.svelte (вкладка Профиль) добавляем блок "🔄 Профили на устройстве (макс. 2)" с быстрым переключением между 2 профилями без выхода на главный экран и кнопкой "+ Добавить 2-й профиль" (которая исчезает, когда профилей уже 2)!
           st_path = "frontend/src/components/Settings.svelte"
           if os.path.exists(st_path):
               with open(st_path, "r", encoding="utf-8") as f:
@@ -273,7 +311,7 @@ jobs:
                   )
               with open(st_path, "w", encoding="utf-8") as f:
                   f.write(st)
-              print("[OK] 3b. Settings.svelte: добавлено переключение между профилями прямо из настроек и кнопка создания 2-го профиля (исчезает при 2/2)!")
+              print("[OK] 3b. Settings.svelte: блок переключения профилей проверен")
 
           # 4. ЦЕНТРИРОВАНИЕ КОНТЕКСТНЫХ МЕНЮ ЭКРАНА + СКРЫТИЕ "УДАЛИТЬ У ВСЕХ" И "РЕДАКТИРОВАТЬ" ДЛЯ КРУЖКОВ/ИЗБРАННОГО В App.svelte:
           app_path = "frontend/src/App.svelte"
@@ -281,7 +319,6 @@ jobs:
               with open(app_path, "r", encoding="utf-8") as f:
                   ap = f.read()
 
-              # Центрируем все контекстные меню строго по центру экрана (чтобы никогда не вылезали за края, как на Скриншоте 3!)
               ap = ap.replace(
                   'style="top: {contextMenu.y}px; left: {contextMenu.x}px"',
                   'style="top: 50%; left: 50%; transform: translate(-50%, -50%); width: 260px; max-width: 88vw;"'
@@ -294,11 +331,11 @@ jobs:
                   'style="top: {messageContextMenu.y}px; left: {messageContextMenu.x}px; min-width: 210px; border-radius: 18px; padding: 8px;"',
                   'style="top: 50%; left: 50%; transform: translate(-50%, -50%); width: 265px; max-width: 90vw; border-radius: 22px; padding: 10px;"'
               )
+              ap = ap.replace(
+                  'style="top: {messageContextMenu.y}px; left: {messageContextMenu.x}px"',
+                  'style="top: 50%; left: 50%; transform: translate(-50%, -50%); width: 265px; max-width: 90vw; border-radius: 22px; padding: 10px;"'
+              )
 
-              # В меню сообщения:
-              # 1) Пункт "Редактировать" показываем ТОЛЬКО для обычных текстовых сообщений (НЕ для [HYDRA_CIRCLE]: и НЕ для [HYDRA_VOICE]:, чтобы не вылезал Base64 код как на Скриншоте 5!)
-              # 2) Для видео-кружков вместо него показываем пункт "✂️ Обрезать кружок"!
-              # 3) В Избранном (Заметках) скрываем кнопку "🔥 Удалить у всех", оставляя просто "🗑️ Удалить"!
               old_edit_and_del = """            {#if messageContextMenu.message?.IsOutgoing}
                   <div class="context-item" on:click={() => {
                       editingMessageId = messageContextMenu.message.ID;
@@ -351,8 +388,6 @@ jobs:
                   }}>🔥 Удалить у всех</div>
               {/if}"""
               ap = ap.replace(old_edit_and_del, new_edit_and_del)
-
-              # Также не показываем "Копировать текст" для Base64 кружков и голосовых
               ap = ap.replace(
                   "{#if messageContextMenu.message?.Content}",
                   "{#if messageContextMenu.message?.Content && !messageContextMenu.message.Content.startsWith('[HYDRA_')}"
@@ -360,59 +395,96 @@ jobs:
 
               with open(app_path, "w", encoding="utf-8") as f:
                   f.write(ap)
-              print("[OK] 4. App.svelte: все контекстные меню отцентрированы, в Избранном убрана 'Удалить у всех', для кружков добавлена кнопка '✂️ Обрезать кружок'!")
+              print("[OK] 4. App.svelte обновлён")
 
           # 5. Chat.svelte:
-          #    - Исправляем запуск Кружка при удержании кнопки: теперь открывается СТУДИЯ КРУЖКА (БЕЗ автостарта записи!), где сначала видишь себя в круге, можешь нажать круглую кнопку "🔄" (Фронтальная / Основная камера), а внизу стоит КРУГЛАЯ кнопка с треугольником "▶" (Начать запись до 120 секунд = 2 минуты) и КРУГЛАЯ кнопка с квадратом "⏹" (Стоп)!
-          #    - После нажатия Стоп (или при выборе "✂️ Обрезать кружок" на уже отправленном кружке) появляются ползунки обрезки начала и конца кружка (`#t=start,end`)!
+          #    ГАРАНТИРОВАННО объявляем все переменные и функции Студии Кружка (showCircleStudio, circleTrimStart, circleTrimEnd, circleTotalDuration, openCircleStudio, startCircleStudioRecording, stopCircleStudioRecording, sendEditedCircle, closeCircleStudio) сразу после `let showEmojiPanel = false;`!
           ch_path = "frontend/src/components/Chat.svelte"
           if os.path.exists(ch_path):
               with open(ch_path, "r", encoding="utf-8") as f:
                   ch = f.read()
 
-              # При удержании кнопки в режиме 'video' открываем Студию Кружка (openCircleStudio(false)) БЕЗ мгновенного старта записи!
-              ch = ch.replace(
-                  "toggleVoiceOrCircle(mediaButtonMode);",
-                  "if (mediaButtonMode === 'video') { openCircleStudio(false); } else { toggleVoiceOrCircle('audio'); }"
-              )
-
-              # Добавляем поддержку обрезки кружка (circleTrimStart, circleTrimEnd до 120 сек) и редактирования существующего кружка
-              circle_trim_js = """
+              circle_studio_full_js = """
+              // === СТУДИЯ ВИДЕО-КРУЖКА (ДО 2 МИНУТ + ВЫБОР КАМЕРЫ + КРУГЛЫЕ КНОПКИ ПУСК/СТОП + ОБРЕЗКА) ===
+              let showCircleStudio = false;
+              let circleFacingMode = 'user';
+              let circleFilterMode = 'none';
+              let circleDraftDataUrl = '';
               let circleTrimStart = 0;
               let circleTrimEnd = 120;
               let circleTotalDuration = 15;
               let editingExistingCircleId = null;
 
-              if (typeof window !== 'undefined') {
-                  window.__openExistingCircleTrimmer = (msgObj) => {
-                      if (!msgObj || !msgObj.Content) return;
-                      const rawUrl = msgObj.Content.slice('[HYDRA_CIRCLE]:'.length).split('#t=')[0];
-                      editingExistingCircleId = msgObj.ID;
-                      circleDraftDataUrl = rawUrl;
-                      circleTrimStart = 0;
-                      circleTrimEnd = 30;
+              async function openCircleStudio(switchCam = false) {
+                  if (switchCam) {
+                      circleFacingMode = circleFacingMode === 'user' ? 'environment' : 'user';
+                  } else {
                       showCircleStudio = true;
-                  };
+                      circleDraftDataUrl = '';
+                      editingExistingCircleId = null;
+                      isRecordingMedia = false;
+                  }
+                  try {
+                      const stream = await navigator.mediaDevices.getUserMedia({
+                          audio: { echoCancellation: true, noiseSuppression: true },
+                          video: { facingMode: circleFacingMode, width: { ideal: 640 }, height: { ideal: 640 }, frameRate: { ideal: 24 } }
+                      });
+                      activeMediaStream = stream;
+                      setTimeout(() => {
+                          if (liveCirclePreviewEl && activeMediaStream) {
+                              liveCirclePreviewEl.srcObject = activeMediaStream;
+                              liveCirclePreviewEl.play().catch(() => {});
+                          }
+                      }, 80);
+                  } catch (e) {
+                      alert('Не удалось открыть камеру: ' + e);
+                  }
               }
-              """
-              if "let circleTrimStart =" not in ch:
-                  ch = ch.replace("let showCircleStudio = false;", "let showCircleStudio = false;\n" + circle_trim_js, 1)
 
-              # Меняем лимит записи кружка с 30 секунд на 120 секунд (2 минуты)!
-              ch = ch.replace("if (recordingSeconds >= 30 && isRecordingMedia)", "if (recordingSeconds >= 120 && isRecordingMedia)")
-              ch = ch.replace("recordingSeconds >= 30", "recordingSeconds >= 120")
+              function startCircleStudioRecording() {
+                  if (!activeMediaStream) return;
+                  recordedChunks = [];
+                  recordMode = 'video';
+                  try {
+                      mediaRecorderInstance = new MediaRecorder(activeMediaStream, { videoBitsPerSecond: 650000, audioBitsPerSecond: 32000 });
+                  } catch (e) {
+                      mediaRecorderInstance = new MediaRecorder(activeMediaStream);
+                  }
+                  mediaRecorderInstance.ondataavailable = e => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
+                  mediaRecorderInstance.onstop = () => {
+                      const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                      const reader = new FileReader();
+                      reader.onloadend = () => {
+                          circleDraftDataUrl = reader.result;
+                          circleTotalDuration = Math.max(2, recordingSeconds || 10);
+                          circleTrimStart = 0;
+                          circleTrimEnd = circleTotalDuration;
+                      };
+                      reader.readAsDataURL(blob);
+                  };
+                  recordingSeconds = 0;
+                  clearInterval(recordingInterval);
+                  recordingInterval = setInterval(() => {
+                      recordingSeconds++;
+                      if (recordingSeconds >= 120 && isRecordingMedia) stopCircleStudioRecording();
+                  }, 1000);
+                  mediaRecorderInstance.start(200);
+                  isRecordingMedia = true;
+              }
 
-              # При отправке кружка из Студии сохраняем выбранные границы обрезки (#t=start,end) или обновляем существующий кружок!
-              old_send_circle = """    async function sendEditedCircle() {
-                  if (!circleDraftDataUrl || !selectedContact) return;
-                  const targetId = selectedContact.ID || selectedContact.ChatID;
-                  await AppActions.SendText(targetId, `[HYDRA_CIRCLE]:${circleDraftDataUrl}`, '');
-                  circleDraftDataUrl = '';
-                  showCircleStudio = false;
-                  dispatch('refresh');
-              }"""
+              function stopCircleStudioRecording() {
+                  clearInterval(recordingInterval);
+                  if (mediaRecorderInstance && isRecordingMedia) {
+                      mediaRecorderInstance.stop();
+                  }
+                  isRecordingMedia = false;
+                  if (activeMediaStream) {
+                      activeMediaStream.getTracks().forEach(t => t.stop());
+                      activeMediaStream = null;
+                  }
+              }
 
-              new_send_circle = """    async function sendEditedCircle() {
+              async function sendEditedCircle() {
                   if (!circleDraftDataUrl || !selectedContact) return;
                   const cleanBase = circleDraftDataUrl.split('#t=')[0];
                   const trimSuffix = (circleTrimStart > 0 || circleTrimEnd < circleTotalDuration)
@@ -429,13 +501,43 @@ jobs:
                   circleDraftDataUrl = '';
                   showCircleStudio = false;
                   dispatch('refresh');
-              }"""
-              ch = ch.replace(old_send_circle, new_send_circle)
+              }
 
-              # Заменяем старый оверлей записи видео-кружка (Скриншот 2) на новую Студию Кружка с КРУГЛЫМИ кнопками ▶ (Пуск), ⏹ (Стоп), 🔄 (Смена камеры), лимитом 120 сек (2 мин) и ползунками обрезки!
-              ch = re.sub(
-                  r'\{#if isRecordingMedia && recordMode === \'video\'\}[\s\S]*?\{/if\}',
-                  '''{#if showCircleStudio}
+              function closeCircleStudio() {
+                  stopCircleStudioRecording();
+                  circleDraftDataUrl = '';
+                  editingExistingCircleId = null;
+                  showCircleStudio = false;
+              }
+
+              if (typeof window !== 'undefined') {
+                  window.__openExistingCircleTrimmer = (msgObj) => {
+                      if (!msgObj || !msgObj.Content) return;
+                      const rawUrl = msgObj.Content.slice('[HYDRA_CIRCLE]:'.length).split('#t=')[0];
+                      editingExistingCircleId = msgObj.ID;
+                      circleDraftDataUrl = rawUrl;
+                      circleTrimStart = 0;
+                      circleTrimEnd = 30;
+                      circleTotalDuration = 30;
+                      showCircleStudio = true;
+                  };
+              }
+              """
+              if "let circleTrimStart =" not in ch:
+                  ch = ch.replace("let showEmojiPanel = false;", "let showEmojiPanel = false;\n" + circle_studio_full_js, 1)
+
+              ch = ch.replace(
+                  "toggleVoiceOrCircle(mediaButtonMode);",
+                  "if (mediaButtonMode === 'video') { openCircleStudio(false); } else { toggleVoiceOrCircle('audio'); }"
+              )
+              ch = ch.replace("window.__triggerHydraCircleFromProfile = () => toggleVoiceOrCircle('video');", "window.__triggerHydraCircleFromProfile = () => openCircleStudio(false);")
+              ch = ch.replace("recordingSeconds >= 30", "recordingSeconds >= 120")
+
+              # Заменяем старый оверлей записи видео-кружка на новую Студию Кружка (если он ещё не заменён)
+              if "{#if showCircleStudio}" not in ch:
+                  ch = re.sub(
+                      r'\{#if isRecordingMedia && recordMode === \'video\'\}[\s\S]*?\{/if\}',
+                      '''{#if showCircleStudio}
                   <div style="position: fixed; inset: 0; background: rgba(8,10,16,0.95); backdrop-filter: blur(18px); z-index: 99990; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 20px;">
                       <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 320px;">
                           <span style="font-size: 15px; font-weight: 800; color: {isRecordingMedia ? '#EF4444' : '#60A5FA'};">
@@ -444,7 +546,6 @@ jobs:
                           <button type="button" on:click={closeCircleStudio} style="width: 38px; height: 38px; border-radius: 50%; background: #1A1C20; color: #fff; border: 1px solid rgba(255,255,255,0.1); font-size: 16px; cursor: pointer;">✕</button>
                       </div>
 
-                      <!-- Круглый видоискатель 250x250 -->
                       <div style="width: 250px; height: 250px; border-radius: 50%; overflow: hidden; clip-path: circle(50% at 50% 50%); -webkit-clip-path: circle(50% at 50% 50%); border: 4px solid {isRecordingMedia ? '#EF4444' : '#3B82F6'}; background: #000; box-shadow: 0 0 36px rgba(29,78,216,0.45); position: relative;">
                           {#if circleDraftDataUrl}
                               <video
@@ -469,7 +570,6 @@ jobs:
                           {/if}
                       </div>
 
-                      <!-- Ползунки обрезки кружка после записи или при редактировании -->
                       {#if circleDraftDataUrl}
                           <div style="width: 100%; max-width: 300px; background: #16181F; border: 1px solid rgba(59,130,246,0.25); border-radius: 18px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px;">
                               <div style="display: flex; justify-content: space-between; font-size: 12px; color: #60A5FA; font-weight: 700;">
@@ -481,27 +581,21 @@ jobs:
                           </div>
                       {/if}
 
-                      <!-- КРУГЛЫЕ кнопки управления: Смена камеры (🔄), Старт записи (▶), Стоп (⏹), Отправить (➤) -->
                       <div style="display: flex; align-items: center; justify-content: center; gap: 24px; margin-top: 6px;">
                           {#if !circleDraftDataUrl}
-                              <!-- Круглая кнопка смены камеры (Фронтальная / Основная) -->
                               <button type="button" on:click={() => openCircleStudio(true)} style="width: 54px; height: 54px; border-radius: 50%; background: #1A1C20; color: #60A5FA; border: 1.5px solid rgba(59,130,246,0.4); display: flex; align-items: center; justify-content: center; font-size: 22px; cursor: pointer;" title="Переключить камеру">
                                   🔄
                               </button>
-
                               {#if !isRecordingMedia}
-                                  <!-- КРУГЛАЯ кнопка Старт записи с треугольником ▶ -->
                                   <button type="button" on:click={startCircleStudioRecording} style="width: 74px; height: 74px; border-radius: 50%; background: linear-gradient(135deg, #EF4444, #DC2626); color: #fff; border: 4px solid rgba(255,255,255,0.25); display: flex; align-items: center; justify-content: center; font-size: 28px; cursor: pointer; box-shadow: 0 6px 24px rgba(239,68,68,0.5);" title="Начать запись кружка">
                                       ▶
                                   </button>
                               {:else}
-                                  <!-- КРУГЛАЯ кнопка Стоп записи с квадратом ⏹ -->
                                   <button type="button" on:click={stopCircleStudioRecording} style="width: 74px; height: 74px; border-radius: 50%; background: linear-gradient(135deg, #2563EB, #1D4ED8); color: #fff; border: 4px solid rgba(255,255,255,0.25); display: flex; align-items: center; justify-content: center; font-size: 26px; cursor: pointer; box-shadow: 0 6px 24px rgba(37,99,235,0.5);" title="Остановить запись">
                                       ⏹
                                   </button>
                               {/if}
                           {:else}
-                              <!-- Кнопка Переснять (круглая) и Отправить (круглая) -->
                               <button type="button" on:click={() => { editingExistingCircleId = null; openCircleStudio(false); }} style="width: 56px; height: 56px; border-radius: 50%; background: #1A1C20; color: #FCA5A5; border: 1.5px solid rgba(239,68,68,0.4); display: flex; align-items: center; justify-content: center; font-size: 22px; cursor: pointer;" title="Переснять">
                                   🔄
                               </button>
@@ -512,10 +606,9 @@ jobs:
                       </div>
                   </div>
               {/if}''',
-                  ch
-              )
+                      ch
+                  )
 
-              # В рендере кружка в чате убираем принудительное добавление '#t=0.1', если у кружка уже есть метка обрезки '#t=start,end'!
               ch = ch.replace(
                   "src={msg.Content.slice('[HYDRA_CIRCLE]:'.length) + '#t=0.1'}",
                   "src={msg.Content.slice('[HYDRA_CIRCLE]:'.length).includes('#t=') ? msg.Content.slice('[HYDRA_CIRCLE]:'.length) : (msg.Content.slice('[HYDRA_CIRCLE]:'.length) + '#t=0.1')}"
@@ -523,7 +616,7 @@ jobs:
 
               with open(ch_path, "w", encoding="utf-8") as f:
                   f.write(ch)
-              print("[OK] 5. Chat.svelte: Студия кружка с круглыми кнопками ▶ / ⏹ / 🔄, записью до 2 минут (120с) и ползунками обрезки готова!")
+              print("[OK] 5. Chat.svelte: все переменные Студии Кружка (circleTrimStart, circleTrimEnd, showCircleStudio) объявлены и связаны!")
           PYEOF
           python3 apply_v28_fixes.py
           rm -f apply_v28_fixes.py
