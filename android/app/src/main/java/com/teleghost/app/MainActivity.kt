@@ -36,7 +36,17 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
         private const val NOTIFICATION_CHANNEL_ID = "hydra_heads_up_messages"
         private const val PREFS_NAME = "hydra_biometric_prefs"
         var currentInstance: MainActivity? = null
-        fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
+        fun handleCallNotificationAction(senderNick: String, action: String) {
+    currentInstance?.runOnUiThread {
+        val sNick = JSONObject.quote(senderNick)
+        val sAct = JSONObject.quote(action)
+        currentInstance?.webView?.evaluateJavascript(
+            "if(window.__onHydraCallNotifAction) window.__onHydraCallNotifAction($sNick, $sAct);",
+            null
+        )
+    }
+}
+fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
             currentInstance?.runOnUiThread {
                 val sNick = JSONObject.quote(senderNick)
                 val sText = JSONObject.quote(replyText)
