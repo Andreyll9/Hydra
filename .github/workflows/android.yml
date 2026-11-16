@@ -38,92 +38,495 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Fix MainActivity.kt handleCallNotificationAction Reference & Verify v2.7.0 Build
+      - name: Apply Play Protect Clean-up, Centered Menus, 2-Profile Limit, Circle Studio (Play/Stop/Trim 2m) & /Hydra/ Folders
         run: |
-          cat << 'PYEOF' > fix_kotlin_ref.py
-          import os, shutil
+          cat << 'PYEOF' > apply_v28_fixes.py
+          import os, re, shutil
 
-          # 0. Гарантируем, что фирменная иконка щита Гидры (logo.png) на месте
-          real_hydra_logo = "frontend/src/assets/images/logo.png"
-          if os.path.exists(real_hydra_logo):
-              for mip in ["mipmap-mdpi", "mipmap-hdpi", "mipmap-xhdpi", "mipmap-xxhdpi", "mipmap-xxxhdpi"]:
-                  for fname in ["ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png"]:
-                      dst = f"android/app/src/main/res/{mip}/{fname}"
-                      os.makedirs(os.path.dirname(dst), exist_ok=True)
-                      shutil.copyfile(real_hydra_logo, dst)
+          # 1. ЧИНИМ ПРЕДУПРЕЖДЕНИЕ GOOGLE PLAY ЗАЩИТЫ (AndroidManifest.xml + network_security_config.xml):
+          #    - Удаляем подозрительный для Play Protect BootReceiver и RECEIVE_BOOT_COMPLETED (автозапуск в фоне при загрузке ОС)
+          #    - Меняем stopWithTask="false" на stopWithTask="true"
+          mf_path = "android/app/src/main/AndroidManifest.xml"
+          if os.path.exists(mf_path):
+              with open(mf_path, "r", encoding="utf-8") as f:
+                  mf = f.read()
+              mf = mf.replace('<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />', '')
+              mf = mf.replace('<uses-permission android:name="android.permission.WAKE_LOCK" />', '')
+              mf = mf.replace('android:stopWithTask="false"', 'android:stopWithTask="true"')
+              mf = re.sub(r'<receiver\s+android:name="\.BootReceiver"[\s\S]*?</receiver>', '', mf)
+              with open(mf_path, "w", encoding="utf-8") as f:
+                  f.write(mf)
+              print("[OK] 1. AndroidManifest.xml: удалены триггеры Google Play Защиты (BootReceiver, WAKE_LOCK, stopWithTask=false)!")
 
-          # 1. Чиним Unresolved reference 'handleCallNotificationAction' в MainActivity.kt!
+          # 2. MainActivity.kt:
+          #    - Создание собственной структуры папок приложения в памяти телефона: /Download/Hydra/Photos, /Videos, /Voice, /Files, /Logs
+          #    - Расширенное определение модели и бренда телефона (с расшифровкой кодов RMX3472, M2010J19SY и др.)
           kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
           if os.path.exists(kt_path):
               with open(kt_path, "r", encoding="utf-8") as f:
                   kt = f.read()
 
-              # Если currentInstance уже есть, но handleCallNotificationAction ещё не добавлена в companion object — добавляем её!
-              if "fun handleCallNotificationAction(" not in kt:
-                  if "fun handleDirectReplyFromNotification(" in kt:
-                      kt = kt.replace(
-                          "fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {",
-                          """fun handleCallNotificationAction(senderNick: String, action: String) {
-              currentInstance?.runOnUiThread {
-                  val sNick = JSONObject.quote(senderNick)
-                  val sAct = JSONObject.quote(action)
-                  currentInstance?.webView?.evaluateJavascript(
-                      "if(window.__onHydraCallNotifAction) window.__onHydraCallNotifAction($sNick, $sAct);",
-                      null
+              # Расшифровка модели телефона в checkSystemStatus
+              old_dev_str = 'obj.put("device", "${Build.MANUFACTURER} ${Build.MODEL}")'
+              new_dev_str = '''val rawModel = Build.MODEL ?: ""
+                  val brand = (Build.BRAND ?: Build.MANUFACTURER ?: "Android").replaceFirstChar { it.uppercase() }
+                  val marketMap = mapOf(
+                      "RMX3472" to "Realme 9i / 8i (RMX3472)",
+                      "M2010J19SY" to "Xiaomi Redmi 9T / POCO M3"
                   )
-              }
-          }
-          fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {"""
-                      )
-                  else:
-                      kt = kt.replace(
-                          'private const val PREFS_NAME = "hydra_biometric_prefs"',
-                          '''private const val PREFS_NAME = "hydra_biometric_prefs"
-          var currentInstance: MainActivity? = null
-          fun handleCallNotificationAction(senderNick: String, action: String) {
-              currentInstance?.runOnUiThread {
-                  val sNick = JSONObject.quote(senderNick)
-                  val sAct = JSONObject.quote(action)
-                  currentInstance?.webView?.evaluateJavascript(
-                      "if(window.__onHydraCallNotifAction) window.__onHydraCallNotifAction($sNick, $sAct);",
-                      null
-                  )
-              }
-          }
-          fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
-              currentInstance?.runOnUiThread {
-                  val sNick = JSONObject.quote(senderNick)
-                  val sText = JSONObject.quote(replyText)
-                  currentInstance?.webView?.evaluateJavascript(
-                      "if(window.__onHydraDirectReply) window.__onHydraDirectReply($sNick, $sText);",
-                      null
-                  )
-              }
-          }'''
-                      )
+                  val prettyDevice = marketMap[rawModel] ?: if (rawModel.startsWith(brand, ignoreCase = true)) rawModel else "$brand $rawModel"
+                  obj.put("device", "$prettyDevice • Android ${Build.VERSION.RELEASE}")'''
+              kt = kt.replace(old_dev_str, new_dev_str)
 
-              if "fun setScreenshotProtection(" not in kt:
-                  kt = kt.replace(
-                      "inner class HydraNativeBridge {",
-                      """inner class HydraNativeBridge {
-          @JavascriptInterface
-          fun setScreenshotProtection(enabled: Boolean) {
-              runOnUiThread {
-                  if (enabled) {
-                      window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
-                  } else {
-                      window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                  }
-              }
-          }"""
-                  )
+              # Сохранение всех файлов и медиа в именную папку Hydra (/Download/Hydra/Photos | Videos | Voice | Files)
+              old_save_file = """                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                              put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                              put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+                          }"""
+              new_save_file = """                    val subFolder = when {
+                              filename.endsWith(".jpg", true) || filename.endsWith(".png", true) -> "Hydra/Photos"
+                              filename.endsWith(".mp4", true) || filename.endsWith(".webm", true) -> "Hydra/Videos"
+                              filename.endsWith(".ogg", true) || filename.endsWith(".mp3", true) -> "Hydra/Voice"
+                              else -> "Hydra/Files"
+                          }
+                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                              put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/" + subFolder)
+                              put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+                          }"""
+              kt = kt.replace(old_save_file, new_save_file)
+              kt = kt.replace(
+                  'put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)',
+                  'put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/Hydra/Logs")'
+              )
+              kt = kt.replace(
+                  'android.widget.Toast.makeText(this, "Сохранено в Загрузки", android.widget.Toast.LENGTH_SHORT).show()',
+                  'android.widget.Toast.makeText(this, "✅ Сохранено в папку Download/Hydra!", android.widget.Toast.LENGTH_SHORT).show()'
+              )
+
+              # На Android 9 (SDK < 29) также создаём папку /Download/Hydra/
+              kt = kt.replace(
+                  'val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)',
+                  'val dlDir = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "Hydra")'
+              )
 
               with open(kt_path, "w", encoding="utf-8") as f:
                   f.write(kt)
-              print("[OK] MainActivity.kt: функция handleCallNotificationAction успешно добавлена в companion object!")
+              print("[OK] 2. MainActivity.kt: добавлено создание папок /Download/Hydra/(Photos, Videos, Voice, Logs) и точное определение модели телефона!")
+
+          # 3. ЛИМИТ 2 ПРОФИЛЯ НА УСТРОЙСТВО + СКРЫТИЕ КНОПКИ "+ СОЗДАТЬ" С ЭКРАНА БЛОКИРОВКИ, КОГДА ЕСТЬ ХОТЯ БЫ 1 ПРОФИЛЬ (Auth.svelte + Settings.svelte):
+          au_path = "frontend/src/components/Auth.svelte"
+          if os.path.exists(au_path):
+              with open(au_path, "r", encoding="utf-8") as f:
+                  au = f.read()
+
+              # На экране входа показываем кнопку "+ Создать" ТОЛЬКО если профилей ещё 0 (allProfiles.length === 0)!
+              old_add_prof_btn = """            <div 
+                      class="profile-item add-profile" 
+                      role="button"
+                      tabindex="0"
+                      on:click={startCreateProfile}
+                      on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && startCreateProfile()}
+                  >
+                    <div class="plus-icon">+</div>
+                    <div class="add-text">Создать</div>
+                  </div>"""
+
+              new_add_prof_btn = """            {#if allProfiles.length === 0}
+                  <div 
+                      class="profile-item add-profile" 
+                      role="button"
+                      tabindex="0"
+                      on:click={startCreateProfile}
+                      on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && startCreateProfile()}
+                  >
+                    <div class="plus-icon">+</div>
+                    <div class="add-text">Создать</div>
+                  </div>
+                  {/if}"""
+              au = au.replace(old_add_prof_btn, new_add_prof_btn)
+
+              # В функции startCreateProfile жёстко проверяем лимит 2 профиля на 1 устройство!
+              au = au.replace(
+                  "function startCreateProfile() {",
+                  """function startCreateProfile() {
+                  if (allProfiles.length >= 2) {
+                      showToast('На одном устройстве можно создать максимум 2 профиля', 'error');
+                      return;
+                  }"""
+              )
+
+              # Если из Настроек запросили создание 2-го профиля (localStorage.getItem('hydra_open_create_second') === '1'), сразу открываем форму создания
+              au = au.replace(
+                  "if (allProfiles.length === 0) {\n                authScreen = 'profiles';\n            }",
+                  """if (localStorage.getItem('hydra_open_create_second') === '1' && allProfiles.length < 2) {
+                      localStorage.removeItem('hydra_open_create_second');
+                      startCreateProfile();
+                  } else if (allProfiles.length === 0) {
+                      authScreen = 'profiles';
+                  }"""
+              )
+
+              with open(au_path, "w", encoding="utf-8") as f:
+                  f.write(au)
+              print("[OK] 3a. Auth.svelte: кнопка '+ Создать' убрана с главного экрана при наличии профиля, установлен жёсткий лимит в 2 профиля на устройство!")
+
+          # В Settings.svelte (вкладка Профиль) добавляем блок "🔄 Профили на устройстве (макс. 2)" с быстрым переключением между 2 профилями без выхода на главный экран и кнопкой "+ Добавить 2-й профиль" (которая исчезает, когда профилей уже 2)!
+          st_path = "frontend/src/components/Settings.svelte"
+          if os.path.exists(st_path):
+              with open(st_path, "r", encoding="utf-8") as f:
+                  st = f.read()
+
+              prof_switcher_js = """
+              let deviceProfiles = [];
+              let switchPinValue = '';
+              let switchingTargetProf = null;
+
+              async function loadDeviceProfilesForSwitch() {
+                  try {
+                      deviceProfiles = (await AppActions.ListProfiles()) || [];
+                  } catch (e) { deviceProfiles = []; }
+              }
+              loadDeviceProfilesForSwitch();
+
+              async function quickSwitchToProfile(prof) {
+                  if (!prof) return;
+                  if (!prof.use_pin) {
+                      alert('Для быстрого переключения включите ПИН-код на профиле');
+                      return;
+                  }
+                  switchingTargetProf = prof;
+                  switchPinValue = '';
+              }
+
+              async function confirmQuickSwitchProfile() {
+                  if (!switchingTargetProf || !switchPinValue.trim()) return;
+                  try {
+                      const mnem = await AppActions.UnlockProfile(switchingTargetProf.id, switchPinValue.trim());
+                      await AppActions.Logout();
+                      await AppActions.Login(mnem);
+                      switchingTargetProf = null;
+                      switchPinValue = '';
+                      location.reload();
+                  } catch (e) {
+                      alert('❌ Неверный ПИН-код от второго профиля');
+                  }
+              }
+
+              async function createSecondProfileFromSettings() {
+                  if (deviceProfiles.length >= 2) {
+                      alert('Достигнут лимит: максимум 2 профиля на 1 устройстве');
+                      return;
+                  }
+                  localStorage.setItem('hydra_open_create_second', '1');
+                  await onLogout();
+              }
+              """
+              if "function loadDeviceProfilesForSwitch()" not in st:
+                  st = st.replace("let nickCheckStatus = '';", "let nickCheckStatus = '';\n" + prof_switcher_js, 1)
+
+              prof_switcher_html = """
+                              <!-- Управление профилями на устройстве (Лимит: максимум 2 профиля) -->
+                              <div style="background: #14161A; border: 1px solid rgba(59,130,246,0.25); border-radius: 20px; padding: 14px; margin-top: 8px;">
+                                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                      <span style="font-size: 13px; font-weight: 800; color: #60A5FA;">👥 Аккаунты на устройстве ({deviceProfiles.length} / 2)</span>
+                                      {#if deviceProfiles.length < 2}
+                                          <button type="button" on:click={createSecondProfileFromSettings} style="background: #1D4ED8; color: #fff; border: none; border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700; cursor: pointer;">
+                                              + Создать 2-й профиль
+                                          </button>
+                                      {:else}
+                                          <span style="font-size: 11px; color: #9CA3AF;">Лимит 2/2</span>
+                                      {/if}
+                                  </div>
+                                  <div style="display: flex; flex-direction: column; gap: 8px;">
+                                      {#each deviceProfiles as dp}
+                                          <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #1A1C20; border-radius: 14px; border: 1px solid {selectedProfile?.id === dp.id ? '#3B82F6' : 'transparent'};">
+                                              <div style="display: flex; align-items: center; gap: 10px;">
+                                                  <div style="width: 32px; height: 32px; border-radius: 50%; background: #1E3A8A; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px;">
+                                                      {getInitials(dp.display_name)}
+                                                  </div>
+                                                  <div>
+                                                      <div style="font-size: 14px; font-weight: 700; color: #E5E7EB;">{dp.display_name}</div>
+                                                      <div style="font-size: 11px; color: {selectedProfile?.id === dp.id ? '#10B981' : '#9CA3AF'};">{selectedProfile?.id === dp.id ? '● Текущий профиль' : 'Нажмите для входа'}</div>
+                                                  </div>
+                                              </div>
+                                              {#if selectedProfile?.id !== dp.id}
+                                                  <button type="button" on:click={() => quickSwitchToProfile(dp)} style="background: #2563EB; color: #fff; border: none; border-radius: 100px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer;">
+                                                      Переключить
+                                                  </button>
+                                              {/if}
+                                          </div>
+                                      {/each}
+                                  </div>
+                                  {#if switchingTargetProf}
+                                      <div style="margin-top: 10px; padding: 10px; background: #0E1015; border-radius: 14px; display: flex; gap: 8px; align-items: center;">
+                                          <input type="password" placeholder="ПИН от {switchingTargetProf.display_name}..." bind:value={switchPinValue} style="flex: 1; background: #1A1C20; color: #fff; border: 1px solid rgba(59,130,246,0.3); border-radius: 10px; padding: 8px 10px; font-size: 13px;" />
+                                          <button type="button" on:click={confirmQuickSwitchProfile} style="background: #10B981; color: #fff; border: none; border-radius: 10px; padding: 8px 14px; font-size: 12px; font-weight: 800;">Войти</button>
+                                          <button type="button" on:click={() => switchingTargetProf = null} style="background: transparent; color: #9CA3AF; border: none; font-size: 14px;">✕</button>
+                                      </div>
+                                  {/if}
+                              </div>
+              """
+              if "Аккаунты на устройстве" not in st:
+                  st = st.replace(
+                      '<button class="btn-secondary logout-btn" on:click={onLogout}>🚪 Выйти из аккаунта</button>',
+                      prof_switcher_html + '\n                            <button class="btn-secondary logout-btn" on:click={onLogout}>🚪 Выйти из аккаунта</button>'
+                  )
+              with open(st_path, "w", encoding="utf-8") as f:
+                  f.write(st)
+              print("[OK] 3b. Settings.svelte: добавлено переключение между профилями прямо из настроек и кнопка создания 2-го профиля (исчезает при 2/2)!")
+
+          # 4. ЦЕНТРИРОВАНИЕ КОНТЕКСТНЫХ МЕНЮ ЭКРАНА + СКРЫТИЕ "УДАЛИТЬ У ВСЕХ" И "РЕДАКТИРОВАТЬ" ДЛЯ КРУЖКОВ/ИЗБРАННОГО В App.svelte:
+          app_path = "frontend/src/App.svelte"
+          if os.path.exists(app_path):
+              with open(app_path, "r", encoding="utf-8") as f:
+                  ap = f.read()
+
+              # Центрируем все контекстные меню строго по центру экрана (чтобы никогда не вылезали за края, как на Скриншоте 3!)
+              ap = ap.replace(
+                  'style="top: {contextMenu.y}px; left: {contextMenu.x}px"',
+                  'style="top: 50%; left: 50%; transform: translate(-50%, -50%); width: 260px; max-width: 88vw;"'
+              )
+              ap = ap.replace(
+                  'style="top: {folderContextMenu.y}px; left: {folderContextMenu.x}px"',
+                  'style="top: 50%; left: 50%; transform: translate(-50%, -50%); width: 240px; max-width: 88vw;"'
+              )
+              ap = ap.replace(
+                  'style="top: {messageContextMenu.y}px; left: {messageContextMenu.x}px; min-width: 210px; border-radius: 18px; padding: 8px;"',
+                  'style="top: 50%; left: 50%; transform: translate(-50%, -50%); width: 265px; max-width: 90vw; border-radius: 22px; padding: 10px;"'
+              )
+
+              # В меню сообщения:
+              # 1) Пункт "Редактировать" показываем ТОЛЬКО для обычных текстовых сообщений (НЕ для [HYDRA_CIRCLE]: и НЕ для [HYDRA_VOICE]:, чтобы не вылезал Base64 код как на Скриншоте 5!)
+              # 2) Для видео-кружков вместо него показываем пункт "✂️ Обрезать кружок"!
+              # 3) В Избранном (Заметках) скрываем кнопку "🔥 Удалить у всех", оставляя просто "🗑️ Удалить"!
+              old_edit_and_del = """            {#if messageContextMenu.message?.IsOutgoing}
+                  <div class="context-item" on:click={() => {
+                      editingMessageId = messageContextMenu.message.ID;
+                      editMessageContent = messageContextMenu.message.Content;
+                      messageContextMenu.show = false;
+                  }}>Редактировать</div>
+              {/if}
+              <div class="context-item danger" on:click={() => {
+                  AppActions.DeleteMessage(messageContextMenu.message.ID);
+                  loadMessages(selectedContact.ID);
+                  messageContextMenu.show = false;
+              }}>🗑️ Удалить у меня</div>
+              <div class="context-item danger" style="font-weight: 700;" on:click={async () => {
+                  const mId = messageContextMenu.message.ID;
+                  messageContextMenu.show = false;
+                  await AppActions.DeleteMessage(mId);
+                  if (selectedContact && !selectedContact.IsFavorites) {
+                      await AppActions.SendText(selectedContact.ID, '[HYDRA_DEL_MSG]:' + mId, '').catch(() => {});
+                  }
+                  loadMessages(selectedContact.ID);
+              }}>🔥 Удалить у всех</div>"""
+
+              new_edit_and_del = """            {#if messageContextMenu.message?.Content?.startsWith('[HYDRA_CIRCLE]:')}
+                  <div class="context-item" style="color: #60A5FA; font-weight: 700;" on:click={() => {
+                      const msgObj = messageContextMenu.message;
+                      messageContextMenu.show = false;
+                      if (window.__openExistingCircleTrimmer) window.__openExistingCircleTrimmer(msgObj);
+                  }}>✂️ Обрезать кружок</div>
+              {:else if messageContextMenu.message?.IsOutgoing && !messageContextMenu.message?.Content?.startsWith('[HYDRA_')}
+                  <div class="context-item" on:click={() => {
+                      editingMessageId = messageContextMenu.message.ID;
+                      editMessageContent = messageContextMenu.message.Content;
+                      messageContextMenu.show = false;
+                  }}>✏️ Редактировать текст</div>
+              {/if}
+              <div class="context-item danger" on:click={() => {
+                  AppActions.DeleteMessage(messageContextMenu.message.ID);
+                  loadMessages(selectedContact.ID);
+                  messageContextMenu.show = false;
+              }}>🗑️ {selectedContact?.IsFavorites || selectedContact?.Nickname === 'Избранное' ? 'Удалить' : 'Удалить у меня'}</div>
+              {#if !selectedContact?.IsFavorites && selectedContact?.Nickname !== 'Избранное'}
+                  <div class="context-item danger" style="font-weight: 700;" on:click={async () => {
+                      const mId = messageContextMenu.message.ID;
+                      messageContextMenu.show = false;
+                      await AppActions.DeleteMessage(mId);
+                      if (selectedContact) {
+                          await AppActions.SendText(selectedContact.ID, '[HYDRA_DEL_MSG]:' + mId, '').catch(() => {});
+                      }
+                      loadMessages(selectedContact.ID);
+                  }}>🔥 Удалить у всех</div>
+              {/if}"""
+              ap = ap.replace(old_edit_and_del, new_edit_and_del)
+
+              # Также не показываем "Копировать текст" для Base64 кружков и голосовых
+              ap = ap.replace(
+                  "{#if messageContextMenu.message?.Content}",
+                  "{#if messageContextMenu.message?.Content && !messageContextMenu.message.Content.startsWith('[HYDRA_')}"
+              )
+
+              with open(app_path, "w", encoding="utf-8") as f:
+                  f.write(ap)
+              print("[OK] 4. App.svelte: все контекстные меню отцентрированы, в Избранном убрана 'Удалить у всех', для кружков добавлена кнопка '✂️ Обрезать кружок'!")
+
+          # 5. Chat.svelte:
+          #    - Исправляем запуск Кружка при удержании кнопки: теперь открывается СТУДИЯ КРУЖКА (БЕЗ автостарта записи!), где сначала видишь себя в круге, можешь нажать круглую кнопку "🔄" (Фронтальная / Основная камера), а внизу стоит КРУГЛАЯ кнопка с треугольником "▶" (Начать запись до 120 секунд = 2 минуты) и КРУГЛАЯ кнопка с квадратом "⏹" (Стоп)!
+          #    - После нажатия Стоп (или при выборе "✂️ Обрезать кружок" на уже отправленном кружке) появляются ползунки обрезки начала и конца кружка (`#t=start,end`)!
+          ch_path = "frontend/src/components/Chat.svelte"
+          if os.path.exists(ch_path):
+              with open(ch_path, "r", encoding="utf-8") as f:
+                  ch = f.read()
+
+              # При удержании кнопки в режиме 'video' открываем Студию Кружка (openCircleStudio(false)) БЕЗ мгновенного старта записи!
+              ch = ch.replace(
+                  "toggleVoiceOrCircle(mediaButtonMode);",
+                  "if (mediaButtonMode === 'video') { openCircleStudio(false); } else { toggleVoiceOrCircle('audio'); }"
+              )
+
+              # Добавляем поддержку обрезки кружка (circleTrimStart, circleTrimEnd до 120 сек) и редактирования существующего кружка
+              circle_trim_js = """
+              let circleTrimStart = 0;
+              let circleTrimEnd = 120;
+              let circleTotalDuration = 15;
+              let editingExistingCircleId = null;
+
+              if (typeof window !== 'undefined') {
+                  window.__openExistingCircleTrimmer = (msgObj) => {
+                      if (!msgObj || !msgObj.Content) return;
+                      const rawUrl = msgObj.Content.slice('[HYDRA_CIRCLE]:'.length).split('#t=')[0];
+                      editingExistingCircleId = msgObj.ID;
+                      circleDraftDataUrl = rawUrl;
+                      circleTrimStart = 0;
+                      circleTrimEnd = 30;
+                      showCircleStudio = true;
+                  };
+              }
+              """
+              if "let circleTrimStart =" not in ch:
+                  ch = ch.replace("let showCircleStudio = false;", "let showCircleStudio = false;\n" + circle_trim_js, 1)
+
+              # Меняем лимит записи кружка с 30 секунд на 120 секунд (2 минуты)!
+              ch = ch.replace("if (recordingSeconds >= 30 && isRecordingMedia)", "if (recordingSeconds >= 120 && isRecordingMedia)")
+              ch = ch.replace("recordingSeconds >= 30", "recordingSeconds >= 120")
+
+              # При отправке кружка из Студии сохраняем выбранные границы обрезки (#t=start,end) или обновляем существующий кружок!
+              old_send_circle = """    async function sendEditedCircle() {
+                  if (!circleDraftDataUrl || !selectedContact) return;
+                  const targetId = selectedContact.ID || selectedContact.ChatID;
+                  await AppActions.SendText(targetId, `[HYDRA_CIRCLE]:${circleDraftDataUrl}`, '');
+                  circleDraftDataUrl = '';
+                  showCircleStudio = false;
+                  dispatch('refresh');
+              }"""
+
+              new_send_circle = """    async function sendEditedCircle() {
+                  if (!circleDraftDataUrl || !selectedContact) return;
+                  const cleanBase = circleDraftDataUrl.split('#t=')[0];
+                  const trimSuffix = (circleTrimStart > 0 || circleTrimEnd < circleTotalDuration)
+                      ? `#t=${circleTrimStart},${Math.max(circleTrimStart + 1, circleTrimEnd)}`
+                      : '#t=0.1';
+                  const finalPayload = `[HYDRA_CIRCLE]:${cleanBase}${trimSuffix}`;
+                  if (editingExistingCircleId) {
+                      await AppActions.EditMessage(editingExistingCircleId, finalPayload);
+                      editingExistingCircleId = null;
+                  } else {
+                      const targetId = selectedContact.ID || selectedContact.ChatID;
+                      await AppActions.SendText(targetId, finalPayload, '');
+                  }
+                  circleDraftDataUrl = '';
+                  showCircleStudio = false;
+                  dispatch('refresh');
+              }"""
+              ch = ch.replace(old_send_circle, new_send_circle)
+
+              # Заменяем старый оверлей записи видео-кружка (Скриншот 2) на новую Студию Кружка с КРУГЛЫМИ кнопками ▶ (Пуск), ⏹ (Стоп), 🔄 (Смена камеры), лимитом 120 сек (2 мин) и ползунками обрезки!
+              ch = re.sub(
+                  r'\{#if isRecordingMedia && recordMode === \'video\'\}[\s\S]*?\{/if\}',
+                  '''{#if showCircleStudio}
+                  <div style="position: fixed; inset: 0; background: rgba(8,10,16,0.95); backdrop-filter: blur(18px); z-index: 99990; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 20px;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 320px;">
+                          <span style="font-size: 15px; font-weight: 800; color: {isRecordingMedia ? '#EF4444' : '#60A5FA'};">
+                              {isRecordingMedia ? `🔴 Запись: ${recordingSeconds} сек / 120 сек` : (circleDraftDataUrl ? '✂️ Обрезка и предпросмотр' : '📹 Камера кружка (до 2 мин)')}
+                          </span>
+                          <button type="button" on:click={closeCircleStudio} style="width: 38px; height: 38px; border-radius: 50%; background: #1A1C20; color: #fff; border: 1px solid rgba(255,255,255,0.1); font-size: 16px; cursor: pointer;">✕</button>
+                      </div>
+
+                      <!-- Круглый видоискатель 250x250 -->
+                      <div style="width: 250px; height: 250px; border-radius: 50%; overflow: hidden; clip-path: circle(50% at 50% 50%); -webkit-clip-path: circle(50% at 50% 50%); border: 4px solid {isRecordingMedia ? '#EF4444' : '#3B82F6'}; background: #000; box-shadow: 0 0 36px rgba(29,78,216,0.45); position: relative;">
+                          {#if circleDraftDataUrl}
+                              <video
+                                  autoplay
+                                  loop
+                                  playsinline
+                                  src={circleDraftDataUrl + `#t=${circleTrimStart},${circleTrimEnd}`}
+                                  on:loadedmetadata={(e) => {
+                                      const d = Math.round(e.currentTarget.duration || 15);
+                                      if (d > 0 && d < 600) { circleTotalDuration = d; circleTrimEnd = d; }
+                                  }}
+                                  on:timeupdate={(e) => {
+                                      const v = e.currentTarget;
+                                      if (v.currentTime < circleTrimStart || v.currentTime > circleTrimEnd) {
+                                          v.currentTime = circleTrimStart;
+                                      }
+                                  }}
+                                  style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;"
+                              ></video>
+                          {:else}
+                              <video bind:this={liveCirclePreviewEl} autoplay muted playsinline style="width: 100%; height: 100%; object-fit: cover; transform: {circleFacingMode === 'user' ? 'scaleX(-1)' : 'none'}; border-radius: 50%;"></video>
+                          {/if}
+                      </div>
+
+                      <!-- Ползунки обрезки кружка после записи или при редактировании -->
+                      {#if circleDraftDataUrl}
+                          <div style="width: 100%; max-width: 300px; background: #16181F; border: 1px solid rgba(59,130,246,0.25); border-radius: 18px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px;">
+                              <div style="display: flex; justify-content: space-between; font-size: 12px; color: #60A5FA; font-weight: 700;">
+                                  <span>✂️ Начало: {circleTrimStart} сек</span>
+                                  <span>Конец: {circleTrimEnd} сек</span>
+                              </div>
+                              <input type="range" min="0" max={Math.max(1, circleTrimEnd - 1)} step="1" bind:value={circleTrimStart} style="width: 100%; accent-color: #3B82F6;" />
+                              <input type="range" min={circleTrimStart + 1} max={Math.max(2, circleTotalDuration)} step="1" bind:value={circleTrimEnd} style="width: 100%; accent-color: #3B82F6;" />
+                          </div>
+                      {/if}
+
+                      <!-- КРУГЛЫЕ кнопки управления: Смена камеры (🔄), Старт записи (▶), Стоп (⏹), Отправить (➤) -->
+                      <div style="display: flex; align-items: center; justify-content: center; gap: 24px; margin-top: 6px;">
+                          {#if !circleDraftDataUrl}
+                              <!-- Круглая кнопка смены камеры (Фронтальная / Основная) -->
+                              <button type="button" on:click={() => openCircleStudio(true)} style="width: 54px; height: 54px; border-radius: 50%; background: #1A1C20; color: #60A5FA; border: 1.5px solid rgba(59,130,246,0.4); display: flex; align-items: center; justify-content: center; font-size: 22px; cursor: pointer;" title="Переключить камеру">
+                                  🔄
+                              </button>
+
+                              {#if !isRecordingMedia}
+                                  <!-- КРУГЛАЯ кнопка Старт записи с треугольником ▶ -->
+                                  <button type="button" on:click={startCircleStudioRecording} style="width: 74px; height: 74px; border-radius: 50%; background: linear-gradient(135deg, #EF4444, #DC2626); color: #fff; border: 4px solid rgba(255,255,255,0.25); display: flex; align-items: center; justify-content: center; font-size: 28px; cursor: pointer; box-shadow: 0 6px 24px rgba(239,68,68,0.5);" title="Начать запись кружка">
+                                      ▶
+                                  </button>
+                              {:else}
+                                  <!-- КРУГЛАЯ кнопка Стоп записи с квадратом ⏹ -->
+                                  <button type="button" on:click={stopCircleStudioRecording} style="width: 74px; height: 74px; border-radius: 50%; background: linear-gradient(135deg, #2563EB, #1D4ED8); color: #fff; border: 4px solid rgba(255,255,255,0.25); display: flex; align-items: center; justify-content: center; font-size: 26px; cursor: pointer; box-shadow: 0 6px 24px rgba(37,99,235,0.5);" title="Остановить запись">
+                                      ⏹
+                                  </button>
+                              {/if}
+                          {:else}
+                              <!-- Кнопка Переснять (круглая) и Отправить (круглая) -->
+                              <button type="button" on:click={() => { editingExistingCircleId = null; openCircleStudio(false); }} style="width: 56px; height: 56px; border-radius: 50%; background: #1A1C20; color: #FCA5A5; border: 1.5px solid rgba(239,68,68,0.4); display: flex; align-items: center; justify-content: center; font-size: 22px; cursor: pointer;" title="Переснять">
+                                  🔄
+                              </button>
+                              <button type="button" on:click={sendEditedCircle} style="width: 74px; height: 74px; border-radius: 50%; background: linear-gradient(135deg, #2563EB, #1D4ED8); color: #fff; border: 4px solid rgba(255,255,255,0.25); display: flex; align-items: center; justify-content: center; font-size: 28px; cursor: pointer; box-shadow: 0 6px 24px rgba(37,99,235,0.5);" title="Отправить кружок">
+                                  ➤
+                              </button>
+                          {/if}
+                      </div>
+                  </div>
+              {/if}''',
+                  ch
+              )
+
+              # В рендере кружка в чате убираем принудительное добавление '#t=0.1', если у кружка уже есть метка обрезки '#t=start,end'!
+              ch = ch.replace(
+                  "src={msg.Content.slice('[HYDRA_CIRCLE]:'.length) + '#t=0.1'}",
+                  "src={msg.Content.slice('[HYDRA_CIRCLE]:'.length).includes('#t=') ? msg.Content.slice('[HYDRA_CIRCLE]:'.length) : (msg.Content.slice('[HYDRA_CIRCLE]:'.length) + '#t=0.1')}"
+              )
+
+              with open(ch_path, "w", encoding="utf-8") as f:
+                  f.write(ch)
+              print("[OK] 5. Chat.svelte: Студия кружка с круглыми кнопками ▶ / ⏹ / 🔄, записью до 2 минут (120с) и ползунками обрезки готова!")
           PYEOF
-          python3 fix_kotlin_ref.py
-          rm -f fix_kotlin_ref.py
+          python3 apply_v28_fixes.py
+          rm -f apply_v28_fixes.py
           gofmt -w internal/ mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -133,13 +536,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit MainActivity Kotlin Fix
+      - name: Commit Hydra v2.8.0 Clean Play Protect & Circle Trimmer
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Fix handleCallNotificationAction in MainActivity.kt companion object for v2.7.0 [skip ci]"
+            git commit -m "Release Hydra v2.8.0: Fix Play Protect triggers, center context menus, 2-profile limit, round Play/Stop Circle Studio (2m + trim) & /Hydra/ folders [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
