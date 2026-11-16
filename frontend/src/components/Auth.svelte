@@ -68,9 +68,12 @@
             profileAvatars = newAvatars;
             profilesLoaded = true;
             
-            if (allProfiles.length === 0) {
-                authScreen = 'profiles';
-            }
+            if (localStorage.getItem('hydra_open_create_second') === '1' && allProfiles.length < 2) {
+            localStorage.removeItem('hydra_open_create_second');
+            startCreateProfile();
+        } else if (allProfiles.length === 0) {
+            authScreen = 'profiles';
+        }
         } catch (err) {
             showToast(err, 'error');
             profilesLoaded = true;
@@ -132,6 +135,10 @@
     }
 
     function startCreateProfile() {
+        if (allProfiles.length >= 2) {
+            showToast('На одном устройстве можно создать максимум 2 профиля', 'error');
+            return;
+        }
         authScreen = 'create';
         newProfileName = '';
         newProfilePin = '';

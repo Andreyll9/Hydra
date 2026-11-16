@@ -82,6 +82,51 @@
     }
 
     let nickCheckStatus = '';
+
+    let deviceProfiles = [];
+    let switchPinValue = '';
+    let switchingTargetProf = null;
+
+    async function loadDeviceProfilesForSwitch() {
+        try {
+            deviceProfiles = (await AppActions.ListProfiles()) || [];
+        } catch (e) { deviceProfiles = []; }
+    }
+    loadDeviceProfilesForSwitch();
+
+    async function quickSwitchToProfile(prof) {
+        if (!prof) return;
+        if (!prof.use_pin) {
+            alert('Для быстрого переключения включите ПИН-код на профиле');
+            return;
+        }
+        switchingTargetProf = prof;
+        switchPinValue = '';
+    }
+
+    async function confirmQuickSwitchProfile() {
+        if (!switchingTargetProf || !switchPinValue.trim()) return;
+        try {
+            const mnem = await AppActions.UnlockProfile(switchingTargetProf.id, switchPinValue.trim());
+            await AppActions.Logout();
+            await AppActions.Login(mnem);
+            switchingTargetProf = null;
+            switchPinValue = '';
+            location.reload();
+        } catch (e) {
+            alert('❌ Неверный ПИН-код от второго профиля');
+        }
+    }
+
+    async function createSecondProfileFromSettings() {
+        if (deviceProfiles.length >= 2) {
+            alert('Достигнут лимит: максимум 2 профиля на 1 устройстве');
+            return;
+        }
+        localStorage.setItem('hydra_open_create_second', '1');
+        await onLogout();
+    }
+    
     async function checkNicknameAvailability() {
         const clean = (profileNickname || '').trim().replace(/^@/, '').toLowerCase();
         if (clean.length < 3) {
@@ -430,6 +475,48 @@
                 {/if}
             </div>
         {/if}
+                            
+                    <!-- Управление профилями на устройстве (Лимит: максимум 2 профиля) -->
+                    <div style="background: #14161A; border: 1px solid rgba(59,130,246,0.25); border-radius: 20px; padding: 14px; margin-top: 8px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <span style="font-size: 13px; font-weight: 800; color: #60A5FA;">👥 Аккаунты на устройстве ({deviceProfiles.length} / 2)</span>
+                            {#if deviceProfiles.length < 2}
+                                <button type="button" on:click={createSecondProfileFromSettings} style="background: #1D4ED8; color: #fff; border: none; border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700; cursor: pointer;">
+                                    + Создать 2-й профиль
+                                </button>
+                            {:else}
+                                <span style="font-size: 11px; color: #9CA3AF;">Лимит 2/2</span>
+                            {/if}
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            {#each deviceProfiles as dp}
+                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #1A1C20; border-radius: 14px; border: 1px solid {selectedProfile?.id === dp.id ? '#3B82F6' : 'transparent'};">
+                                    <div style="display: flex; align-items: center; gap: 10px;">
+                                        <div style="width: 32px; height: 32px; border-radius: 50%; background: #1E3A8A; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px;">
+                                            {getInitials(dp.display_name)}
+                                        </div>
+                                        <div>
+                                            <div style="font-size: 14px; font-weight: 700; color: #E5E7EB;">{dp.display_name}</div>
+                                            <div style="font-size: 11px; color: {selectedProfile?.id === dp.id ? '#10B981' : '#9CA3AF'};">{selectedProfile?.id === dp.id ? '● Текущий профиль' : 'Нажмите для входа'}</div>
+                                        </div>
+                                    </div>
+                                    {#if selectedProfile?.id !== dp.id}
+                                        <button type="button" on:click={() => quickSwitchToProfile(dp)} style="background: #2563EB; color: #fff; border: none; border-radius: 100px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer;">
+                                            Переключить
+                                        </button>
+                                    {/if}
+                                </div>
+                            {/each}
+                        </div>
+                        {#if switchingTargetProf}
+                            <div style="margin-top: 10px; padding: 10px; background: #0E1015; border-radius: 14px; display: flex; gap: 8px; align-items: center;">
+                                <input type="password" placeholder="ПИН от {switchingTargetProf.display_name}..." bind:value={switchPinValue} style="flex: 1; background: #1A1C20; color: #fff; border: 1px solid rgba(59,130,246,0.3); border-radius: 10px; padding: 8px 10px; font-size: 13px;" />
+                                <button type="button" on:click={confirmQuickSwitchProfile} style="background: #10B981; color: #fff; border: none; border-radius: 10px; padding: 8px 14px; font-size: 12px; font-weight: 800;">Войти</button>
+                                <button type="button" on:click={() => switchingTargetProf = null} style="background: transparent; color: #9CA3AF; border: none; font-size: 14px;">✕</button>
+                            </div>
+                        {/if}
+                    </div>
+    
                             <button class="btn-secondary logout-btn" on:click={onLogout}>🚪 Выйти из аккаунта</button>
                         </div>
                     </div>

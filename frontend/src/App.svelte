@@ -1233,7 +1233,7 @@
 
     {#if contextMenu.show}
         <div class="menu-backdrop" on:click={() => contextMenu.show = false} on:touchmove|preventDefault></div>
-        <div class="context-menu" style="top: {contextMenu.y}px; left: {contextMenu.x}px">
+        <div class="context-menu" style="top: 50%; left: 50%; transform: translate(-50%, -50%); width: 260px; max-width: 88vw;">
             {#if folders.length > 0}
                 {@const inFolders = folders.filter(f => (f.ChatIDs || f.chat_ids || []).includes(contextMenu.contact.ID))}
                 {@const notInFolders = folders.filter(f => !(f.ChatIDs || f.chat_ids || []).includes(contextMenu.contact.ID))}
@@ -1295,7 +1295,7 @@
 
     {#if folderContextMenu.show}
         <div class="menu-backdrop" on:click={() => folderContextMenu.show = false} on:touchmove|preventDefault></div>
-        <div class="context-menu" style="top: {folderContextMenu.y}px; left: {folderContextMenu.x}px">
+        <div class="context-menu" style="top: 50%; left: 50%; transform: translate(-50%, -50%); width: 240px; max-width: 88vw;">
             <div class="context-item" on:click={() => { 
                 sidebarHandlers.onEditFolder(folderContextMenu.folder);
                 folderContextMenu.show = false;
@@ -1308,7 +1308,7 @@
 
     {#if messageContextMenu.show}
         <div class="menu-backdrop" on:click={() => messageContextMenu.show = false} on:touchmove|preventDefault></div>
-        <div class="context-menu" style="top: {messageContextMenu.y}px; left: {messageContextMenu.x}px">
+        <div class="context-menu" style="top: 50%; left: 50%; transform: translate(-50%, -50%); width: 265px; max-width: 90vw; border-radius: 22px; padding: 10px;">
             <div class="context-item" on:click={() => {
                 replyingTo = messageContextMenu.message;
                 messageContextMenu.show = false;
@@ -1318,7 +1318,7 @@
                     if (ta) ta.focus();
                 }, 100);
             }}>Ответить</div>
-            {#if messageContextMenu.message?.Content}
+            {#if messageContextMenu.message?.Content && !messageContextMenu.message.Content.startsWith('[HYDRA_')}
                 <div class="context-item" on:click={() => {
                     AppActions.ClipboardSet(messageContextMenu.message.Content);
                     showToast('Текст скопирован', 'success');

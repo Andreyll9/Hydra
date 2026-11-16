@@ -15,8 +15,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    
+    
 
     <application
         android:allowBackup="false"
@@ -45,7 +45,7 @@
         <service
             android:name=".TeleGhostService"
             android:exported="false"
-            android:stopWithTask="false"
+            android:stopWithTask="true"
             android:foregroundServiceType="dataSync" />
 
         <!-- FileProvider for sharing files -->
@@ -60,14 +60,7 @@
         </provider>
 
         <!-- Boot Receiver для автозапуска (опционально) -->
-        <receiver
-            android:name=".BootReceiver"
-            android:exported="false"
-            android:enabled="true">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-            </intent-filter>
-        </receiver>
+        
             <receiver android:name=".DirectReplyReceiver" android:exported="false" />
     </application>
 </manifest>

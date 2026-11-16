@@ -122,11 +122,11 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
                     put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
                     put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/Hydra/Logs")
                     }
                 }
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                    val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                    val dlDir = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "Hydra")
                     if (!dlDir.exists()) dlDir.mkdirs()
                     val outFile = File(dlDir, filename)
                     outFile.writeText(logText, Charsets.UTF_8)
@@ -164,7 +164,14 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
             obj.put("notifications", notif)
             obj.put("biometricBound", hasBioBound)
             obj.put("sdkInt", Build.VERSION.SDK_INT)
-            obj.put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
+            val rawModel = Build.MODEL ?: ""
+        val brand = (Build.BRAND ?: Build.MANUFACTURER ?: "Android").replaceFirstChar { it.uppercase() }
+        val marketMap = mapOf(
+            "RMX3472" to "Realme 9i / 8i (RMX3472)",
+            "M2010J19SY" to "Xiaomi Redmi 9T / POCO M3"
+        )
+        val prettyDevice = marketMap[rawModel] ?: if (rawModel.startsWith(brand, ignoreCase = true)) rawModel else "$brand $rawModel"
+        obj.put("device", "$prettyDevice • Android ${Build.VERSION.RELEASE}")
             pushNativeLog("SYS-CHECK", "Устройство ${Build.MODEL} (SDK ${Build.VERSION.SDK_INT}): CAM=$cam, MIC=$mic, BIO_BOUND=$hasBioBound (profile=$profileId)")
             return obj.toString()
         }
@@ -516,7 +523,7 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
                     } catch(e: Exception) { "application/octet-stream" }
                     put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/Hydra/Logs")
                         put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
                     }
                 }
@@ -537,7 +544,7 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
                         contentValues.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
                         resolver.update(uri, contentValues, null, null)
                     }
-                    android.widget.Toast.makeText(this, "Сохранено в Загрузки", android.widget.Toast.LENGTH_SHORT).show()
+                    android.widget.Toast.makeText(this, "✅ Сохранено в папку Download/Hydra!", android.widget.Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 android.util.Log.e(TAG, "Save file failed", e)

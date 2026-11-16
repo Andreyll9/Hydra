@@ -272,6 +272,125 @@
     // === ЭТАП 4: СМАЙЛИКИ, ГОЛОСОВЫЕ, ВИДЕО-КРУЖКИ И ТАЙМЕР ===
     let showEmojiPanel = false;
 
+    // === СТУДИЯ ВИДЕО-КРУЖКА (ДО 2 МИНУТ + ВЫБОР КАМЕРЫ + КРУГЛЫЕ КНОПКИ ПУСК/СТОП + ОБРЕЗКА) ===
+    let showCircleStudio = false;
+    let circleFacingMode = 'user';
+    let circleFilterMode = 'none';
+    let circleDraftDataUrl = '';
+    let circleTrimStart = 0;
+    let circleTrimEnd = 120;
+    let circleTotalDuration = 15;
+    let editingExistingCircleId = null;
+
+    async function openCircleStudio(switchCam = false) {
+        if (switchCam) {
+            circleFacingMode = circleFacingMode === 'user' ? 'environment' : 'user';
+        } else {
+            showCircleStudio = true;
+            circleDraftDataUrl = '';
+            editingExistingCircleId = null;
+            isRecordingMedia = false;
+        }
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: true, noiseSuppression: true },
+                video: { facingMode: circleFacingMode, width: { ideal: 640 }, height: { ideal: 640 }, frameRate: { ideal: 24 } }
+            });
+            activeMediaStream = stream;
+            setTimeout(() => {
+                if (liveCirclePreviewEl && activeMediaStream) {
+                    liveCirclePreviewEl.srcObject = activeMediaStream;
+                    liveCirclePreviewEl.play().catch(() => {});
+                }
+            }, 80);
+        } catch (e) {
+            alert('Не удалось открыть камеру: ' + e);
+        }
+    }
+
+    function startCircleStudioRecording() {
+        if (!activeMediaStream) return;
+        recordedChunks = [];
+        recordMode = 'video';
+        try {
+            mediaRecorderInstance = new MediaRecorder(activeMediaStream, { videoBitsPerSecond: 650000, audioBitsPerSecond: 32000 });
+        } catch (e) {
+            mediaRecorderInstance = new MediaRecorder(activeMediaStream);
+        }
+        mediaRecorderInstance.ondataavailable = e => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
+        mediaRecorderInstance.onstop = () => {
+            const blob = new Blob(recordedChunks, { type: 'video/webm' });
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                circleDraftDataUrl = reader.result;
+                circleTotalDuration = Math.max(2, recordingSeconds || 10);
+                circleTrimStart = 0;
+                circleTrimEnd = circleTotalDuration;
+            };
+            reader.readAsDataURL(blob);
+        };
+        recordingSeconds = 0;
+        clearInterval(recordingInterval);
+        recordingInterval = setInterval(() => {
+            recordingSeconds++;
+            if (recordingSeconds >= 120 && isRecordingMedia) stopCircleStudioRecording();
+        }, 1000);
+        mediaRecorderInstance.start(200);
+        isRecordingMedia = true;
+    }
+
+    function stopCircleStudioRecording() {
+        clearInterval(recordingInterval);
+        if (mediaRecorderInstance && isRecordingMedia) {
+            mediaRecorderInstance.stop();
+        }
+        isRecordingMedia = false;
+        if (activeMediaStream) {
+            activeMediaStream.getTracks().forEach(t => t.stop());
+            activeMediaStream = null;
+        }
+    }
+
+    async function sendEditedCircle() {
+        if (!circleDraftDataUrl || !selectedContact) return;
+        const cleanBase = circleDraftDataUrl.split('#t=')[0];
+        const trimSuffix = (circleTrimStart > 0 || circleTrimEnd < circleTotalDuration)
+            ? `#t=${circleTrimStart},${Math.max(circleTrimStart + 1, circleTrimEnd)}`
+            : '#t=0.1';
+        const finalPayload = `[HYDRA_CIRCLE]:${cleanBase}${trimSuffix}`;
+        if (editingExistingCircleId) {
+            await AppActions.EditMessage(editingExistingCircleId, finalPayload);
+            editingExistingCircleId = null;
+        } else {
+            const targetId = selectedContact.ID || selectedContact.ChatID;
+            await AppActions.SendText(targetId, finalPayload, '');
+        }
+        circleDraftDataUrl = '';
+        showCircleStudio = false;
+        dispatch('refresh');
+    }
+
+    function closeCircleStudio() {
+        stopCircleStudioRecording();
+        circleDraftDataUrl = '';
+        editingExistingCircleId = null;
+        showCircleStudio = false;
+    }
+
+    if (typeof window !== 'undefined') {
+        window.__openExistingCircleTrimmer = (msgObj) => {
+            if (!msgObj || !msgObj.Content) return;
+            const rawUrl = msgObj.Content.slice('[HYDRA_CIRCLE]:'.length).split('#t=')[0];
+            editingExistingCircleId = msgObj.ID;
+            circleDraftDataUrl = rawUrl;
+            circleTrimStart = 0;
+            circleTrimEnd = 30;
+            circleTotalDuration = 30;
+            showCircleStudio = true;
+        };
+    }
+    
+
     // Режим правой круглой кнопки при пустом инпуте ('audio' = 🎤, 'video' = 📷) + подсказка со Скриншота 3
     let mediaButtonMode = 'audio';
     let showModeHintBanner = false;
@@ -298,7 +417,7 @@
             isHoldTriggered = true;
             showModeHintBanner = false;
             if (navigator.vibrate) navigator.vibrate(40);
-            toggleVoiceOrCircle(mediaButtonMode);
+            if (mediaButtonMode === 'video') { openCircleStudio(false); } else { toggleVoiceOrCircle('audio'); }
         }, 380);
     }
 
@@ -360,7 +479,7 @@
             localStorage.setItem('hydra_pinned_msg_' + selectedContact.ID, JSON.stringify(pinnedChatMsg));
         };
         window.__triggerHydraCallFromProfile = () => startHydraCall();
-        window.__triggerHydraCircleFromProfile = () => toggleVoiceOrCircle('video');
+        window.__triggerHydraCircleFromProfile = () => openCircleStudio(false);
         window.__cycleChatTtlFromProfile = () => cycleDisappearingTimer();
     }
 
@@ -679,7 +798,7 @@
             recordingSeconds = 0;
             recordingInterval = setInterval(() => {
                 recordingSeconds++;
-                if (recordingSeconds >= 30 && isRecordingMedia && mediaRecorderInstance) {
+                if (recordingSeconds >= 120 && isRecordingMedia && mediaRecorderInstance) {
                     clearInterval(recordingInterval);
                     mediaRecorderInstance.stop();
                     isRecordingMedia = false;
@@ -1008,7 +1127,7 @@
                                 muted
                                 loop
                                 playsinline
-                                src={msg.Content.slice('[HYDRA_CIRCLE]:'.length) + '#t=0.1'}
+                                src={msg.Content.slice('[HYDRA_CIRCLE]:'.length).includes('#t=') ? msg.Content.slice('[HYDRA_CIRCLE]:'.length) : (msg.Content.slice('[HYDRA_CIRCLE]:'.length) + '#t=0.1')}
                                 on:loadedmetadata={(e) => { const v = e.currentTarget; v.currentTime = 0.1; v.play().catch(() => {}); }}
                                 on:click|stopPropagation={(e) => {
                                     const v = e.currentTarget;
@@ -1124,17 +1243,73 @@
             {/each}
         </div>
     {/if}
-    {#if isRecordingMedia && recordMode === 'video'}
-        <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.88); backdrop-filter: blur(12px); z-index: 99990; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px;">
-            <div style="font-size: 15px; font-weight: 800; color: #ff4757; display: flex; align-items: center; gap: 8px;">
-                <span>🔴 Запись видео-кружка: {recordingSeconds} сек / 30 сек</span>
+    {#if showCircleStudio}
+        <div style="position: fixed; inset: 0; background: rgba(8,10,16,0.95); backdrop-filter: blur(18px); z-index: 99990; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 320px;">
+                <span style="font-size: 15px; font-weight: 800; color: {isRecordingMedia ? '#EF4444' : '#60A5FA'};">
+                    {isRecordingMedia ? `🔴 Запись: ${recordingSeconds} сек / 120 сек` : (circleDraftDataUrl ? '✂️ Обрезка и предпросмотр' : '📹 Камера кружка (до 2 мин)')}
+                </span>
+                <button type="button" on:click={closeCircleStudio} style="width: 38px; height: 38px; border-radius: 50%; background: #1A1C20; color: #fff; border: 1px solid rgba(255,255,255,0.1); font-size: 16px; cursor: pointer;">✕</button>
             </div>
-            <div style="width: 240px; height: 240px; border-radius: 50%; overflow: hidden; clip-path: circle(50% at 50% 50%); -webkit-clip-path: circle(50% at 50% 50%); border: 4px solid #8AB4F8; background: #000; box-shadow: 0 0 32px rgba(138,180,248,0.4);">
-                <video bind:this={liveCirclePreviewEl} autoplay muted playsinline style="width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); border-radius: 50%;"></video>
+
+            <div style="width: 250px; height: 250px; border-radius: 50%; overflow: hidden; clip-path: circle(50% at 50% 50%); -webkit-clip-path: circle(50% at 50% 50%); border: 4px solid {isRecordingMedia ? '#EF4444' : '#3B82F6'}; background: #000; box-shadow: 0 0 36px rgba(29,78,216,0.45); position: relative;">
+                {#if circleDraftDataUrl}
+                    <video
+                        autoplay
+                        loop
+                        playsinline
+                        src={circleDraftDataUrl + `#t=${circleTrimStart},${circleTrimEnd}`}
+                        on:loadedmetadata={(e) => {
+                            const d = Math.round(e.currentTarget.duration || 15);
+                            if (d > 0 && d < 600) { circleTotalDuration = d; circleTrimEnd = d; }
+                        }}
+                        on:timeupdate={(e) => {
+                            const v = e.currentTarget;
+                            if (v.currentTime < circleTrimStart || v.currentTime > circleTrimEnd) {
+                                v.currentTime = circleTrimStart;
+                            }
+                        }}
+                        style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;"
+                    ></video>
+                {:else}
+                    <video bind:this={liveCirclePreviewEl} autoplay muted playsinline style="width: 100%; height: 100%; object-fit: cover; transform: {circleFacingMode === 'user' ? 'scaleX(-1)' : 'none'}; border-radius: 50%;"></video>
+                {/if}
             </div>
-            <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="background: #8AB4F8; color: #062E6F; border: none; border-radius: 100px; padding: 14px 32px; font-size: 15px; font-weight: 800; cursor: pointer; box-shadow: 0 6px 20px rgba(138,180,248,0.4);">
-                ⏹ Остановить и отправить кружок
-            </button>
+
+            {#if circleDraftDataUrl}
+                <div style="width: 100%; max-width: 300px; background: #16181F; border: 1px solid rgba(59,130,246,0.25); border-radius: 18px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; justify-content: space-between; font-size: 12px; color: #60A5FA; font-weight: 700;">
+                        <span>✂️ Начало: {circleTrimStart} сек</span>
+                        <span>Конец: {circleTrimEnd} сек</span>
+                    </div>
+                    <input type="range" min="0" max={Math.max(1, circleTrimEnd - 1)} step="1" bind:value={circleTrimStart} style="width: 100%; accent-color: #3B82F6;" />
+                    <input type="range" min={circleTrimStart + 1} max={Math.max(2, circleTotalDuration)} step="1" bind:value={circleTrimEnd} style="width: 100%; accent-color: #3B82F6;" />
+                </div>
+            {/if}
+
+            <div style="display: flex; align-items: center; justify-content: center; gap: 24px; margin-top: 6px;">
+                {#if !circleDraftDataUrl}
+                    <button type="button" on:click={() => openCircleStudio(true)} style="width: 54px; height: 54px; border-radius: 50%; background: #1A1C20; color: #60A5FA; border: 1.5px solid rgba(59,130,246,0.4); display: flex; align-items: center; justify-content: center; font-size: 22px; cursor: pointer;" title="Переключить камеру">
+                        🔄
+                    </button>
+                    {#if !isRecordingMedia}
+                        <button type="button" on:click={startCircleStudioRecording} style="width: 74px; height: 74px; border-radius: 50%; background: linear-gradient(135deg, #EF4444, #DC2626); color: #fff; border: 4px solid rgba(255,255,255,0.25); display: flex; align-items: center; justify-content: center; font-size: 28px; cursor: pointer; box-shadow: 0 6px 24px rgba(239,68,68,0.5);" title="Начать запись кружка">
+                            ▶
+                        </button>
+                    {:else}
+                        <button type="button" on:click={stopCircleStudioRecording} style="width: 74px; height: 74px; border-radius: 50%; background: linear-gradient(135deg, #2563EB, #1D4ED8); color: #fff; border: 4px solid rgba(255,255,255,0.25); display: flex; align-items: center; justify-content: center; font-size: 26px; cursor: pointer; box-shadow: 0 6px 24px rgba(37,99,235,0.5);" title="Остановить запись">
+                            ⏹
+                        </button>
+                    {/if}
+                {:else}
+                    <button type="button" on:click={() => { editingExistingCircleId = null; openCircleStudio(false); }} style="width: 56px; height: 56px; border-radius: 50%; background: #1A1C20; color: #FCA5A5; border: 1.5px solid rgba(239,68,68,0.4); display: flex; align-items: center; justify-content: center; font-size: 22px; cursor: pointer;" title="Переснять">
+                        🔄
+                    </button>
+                    <button type="button" on:click={sendEditedCircle} style="width: 74px; height: 74px; border-radius: 50%; background: linear-gradient(135deg, #2563EB, #1D4ED8); color: #fff; border: 4px solid rgba(255,255,255,0.25); display: flex; align-items: center; justify-content: center; font-size: 28px; cursor: pointer; box-shadow: 0 6px 24px rgba(37,99,235,0.5);" title="Отправить кружок">
+                        ➤
+                    </button>
+                {/if}
+            </div>
         </div>
     {/if}
     {#if isRecordingMedia && recordMode === 'audio'}
