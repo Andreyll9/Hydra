@@ -60,6 +60,16 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
     }
 
     inner class HydraNativeBridge {
+            @JavascriptInterface
+            fun setScreenshotProtection(enabled: Boolean) {
+                runOnUiThread {
+                    if (enabled) {
+                        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+                    } else {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    }
+                }
+            }
 
         @JavascriptInterface
         fun getLocalWifiInfo(): String {

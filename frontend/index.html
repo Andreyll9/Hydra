@@ -50,6 +50,41 @@
     if (window.__hydraGlobalLoggerReady) return;
     window.__hydraGlobalLoggerReady = true;
     window.__hydraLogList = [];
+
+    window.__activeHydraStreams = [];
+    window.__releaseAllHydraCameras = function() {
+      try {
+        (window.__activeHydraStreams || []).forEach(function(s) {
+          if (s && s.getTracks) s.getTracks().forEach(function(t) { try { t.stop(); } catch(e){} });
+        });
+      } catch(e){}
+      window.__activeHydraStreams = [];
+    };
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && !window.__gumPatched) {
+      window.__gumPatched = true;
+      var origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = async function(constraints) {
+        if (constraints && constraints.video) {
+          window.__releaseAllHydraCameras();
+          await new Promise(function(r){ setTimeout(r, 180); });
+        }
+        try {
+          var stream = await origGUM(constraints);
+          window.__activeHydraStreams.push(stream);
+          return stream;
+        } catch (err) {
+          if (constraints && constraints.video) {
+            window.__releaseAllHydraCameras();
+            await new Promise(function(r){ setTimeout(r, 250); });
+            var fallbackStream = await origGUM({ video: true, audio: !!constraints.audio });
+            window.__activeHydraStreams.push(fallbackStream);
+            return fallbackStream;
+          }
+          throw err;
+        }
+      };
+    }
+    
     window.__hydraLoggingActive = localStorage.getItem('hydra_rec_logs') === '1';
 
     
@@ -71,6 +106,8 @@
       } else {
         setTimeout(function() {
           window.__setHydraBlur(false);
+            if (window.__hiddenSince && (Date.now() - window.__hiddenSince >= 30000) && window.__lockHydraNow) { window.__lockHydraNow(); }
+            window.__hiddenSince = 0;
             if (window.__hiddenSince && (Date.now() - window.__hiddenSince >= 30000) && window.__lockHydraNow) { window.__lockHydraNow(); }
             window.__hiddenSince = 0;
           if (window.__onHydraAppResume) window.__onHydraAppResume();

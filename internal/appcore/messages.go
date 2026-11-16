@@ -131,6 +131,9 @@ func (a *AppCore) SendText(contactID, text, replyToID string) error {
 	if strings.HasPrefix(text, "[HYDRA_CALL_ANSWER]:") || strings.HasPrefix(text, "[HYDRA_CALL_ICE]:") || strings.HasPrefix(text, "[HYDRA_GROUP_INVITE]:") {
 		return nil
 	}
+	if strings.HasPrefix(text, "[HYDRA_CALL_ANSWER]:") || strings.HasPrefix(text, "[HYDRA_CALL_ICE]:") || strings.HasPrefix(text, "[HYDRA_GROUP_INVITE]:") || strings.HasPrefix(text, "[HYDRA_DEL_MSG]:") || strings.HasPrefix(text, "[HYDRA_READ_ACK]:") || strings.HasPrefix(text, "[HYDRA_STORY_SYNC]:") || strings.HasPrefix(text, "[HYDRA_REACT]:") {
+		return nil
+	}
 	if err := a.Repo.SaveMessage(a.Ctx, msg); err != nil {
 		log.Printf("[AppCore] Failed to save message: %v", err)
 	}

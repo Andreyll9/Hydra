@@ -189,7 +189,13 @@
               mobileView.set(window.__savedViewBeforeLock);
               window.__savedViewBeforeLock = null;
           } else if (!selectedContact && !showSettings) {
+              if (window.__savedViewBeforeLock) {
+              showSettings = !!window.__savedSettingsBeforeLock;
+              mobileView.set(window.__savedViewBeforeLock);
+              window.__savedViewBeforeLock = null;
+          } else if (!selectedContact && !showSettings) {
               mobileView.set('list');
+          }
           }
             } else if (selectedContact) {
                 selectContact(null);
@@ -198,7 +204,13 @@
               mobileView.set(window.__savedViewBeforeLock);
               window.__savedViewBeforeLock = null;
           } else if (!selectedContact && !showSettings) {
+              if (window.__savedViewBeforeLock) {
+              showSettings = !!window.__savedSettingsBeforeLock;
+              mobileView.set(window.__savedViewBeforeLock);
+              window.__savedViewBeforeLock = null;
+          } else if (!selectedContact && !showSettings) {
               mobileView.set('list');
+          }
           }
             }
         }
@@ -352,7 +364,13 @@
               mobileView.set(window.__savedViewBeforeLock);
               window.__savedViewBeforeLock = null;
           } else if (!selectedContact && !showSettings) {
+              if (window.__savedViewBeforeLock) {
+              showSettings = !!window.__savedSettingsBeforeLock;
+              mobileView.set(window.__savedViewBeforeLock);
+              window.__savedViewBeforeLock = null;
+          } else if (!selectedContact && !showSettings) {
               mobileView.set('list');
+          }
           }
           
           // Wait for essential data before hiding the overlay
@@ -613,7 +631,13 @@
               mobileView.set(window.__savedViewBeforeLock);
               window.__savedViewBeforeLock = null;
           } else if (!selectedContact && !showSettings) {
+              if (window.__savedViewBeforeLock) {
+              showSettings = !!window.__savedSettingsBeforeLock;
+              mobileView.set(window.__savedViewBeforeLock);
+              window.__savedViewBeforeLock = null;
+          } else if (!selectedContact && !showSettings) {
               mobileView.set('list');
+          }
           }
           } else {
               showSettings = true;
@@ -878,7 +902,13 @@
               mobileView.set(window.__savedViewBeforeLock);
               window.__savedViewBeforeLock = null;
           } else if (!selectedContact && !showSettings) {
+              if (window.__savedViewBeforeLock) {
+              showSettings = !!window.__savedSettingsBeforeLock;
+              mobileView.set(window.__savedViewBeforeLock);
+              window.__savedViewBeforeLock = null;
+          } else if (!selectedContact && !showSettings) {
               mobileView.set('list');
+          }
           }
       },
       onUpdateProfile: async (addr) => {
@@ -1021,7 +1051,13 @@
               mobileView.set(window.__savedViewBeforeLock);
               window.__savedViewBeforeLock = null;
           } else if (!selectedContact && !showSettings) {
+              if (window.__savedViewBeforeLock) {
+              showSettings = !!window.__savedSettingsBeforeLock;
+              mobileView.set(window.__savedViewBeforeLock);
+              window.__savedViewBeforeLock = null;
+          } else if (!selectedContact && !showSettings) {
               mobileView.set('list');
+          }
           } }
             if (showAddContact) { showAddContact = false; }
             if (showContactProfile) { showContactProfile = false; }
@@ -1068,7 +1104,13 @@
               mobileView.set(window.__savedViewBeforeLock);
               window.__savedViewBeforeLock = null;
           } else if (!selectedContact && !showSettings) {
+              if (window.__savedViewBeforeLock) {
+              showSettings = !!window.__savedSettingsBeforeLock;
+              mobileView.set(window.__savedViewBeforeLock);
+              window.__savedViewBeforeLock = null;
+          } else if (!selectedContact && !showSettings) {
               mobileView.set('list');
+          }
           } }}
                             on:refresh={() => loadMessages(selectedContact?.ID)}
                             {...chatHandlers}
@@ -1294,7 +1336,16 @@
                 AppActions.DeleteMessage(messageContextMenu.message.ID);
                 loadMessages(selectedContact.ID);
                 messageContextMenu.show = false;
-            }}>Удалить</div>
+            }}>🗑️ Удалить у меня</div>
+            <div class="context-item danger" style="font-weight: 700;" on:click={async () => {
+                const mId = messageContextMenu.message.ID;
+                messageContextMenu.show = false;
+                await AppActions.DeleteMessage(mId);
+                if (selectedContact && !selectedContact.IsFavorites) {
+                    await AppActions.SendText(selectedContact.ID, '[HYDRA_DEL_MSG]:' + mId, '').catch(() => {});
+                }
+                loadMessages(selectedContact.ID);
+            }}>🔥 Удалить у всех</div>
         </div>
     {/if}
 </main>

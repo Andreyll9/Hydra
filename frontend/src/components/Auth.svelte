@@ -346,10 +346,10 @@
 <div class="login-screen bg-animated" in:fade={{duration: 400}} on:click={hideContextMenu}>
   <div class="login-container glass-panel animate-fade-in" 
        in:scale={{duration: 500, start: 0.95}}
-       style="max-width: {authScreen === 'profiles' ? '540px' : '440px'}; padding: 40px; border-radius: 28px;">
+       style="max-width: {authScreen === 'profiles' ? '540px' : '420px'}; padding: 24px 20px; border-radius: 28px; max-height: 94vh; overflow-y: {authScreen === 'pin' ? 'hidden' : 'auto'}; box-sizing: border-box;">
     
-    <div class="login-logo" style="margin-bottom: 32px;">
-      <div style="width: 84px; height: 84px; margin: 0 auto; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 24px rgba(138,180,248,0.25);"><img src="/icon.png" alt="Hydra" style="width: 100%; height: 100%; object-fit: contain; border-radius: 50%;" /></div>
+    <div class="login-logo" style="margin-bottom: 12px;">
+      <div style="width: 64px; height: 64px; margin: 0 auto; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 24px rgba(138,180,248,0.25);"><img src="/icon.png" alt="Hydra" style="width: 100%; height: 100%; object-fit: contain; border-radius: 50%;" /></div>
     </div>
     
     <h1 class="login-title" style="font-size: 32px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 8px; background: linear-gradient(to right, #fff, #60A5FA); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Hydra</h1>
@@ -704,7 +704,7 @@
   .profile-avatar-large img { width: 100%; height: 100%; object-fit: cover; }
 
   .input-premium {
-    text-align: center; font-size: 36px; letter-spacing: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: #fff; width: 100%; padding: 20px; border-radius: 18px; margin-bottom: 24px; outline: none;
+    text-align: center; font-size: 28px; letter-spacing: 10px; background: rgba(0,0,0,0.25); border: 1px solid rgba(59,130,246,0.25); color: #fff; width: 100%; padding: 12px; border-radius: 16px; margin-bottom: 12px; box-sizing: border-box; outline: none;
   }
   .btn-primary-premium {
     padding: 18px; border-radius: 18px; background: var(--accent, #1D4ED8); color: white; border: none; font-weight: 700; font-size: 16px; cursor: pointer; transition: all 0.3s; margin-bottom: 16px;

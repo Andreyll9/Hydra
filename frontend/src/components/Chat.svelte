@@ -271,6 +271,108 @@
 
     // === ЭТАП 4: СМАЙЛИКИ, ГОЛОСОВЫЕ, ВИДЕО-КРУЖКИ И ТАЙМЕР ===
     let showEmojiPanel = false;
+
+    // Режим правой круглой кнопки при пустом инпуте ('audio' = 🎤, 'video' = 📷) + подсказка со Скриншота 3
+    let mediaButtonMode = 'audio';
+    let showModeHintBanner = false;
+    let modeHintTimeout = null;
+    let pressHoldTimer = null;
+    let isHoldTriggered = false;
+
+    function handleMediaBtnTap() {
+        if (isHoldTriggered) { isHoldTriggered = false; return; }
+        if (isRecordingMedia) {
+            toggleVoiceOrCircle(recordMode);
+            return;
+        }
+        mediaButtonMode = mediaButtonMode === 'audio' ? 'video' : 'audio';
+        showModeHintBanner = true;
+        clearTimeout(modeHintTimeout);
+        modeHintTimeout = setTimeout(() => showModeHintBanner = false, 3200);
+    }
+
+    function handleMediaBtnHoldStart() {
+        isHoldTriggered = false;
+        clearTimeout(pressHoldTimer);
+        pressHoldTimer = setTimeout(() => {
+            isHoldTriggered = true;
+            showModeHintBanner = false;
+            if (navigator.vibrate) navigator.vibrate(40);
+            toggleVoiceOrCircle(mediaButtonMode);
+        }, 380);
+    }
+
+    function handleMediaBtnHoldEnd() {
+        clearTimeout(pressHoldTimer);
+    }
+
+    // Кастомный плеер голосовых сообщений (Waveform + Play/Pause + 1x/1.5x/2x)
+    let playingVoiceId = null;
+    let voicePlaybackRate = 1;
+    let voiceAudioElements = {};
+
+    function togglePlayCustomVoice(msgId, srcUrl) {
+        let audio = voiceAudioElements[msgId];
+        if (!audio) {
+            audio = new Audio(srcUrl);
+            voiceAudioElements[msgId] = audio;
+            audio.onended = () => { if (playingVoiceId === msgId) playingVoiceId = null; };
+        }
+        audio.playbackRate = voicePlaybackRate;
+        if (playingVoiceId === msgId && !audio.paused) {
+            audio.pause();
+            playingVoiceId = null;
+        } else {
+            Object.values(voiceAudioElements).forEach(a => { try { a.pause(); } catch(e){} });
+            audio.play().catch(() => {});
+            playingVoiceId = msgId;
+        }
+    }
+
+    function cycleVoiceSpeed(msgId) {
+        voicePlaybackRate = voicePlaybackRate === 1 ? 1.5 : (voicePlaybackRate === 1.5 ? 2 : 1);
+        if (voiceAudioElements[msgId]) {
+            voiceAudioElements[msgId].playbackRate = voicePlaybackRate;
+        }
+    }
+
+    // Реакции и закреплённое сообщение в чате
+    let messageReactions = JSON.parse(localStorage.getItem('hydra_msg_reactions') || '{}');
+    let pinnedChatMsg = null;
+    $: if (selectedContact) {
+        try {
+            pinnedChatMsg = JSON.parse(localStorage.getItem('hydra_pinned_msg_' + selectedContact.ID) || 'null');
+        } catch(e) { pinnedChatMsg = null; }
+    }
+
+    if (typeof window !== 'undefined') {
+        window.__setHydraReaction = (msgId, emoji, sendRemote = false) => {
+            messageReactions[msgId] = emoji;
+            messageReactions = { ...messageReactions };
+            localStorage.setItem('hydra_msg_reactions', JSON.stringify(messageReactions));
+            if (sendRemote && selectedContact && !selectedContact.IsFavorites) {
+                AppActions.SendText(selectedContact.ID, `[HYDRA_REACT]:${msgId}|${emoji}`, '').catch(() => {});
+            }
+        };
+        window.__pinHydraMessageInChat = (msgObj) => {
+            if (!selectedContact || !msgObj) return;
+            pinnedChatMsg = { ID: msgObj.ID, Content: msgObj.Content };
+            localStorage.setItem('hydra_pinned_msg_' + selectedContact.ID, JSON.stringify(pinnedChatMsg));
+        };
+        window.__triggerHydraCallFromProfile = () => startHydraCall();
+        window.__triggerHydraCircleFromProfile = () => toggleVoiceOrCircle('video');
+        window.__cycleChatTtlFromProfile = () => cycleDisappearingTimer();
+    }
+
+    EventsOn('remote_reaction', (raw) => {
+        const [mId, em] = String(raw || '').split('|');
+        if (mId && em) {
+            messageReactions[mId] = em;
+            messageReactions = { ...messageReactions };
+            localStorage.setItem('hydra_msg_reactions', JSON.stringify(messageReactions));
+        }
+    });
+    
     let isRecordingMedia = false;
     let liveCirclePreviewEl = null;
     let activeMediaStream = null;
@@ -756,7 +858,16 @@
     </div>
 {/if}
     
-    <div class="messages-container messages-scroll-area" bind:this={containerRef} on:scroll={handleScroll} style="opacity: {chatReady ? 1 : 0}; transition: opacity 0.2s;">
+    {#if pinnedChatMsg}
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; background: rgba(26,28,32,0.95); border-bottom: 1px solid rgba(59,130,246,0.2); z-index: 9;">
+                <div style="border-left: 3px solid #3B82F6; padding-left: 10px; font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
+                    <div style="color: #60A5FA; font-weight: 700;">📌 Закреплённое сообщение</div>
+                    <div style="color: #D1D5DB; overflow: hidden; text-overflow: ellipsis;">{pinnedChatMsg.Content}</div>
+                </div>
+                <button type="button" on:click={() => { pinnedChatMsg = null; if (selectedContact) localStorage.removeItem('hydra_pinned_msg_' + selectedContact.ID); }} style="background: transparent; border: none; color: #9CA3AF; font-size: 14px; cursor: pointer;">✕</button>
+            </div>
+        {/if}
+        <div class="messages-container messages-scroll-area" bind:this={containerRef} on:scroll={handleScroll} style="opacity: {chatReady ? 1 : 0}; transition: opacity 0.2s;">
         {#each messages as msg (msg.ID)}
             <div 
                 class="message animate-message" 
@@ -862,9 +973,23 @@
                             </div>
                         {:else}
                             {#if msg.Content && msg.Content.startsWith('[HYDRA_VOICE]:')}
-                    <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
-                        <span style="font-size: 18px;">🎤</span>
-                        <audio controls src={msg.Content.slice('[HYDRA_VOICE]:'.length)} style="height: 36px; max-width: 220px;"></audio>
+                    <div style="display: flex; align-items: center; gap: 12px; padding: 6px 4px; min-width: 215px;">
+                        <button type="button" on:click|stopPropagation={() => togglePlayCustomVoice(msg.ID, msg.Content.slice('[HYDRA_VOICE]:'.length))} style="width: 44px; height: 44px; border-radius: 50%; background: #FFFFFF; color: #1E3A8A; border: none; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; cursor: pointer; flex-shrink: 0; box-shadow: 0 4px 12px rgba(0,0,0,0.25);">
+                            {playingVoiceId === msg.ID ? '⏸' : '▶'}
+                        </button>
+                        <div style="flex: 1; display: flex; flex-direction: column; gap: 5px;">
+                            <div style="display: flex; align-items: center; gap: 2.5px; height: 22px;">
+                                {#each [35,65,45,85,55,95,70,40,80,60,90,50,75,45,85,60,40,70,50,35,60,45] as barH, idx}
+                                    <span style="width: 3px; height: {barH}%; border-radius: 2px; background: {playingVoiceId === msg.ID ? '#93C5FD' : 'rgba(255,255,255,0.65)'}; transition: height 0.2s;"></span>
+                                {/each}
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; opacity: 0.85;">
+                                <span>Голосовое • {playingVoiceId === msg.ID ? 'Идёт воспроизведение' : 'Аудио'}</span>
+                                <button type="button" on:click|stopPropagation={() => cycleVoiceSpeed(msg.ID)} style="background: rgba(255,255,255,0.18); color: #fff; border: none; border-radius: 100px; padding: 1px 7px; font-size: 10px; font-weight: 800; cursor: pointer;">
+                                    {voicePlaybackRate}x
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 {:else if msg.Content && msg.Content.startsWith('[HYDRA_CIRCLE]:')}
                     <div
@@ -922,10 +1047,13 @@
                 {/if}
                         {/if}
 
-                        <div class="message-meta">
+                        <div class="message-meta" style="display: flex; align-items: center; gap: 6px;">
+                            {#if messageReactions[msg.ID]}
+                                <span style="background: rgba(255,255,255,0.16); border-radius: 100px; padding: 1px 6px; font-size: 12px;">{messageReactions[msg.ID]}</span>
+                            {/if}
                             <span class="message-time">{formatTime(msg.Timestamp)}</span>
                             {#if msg.IsOutgoing}
-                                <span class="message-status"><div class="icon-svg-sm" style="display:inline-block; width:12px; height:12px;">{@html msg.Status === 'sending' ? Icons.Clock : Icons.Check}</div></span>
+                                <span class="message-status"><div class="icon-svg-sm" style="display:inline-block; width:14px; height:14px;">{@html msg.Status === 'sending' ? Icons.StatusSent : (msg.Status === 'read' ? Icons.StatusRead : Icons.StatusDelivered)}</div></span>
                             {/if}
                         </div>
                     </div>
@@ -1015,37 +1143,58 @@
             <button type="button" on:click={() => toggleVoiceOrCircle('audio')} style="background: #ff4757; color: #fff; border: none; border-radius: 100px; padding: 5px 14px; font-size: 11px; font-weight: 700;">⏹ Отправить</button>
         </div>
     {/if}
-    <div style="display: flex; gap: 8px; padding: 8px 14px; background: #18191C; align-items: center; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.04);">
-        <button type="button" on:click={() => showEmojiPanel = !showEmojiPanel} style="flex: 1; background: #28292D; color: #E3E3E3; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">😊 Стикеры</button>
-        <button type="button" on:click={() => toggleVoiceOrCircle('audio')} style="flex: 1; background: {isRecordingMedia && recordMode==='audio' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">
-            {isRecordingMedia && recordMode==='audio' ? '⏹ Стоп' : '🎤 Голосовое'}
+    {#if showModeHintBanner}
+        <div style="margin: 0 8px 8px; padding: 10px 14px; background: rgba(20, 22, 28, 0.95); border: 1px solid rgba(59,130,246,0.25); border-radius: 16px; color: #E5E7EB; font-size: 12px; line-height: 1.35; box-shadow: 0 8px 24px rgba(0,0,0,0.5);">
+            Удерживайте для записи {mediaButtonMode === 'video' ? 'видео-кружка' : 'голосового'}. Нажмите для переключения в {mediaButtonMode === 'video' ? 'голосовой' : 'видео'} режим.
+        </div>
+    {/if}
+
+    <div class="input-area" style="background: #1C1E24; border: 1px solid rgba(255,255,255,0.06); border-radius: 28px; padding: 6px 8px 6px 12px; display: flex; align-items: center; gap: 8px;">
+        <button type="button" class="btn-icon" on:click={() => showEmojiPanel = !showEmojiPanel} title="Стикеры и эмодзи" style="padding: 6px; color: #9CA3AF;">
+            <span style="font-size: 20px;">😊</span>
         </button>
-        <button type="button" on:click={() => toggleVoiceOrCircle('video')} style="flex: 1; background: {isRecordingMedia && recordMode==='video' ? '#ff4757' : '#28292D'}; color: #E3E3E3; border: none; border-radius: 100px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">
-            {isRecordingMedia && recordMode==='video' ? '⏹ Стоп' : '📹 Кружок'}
+        <div style="flex: 1; position: relative;">
+            <textarea
+                bind:this={textarea}
+                class="message-input"
+                placeholder="Сообщение"
+                bind:value={newMessage}
+                on:keypress={onKeyPress}
+                on:paste={onPaste}
+                on:input={resizeTextarea}
+                rows="1"
+                style="width: 100%; font-size: 16px;"
+            ></textarea>
+        </div>
+        <button type="button" class="btn-icon" on:click={onSelectFiles} title="Прикрепить фото или файл" style="padding: 6px; color: #9CA3AF;">
+            <div class="icon-svg">{@html Icons.Paperclip}</div>
         </button>
-    </div>
-    
-    <div class="input-area">
-            <button class="btn-icon" on:click={onSelectFiles} title="Прикрепить файл">
-                <div class="icon-svg">{@html Icons.Paperclip}</div>
-            </button>
-            <div style="flex: 1; position: relative;">
-                <textarea
-                    bind:this={textarea}
-                    class="message-input"
-                    placeholder="Сообщение..."
-                    bind:value={newMessage}
-                    on:keypress={onKeyPress}
-                    on:paste={onPaste}
-                    on:input={resizeTextarea}
-                    rows="1"
-                    style="width: 100%;"
-                ></textarea>
-            </div>
-            <button class="btn-send" on:click={onSendMessage} disabled={!(newMessage || "").trim() && (selectedFiles || []).length === 0}>
+
+        {#if (newMessage || "").trim().length > 0 || (selectedFiles || []).length > 0}
+            <button type="button" class="btn-send" on:click={onSendMessage} style="width: 44px; height: 44px; border-radius: 50%; background: linear-gradient(135deg, #2563EB, #1D4ED8); color: #fff; border: none; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
                 <div class="icon-svg">{@html Icons.Send}</div>
             </button>
-        </div>
+        {:else}
+            <button
+                type="button"
+                on:click={handleMediaBtnTap}
+                on:touchstart={handleMediaBtnHoldStart}
+                on:touchend={handleMediaBtnHoldEnd}
+                on:mousedown={handleMediaBtnHoldStart}
+                on:mouseup={handleMediaBtnHoldEnd}
+                style="width: 44px; height: 44px; border-radius: 50%; background: {isRecordingMedia ? '#EF4444' : 'linear-gradient(135deg, #2563EB, #1D4ED8)'}; color: #fff; border: none; display: flex; align-items: center; justify-content: center; font-size: 19px; cursor: pointer; flex-shrink: 0; user-select: none; box-shadow: 0 4px 14px rgba(29,78,216,0.4);"
+                title="Нажмите для смены режима (Микрофон/Кружок), удерживайте для записи"
+            >
+                {#if isRecordingMedia}
+                    ⏹
+                {:else if mediaButtonMode === 'video'}
+                    📷
+                {:else}
+                    🎤
+                {/if}
+            </button>
+        {/if}
+    </div>
     </div>
 </div>
 
@@ -1385,6 +1534,33 @@
         display: none !important;
         -webkit-appearance: none !important;
         opacity: 0 !important;
+    }
+    
+
+    .chat-header {
+        background: rgba(20, 22, 28, 0.88) !important;
+        backdrop-filter: blur(16px) !important;
+        border-bottom: 1px solid rgba(255,255,255,0.05) !important;
+    }
+    .chat-contact-info {
+        background: rgba(255, 255, 255, 0.04);
+        padding: 5px 14px 5px 6px;
+        border-radius: 100px;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .messages-container {
+        background-color: #0E1015 !important;
+        background-image: radial-gradient(rgba(59, 130, 246, 0.06) 1.5px, transparent 1.5px), radial-gradient(rgba(255, 255, 255, 0.03) 1px, #0E1015 1px) !important;
+        background-size: 36px 36px !important;
+        background-position: 0 0, 18px 18px !important;
+    }
+    .message.outgoing .message-bubble:not(.circle-only-bubble) {
+        background: linear-gradient(135deg, #2B5278, #1E3A8A) !important;
+        border-radius: 20px 20px 4px 20px !important;
+    }
+    .message:not(.outgoing) .message-bubble:not(.circle-only-bubble) {
+        background: #1C1F26 !important;
+        border-radius: 20px 20px 20px 4px !important;
     }
     
 </style>

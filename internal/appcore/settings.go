@@ -79,15 +79,30 @@ func (a *AppCore) GetAppAboutInfo() *AppAboutInfo {
 		a.SetNetworkStatus(StatusOnline)
 		netInfo = fmt.Sprintf("✅ Канал E2EE активен! Отклик: %d мс (онлайн: %v)", rtt, h["online_peers"])
 	} else {
-		a.SetNetworkStatus(StatusOffline)
-		log.Printf("[HydraNet] VPS ping failed: %v", err)
+		yaOk, gOk := false, false
+		probe := &http.Client{Timeout: 3 * time.Second}
+		if r1, e1 := probe.Get("https://ya.ru"); e1 == nil && r1 != nil {
+			yaOk = true
+			r1.Body.Close()
+		}
+		if r2, e2 := probe.Get("https://www.google.com/generate_204"); e2 == nil && r2 != nil {
+			gOk = true
+			r2.Body.Close()
+		}
+		if yaOk || gOk {
+			a.SetNetworkStatus(StatusConnecting)
+			netInfo = fmt.Sprintf("⚠️ Интернет работает (Яндекс: %v, Google: %v), переподключение к VPS...", yaOk, gOk)
+		} else {
+			a.SetNetworkStatus(StatusOffline)
+			netInfo = "❌ Нет интернета (Яндекс и Google недоступны)"
+		}
 	}
 
 	return &AppAboutInfo{
-		AppVersion: "2.5.0-hydra",
+		AppVersion: "2.7.0-hydra",
 		I2PVersion: netInfo,
 		I2PPath:    "Локальная зашифрованная БД (SQLite E2EE)",
-		Author:     "Andreyll9 (Hydra) | Core: TeleGhost (MIT)",
+		Author:     "@RTbeta (Hydra) | Оригинал ядра: @nullcoredev (TeleGhost)",
 		License:    "MIT / Open Source",
 	}
 }

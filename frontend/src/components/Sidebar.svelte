@@ -1,5 +1,6 @@
 <script>
     import * as AppActions from '../../wailsjs/go/main/App.js';
+    import { EventsOn } from '../../wailsjs/runtime/runtime.js';
     import { Icons } from '../Icons.js';
     import { getInitials, formatTime, getStatusColor, getStatusText, getAvatarGradient, formatPreviewText } from '../utils.js';
     import { writable } from 'svelte/store';
@@ -419,7 +420,7 @@
     <div style="display: flex; gap: 12px; padding: 10px 16px; overflow-x: auto; border-bottom: 1px solid rgba(255,255,255,0.05); align-items: center;">
         <div on:click={() => showCreateStoryModal = true} style="display: flex; flex-direction: column; align-items: center; cursor: pointer; min-width: 62px;">
             <div style="width: 50px; height: 50px; border-radius: 50%; background: #28292D; border: 2px dashed #8AB4F8; display: flex; align-items: center; justify-content: center; font-size: 22px; color: #8AB4F8; font-weight: 700;">+</div>
-            <span style="font-size: 11px; color: #E3E3E3; margin-top: 4px; white-space: nowrap;">Сторис 24ч</span>
+            <span style="font-size: 11px; color: #E3E3E3; margin-top: 4px; white-space: nowrap;">История</span>
         </div>
         {#each hydraStories as st}
             <div on:click={() => openHydraStory(st)} style="display: flex; flex-direction: column; align-items: center; cursor: pointer; min-width: 62px;">
@@ -562,7 +563,7 @@
         <div style="display: flex; gap: 12px; padding: 8px 16px 12px; overflow-x: auto; border-bottom: 1px solid rgba(255,255,255,0.06); align-items: center; flex-shrink: 0;">
             <div on:click={() => showCreateStoryModal = true} style="display: flex; flex-direction: column; align-items: center; cursor: pointer; min-width: 64px;">
                 <div style="width: 52px; height: 52px; border-radius: 50%; background: #1E1F22; border: 2px dashed #8AB4F8; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #8AB4F8; font-weight: 700;">+</div>
-                <span style="font-size: 11px; color: #8AB4F8; font-weight: 600; margin-top: 4px; white-space: nowrap;">+ Сторис 24ч</span>
+                <span style="font-size: 11px; color: #8AB4F8; font-weight: 600; margin-top: 4px; white-space: nowrap;">История</span>
             </div>
 
         

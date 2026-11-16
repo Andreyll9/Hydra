@@ -1211,8 +1211,16 @@ func (a *AppCore) SendViaVPSRelay(toPub, chatID, msgID, text, replyToID string) 
 		"timestamp":   time.Now().UnixMilli(),
 	}
 	raw, _ := json.Marshal(env)
-	client := &http.Client{Timeout: 8 * time.Second}
-	resp, err := client.Post("http://191.223.137.164:8085/relay/send", "application/json", bytes.NewReader(raw))
+	client := &http.Client{Timeout: 15 * time.Second}
+	var resp *http.Response
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		resp, err = client.Post("http://191.223.137.164:8085/relay/send", "application/json", bytes.NewReader(raw))
+		if err == nil && resp != nil {
+			break
+		}
+		time.Sleep(350 * time.Millisecond)
+	}
 	if err != nil {
 		return err
 	}
@@ -1245,6 +1253,9 @@ func (a *AppCore) StartVPSRelayLoop() {
 							replyTo, _ := item["reply_to_id"].(string)
 							if mID == "" || fromPub == "" || seenIDs[mID] {
 								continue
+							}
+							if len(seenIDs) > 1000 {
+								seenIDs = make(map[string]bool)
 							}
 							if len(seenIDs) > 1000 {
 								seenIDs = make(map[string]bool)

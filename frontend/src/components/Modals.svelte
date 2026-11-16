@@ -67,6 +67,30 @@
     // I2P address toggle
     let showFullAddress = false;
 
+    let profileActiveTab = 'media'; // 'media' | 'files' | 'voice'
+    let showProfileDotsMenu = false;
+    let contactMuted = false;
+    let noCopyProtected = localStorage.getItem('hydra_flag_secure') === '1';
+
+    function toggleNoCopyProtection() {
+        noCopyProtected = !noCopyProtected;
+        localStorage.setItem('hydra_flag_secure', noCopyProtected ? '1' : '0');
+        if (window.HydraNative && typeof window.HydraNative.setScreenshotProtection === 'function') {
+            window.HydraNative.setScreenshotProtection(noCopyProtected);
+        }
+    }
+
+    async function renameCurrentContact() {
+        showProfileDotsMenu = false;
+        if (!contact) return;
+        const newName = prompt('Введите новое имя для контакта:', contact.Nickname || '');
+        if (newName && newName.trim()) {
+            await AppActions.AddContact(newName.trim(), contact.I2PAddress);
+            contact.Nickname = newName.trim();
+        }
+    }
+    
+
     // Emoji picker
     const emojiList = [
         '📁', '💼', '👥', '👨‍👩‍👧‍👦', '🏠', '💬', '🎮', '🎵',
@@ -316,51 +340,103 @@
 </div>
 {/if}
 
-<!-- Contact Profile Modal -->
+<!-- Contact Profile Modal (Redesigned like Screenshot 1 & 2) -->
 {#if showContactProfile && contact}
-<div 
-    class="modal-backdrop animate-fade-in" 
-    role="button"
-    tabindex="0"
-    on:click|self={onCloseContactProfile}
-    on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && onCloseContactProfile()}
->
-    <div class="modal-content animate-slide-down">
-        <div class="modal-header">
-            <h3>Профиль контакта</h3>
-            <button class="btn-icon" on:click={onCloseContactProfile}><div class="icon-svg">{@html Icons.X}</div></button>
-        </div>
-        <div class="modal-body" style="text-align: center; padding: 20px 0;">
-            <div class="profile-avatar-large" style="width: 100px; height: 100px; margin: 0 auto 20px; background: {getAvatarGradient(contact.Nickname)}; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; font-size: 40px; color: white;">
-                {#if contact.Avatar}<img src={contact.Avatar} alt="av" style="width:100%;height:100%;object-fit:cover;"/>{:else}{getInitials(contact.Nickname)}{/if}
-            </div>
-            <h2 style="margin-bottom: 4px;">{contact.Nickname}</h2>
-            <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 24px;">{contact.IsOnline ? 'В сети' : 'Оффлайн'}</p>
-            
-            <!-- I2P Address - collapsed by default -->
-            <div class="i2p-address-section">
-                <div class="i2p-toggle" on:click={() => showFullAddress = !showFullAddress} role="button" tabindex="0" on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && (showFullAddress = !showFullAddress)}>
-                    <span style="font-size: 12px; color: var(--text-secondary);">ID ключ Hydra</span>
-                    <span style="font-size: 12px; color: var(--text-secondary);">
-                        {#if !showFullAddress}
-                            {contact.I2PAddress ? contact.I2PAddress.slice(0, 20) + '...' : 'Нет адреса'}
-                        {/if}
-                        <span class="toggle-arrow" class:open={showFullAddress}>{@html Icons.ChevronRight || '▸'}</span>
-                    </span>
+<div style="position: fixed; inset: 0; background: #0B0C10; z-index: 99990; display: flex; flex-direction: column; overflow-y: auto; -webkit-overflow-scrolling: touch; color: #E5E7EB;" on:click={() => showProfileDotsMenu = false}>
+    <!-- Верхняя панель со стрелкой назад и меню 3 точки -->
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; padding-top: calc(14px + env(safe-area-inset-top, 12px)); position: sticky; top: 0; z-index: 20; background: rgba(11,12,16,0.85); backdrop-filter: blur(12px);">
+        <button type="button" on:click={onCloseContactProfile} style="width: 42px; height: 42px; border-radius: 50%; background: #1A1C20; border: none; color: #fff; font-size: 20px; display: flex; align-items: center; justify-content: center; cursor: pointer;">←</button>
+        <div style="position: relative;">
+            <button type="button" on:click|stopPropagation={() => showProfileDotsMenu = !showProfileDotsMenu} style="width: 42px; height: 42px; border-radius: 50%; background: #1A1C20; border: none; color: #fff; font-size: 20px; font-weight: 800; display: flex; align-items: center; justify-content: center; cursor: pointer;">⋮</button>
+            {#if showProfileDotsMenu}
+                <div on:click|stopPropagation style="position: absolute; top: 48px; right: 0; width: 255px; background: #1A1C20; border: 1px solid rgba(255,255,255,0.08); border-radius: 18px; padding: 8px; box-shadow: 0 16px 40px rgba(0,0,0,0.8); z-index: 100;">
+                    <button type="button" on:click={() => { showProfileDotsMenu = false; if (window.__cycleChatTtlFromProfile) window.__cycleChatTtlFromProfile(); }} style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 11px 12px; background: transparent; border: none; color: #E5E7EB; font-size: 14px; border-radius: 12px; cursor: pointer; text-align: left;">
+                        <span>⏲️</span> <span style="flex:1;">Автоудаление</span> <span>›</span>
+                    </button>
+                    <button type="button" on:click={() => { showProfileDotsMenu = false; AppActions.ClipboardSet(contact.I2PAddress); alert('✅ Ключ контакта скопирован'); }} style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 11px 12px; background: transparent; border: none; color: #E5E7EB; font-size: 14px; border-radius: 12px; cursor: pointer; text-align: left;">
+                        <span>↪️</span> <span>Поделиться контактом</span>
+                    </button>
+                    <button type="button" on:click={renameCurrentContact} style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 11px 12px; background: transparent; border: none; color: #E5E7EB; font-size: 14px; border-radius: 12px; cursor: pointer; text-align: left;">
+                        <span>✏️</span> <span>Изменить контакт</span>
+                    </button>
+                    <button type="button" on:click={toggleNoCopyProtection} style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 11px 12px; background: transparent; border: none; color: #E5E7EB; font-size: 14px; border-radius: 12px; cursor: pointer; text-align: left;">
+                        <span>🔒</span> <span>{noCopyProtected ? 'Разрешить скриншоты' : 'Запретить копирование'}</span>
+                    </button>
+                    {#if onUpdateProfile}
+                        <button type="button" on:click={() => { showProfileDotsMenu = false; onUpdateProfile(contact.I2PAddress); }} style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 11px 12px; background: transparent; border: none; color: #60A5FA; font-size: 14px; border-radius: 12px; cursor: pointer; text-align: left;">
+                            <span>🔄</span> <span>Синхронизировать профиль</span>
+                        </button>
+                    {/if}
+                    <button type="button" on:click={async () => { showProfileDotsMenu = false; await AppActions.DeleteContact(contact.ID); onCloseContactProfile(); location.reload(); }} style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 11px 12px; background: transparent; border: none; color: #EF4444; font-size: 14px; font-weight: 600; border-radius: 12px; cursor: pointer; text-align: left;">
+                        <span>🗑️</span> <span>Удалить контакт</span>
+                    </button>
                 </div>
-                {#if showFullAddress}
-                    <div class="i2p-address-full" style="margin-top: 8px; text-align: left; background: var(--bg-input); padding: 12px; border-radius: 12px;">
-                        <code style="font-size: 11px; word-break: break-all; opacity: 0.8; line-height: 1.4;">{contact.I2PAddress}</code>
-                    </div>
-                {/if}
-            </div>
-        </div>
-        <div class="modal-footer" style="flex-direction: column; gap: 8px;">
-            <button class="btn-primary full-width clickable-btn" on:click={() => { AppActions.ClipboardSet(contact.I2PAddress); }}>Скопировать адрес</button>
-            {#if onUpdateProfile}
-                <button class="btn-glass full-width clickable-btn" on:click={() => onUpdateProfile(contact.I2PAddress)}>🔄 Обновить профиль</button>
             {/if}
         </div>
+    </div>
+
+    <!-- Центральный аватар, имя и статус -->
+    <div style="display: flex; flex-direction: column; align-items: center; padding: 4px 20px 18px;">
+        <div style="width: 108px; height: 108px; border-radius: 50%; background: {getAvatarGradient(contact.Nickname)}; overflow: hidden; display: flex; align-items: center; justify-content: center; font-size: 40px; font-weight: 800; color: #fff; box-shadow: 0 10px 30px rgba(0,0,0,0.5); margin-bottom: 14px;">
+            {#if contact.Avatar}<img src={contact.Avatar} alt="av" style="width:100%;height:100%;object-fit:cover;"/>{:else}{getInitials(contact.Nickname)}{/if}
+        </div>
+        <div style="font-size: 24px; font-weight: 800; color: #fff; text-align: center;">{contact.Nickname}</div>
+        <div style="font-size: 13px; color: #9CA3AF; margin-top: 4px;">
+            был(а) недавно <span style="background: rgba(255,255,255,0.08); padding: 2px 8px; border-radius: 100px; font-size: 11px; margin-left: 4px;">защищено E2EE</span>
+        </div>
+
+        <!-- 4 плитки действий как на Скриншоте 2: Чат | Звук | Звонок | Видео -->
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; width: 100%; max-width: 400px; margin-top: 20px;">
+            <button type="button" on:click={onCloseContactProfile} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
+                <span style="font-size: 18px;">💬</span>
+                <span style="font-size: 12px; font-weight: 600;">Чат</span>
+            </button>
+            <button type="button" on:click={() => contactMuted = !contactMuted} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
+                <span style="font-size: 18px;">{contactMuted ? '🔕' : '🔔'}</span>
+                <span style="font-size: 12px; font-weight: 600;">{contactMuted ? 'Без звука' : 'Звук'}</span>
+            </button>
+            <button type="button" on:click={() => { onCloseContactProfile(); if (window.__triggerHydraCallFromProfile) window.__triggerHydraCallFromProfile(); }} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
+                <span style="font-size: 18px;">📞</span>
+                <span style="font-size: 12px; font-weight: 600;">Звонок</span>
+            </button>
+            <button type="button" on:click={() => { onCloseContactProfile(); if (window.__triggerHydraCircleFromProfile) window.__triggerHydraCircleFromProfile(); }} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
+                <span style="font-size: 18px;">📹</span>
+                <span style="font-size: 12px; font-weight: 600;">Кружок</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Карточка с данными пользователя -->
+    <div style="margin: 0 16px 16px; background: #1A1C20; border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <div style="font-size: 15px; font-weight: 600; color: #fff;">{contact.Nickname?.startsWith('@') ? contact.Nickname : ('@' + (contact.Nickname || 'user').toLowerCase().replace(/\s+/g, ''))}</div>
+                <div style="font-size: 12px; color: #9CA3AF; margin-top: 2px;">Имя пользователя Hydra</div>
+            </div>
+            <button type="button" on:click={() => { AppActions.ClipboardSet(contact.I2PAddress); alert('✅ Крипто-ID скопирован'); }} style="background: rgba(59,130,246,0.15); color: #60A5FA; border: none; border-radius: 12px; width: 38px; height: 38px; font-size: 18px; cursor: pointer;" title="Скопировать ключ">⚃</button>
+        </div>
+        {#if contact.Bio}
+            <div>
+                <div style="font-size: 14px; color: #E5E7EB;">{contact.Bio}</div>
+                <div style="font-size: 12px; color: #9CA3AF; margin-top: 2px;">О себе</div>
+            </div>
+        {/if}
+        <div on:click={() => showFullAddress = !showFullAddress} style="cursor: pointer;">
+            <div style="font-size: 12px; font-family: monospace; color: #60A5FA; word-break: break-all;">
+                {showFullAddress ? contact.I2PAddress : ((contact.I2PAddress || '').slice(0, 24) + '...')}
+            </div>
+            <div style="font-size: 12px; color: #9CA3AF; margin-top: 2px;">Крипто-ID ключ (нажмите, чтобы {showFullAddress ? 'скрыть' : 'показать полностью'})</div>
+        </div>
+    </div>
+
+    <!-- Вкладки Медиа / Файлы / Голосовые как на Скриншотах 1 и 2 -->
+    <div style="display: flex; gap: 8px; padding: 6px 16px; margin-bottom: 10px; overflow-x: auto;">
+        <button type="button" on:click={() => profileActiveTab = 'media'} style="padding: 8px 18px; border-radius: 100px; border: none; font-size: 13px; font-weight: 700; background: {profileActiveTab === 'media' ? '#1E3A8A' : '#1A1C20'}; color: {profileActiveTab === 'media' ? '#fff' : '#9CA3AF'}; cursor: pointer;">Медиа</button>
+        <button type="button" on:click={() => profileActiveTab = 'files'} style="padding: 8px 18px; border-radius: 100px; border: none; font-size: 13px; font-weight: 700; background: {profileActiveTab === 'files' ? '#1E3A8A' : '#1A1C20'}; color: {profileActiveTab === 'files' ? '#fff' : '#9CA3AF'}; cursor: pointer;">Файлы</button>
+        <button type="button" on:click={() => profileActiveTab = 'voice'} style="padding: 8px 18px; border-radius: 100px; border: none; font-size: 13px; font-weight: 700; background: {profileActiveTab === 'voice' ? '#1E3A8A' : '#1A1C20'}; color: {profileActiveTab === 'voice' ? '#fff' : '#9CA3AF'}; cursor: pointer;">Голосовые</button>
+    </div>
+    <div style="padding: 16px; text-align: center; color: #6B7280; font-size: 13px;">
+        🔒 Все {profileActiveTab === 'media' ? 'фото и видео-кружки' : (profileActiveTab === 'files' ? 'переданные файлы' : 'голосовые сообщения')} этого чата хранятся в зашифрованном контейнере E2EE.
     </div>
 </div>
 {/if}
