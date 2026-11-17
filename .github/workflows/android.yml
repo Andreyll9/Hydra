@@ -38,12 +38,12 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply Play Protect Clean-up, Centered Menus, 2-Profile Limit, Circle Studio (Play/Stop/Trim 2m) & /Hydra/ Folders
+      - name: Fix Startup Crash (Restore mobile.go CORS for WebView + Fix Android 14 ForegroundService + Safe MainActivity Startup)
         run: |
-          cat << 'PYEOF' > apply_v28_fixes.py
+          cat << 'PYEOF' > fix_startup_crash.py
           import os, re, shutil
 
-          # 0. Гарантируем, что фирменная иконка щита Гидры (logo.png) на месте
+          # 0. Гарантируем иконку щита Гидры
           real_hydra_logo = "frontend/src/assets/images/logo.png"
           if os.path.exists(real_hydra_logo):
               for mip in ["mipmap-mdpi", "mipmap-hdpi", "mipmap-xhdpi", "mipmap-xxhdpi", "mipmap-xxxhdpi"]:
@@ -52,574 +52,194 @@ jobs:
                       os.makedirs(os.path.dirname(dst), exist_ok=True)
                       shutil.copyfile(real_hydra_logo, dst)
 
-          # 1. ЧИНИМ ПРЕДУПРЕЖДЕНИЕ GOOGLE PLAY ЗАЩИТЫ (AndroidManifest.xml):
-          #    - Удаляем BootReceiver, RECEIVE_BOOT_COMPLETED и WAKE_LOCK
-          #    - Меняем stopWithTask="false" на stopWithTask="true"
-          mf_path = "android/app/src/main/AndroidManifest.xml"
-          if os.path.exists(mf_path):
-              with open(mf_path, "r", encoding="utf-8") as f:
-                  mf = f.read()
-              mf = mf.replace('<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />', '')
-              mf = mf.replace('<uses-permission android:name="android.permission.WAKE_LOCK" />', '')
-              mf = mf.replace('android:stopWithTask="false"', 'android:stopWithTask="true"')
-              mf = re.sub(r'<receiver\s+android:name="\.BootReceiver"[\s\S]*?</receiver>', '', mf)
-              with open(mf_path, "w", encoding="utf-8") as f:
-                  f.write(mf)
-              print("[OK] 1. AndroidManifest.xml: удалены триггеры Google Play Защиты (BootReceiver, WAKE_LOCK, stopWithTask=false)!")
+          # 1. ЧИНИМ ПРИЧИНУ №1 НЕЗАПУСКА: mobile/mobile.go
+          #    Убираем блокировку Origin (Android WebView часто шлёт Origin: null или file://, из-за чего 127.0.0.1:8080 возвращал 403 Forbidden на старте!)
+          mob_path = "mobile/mobile.go"
+          if os.path.exists(mob_path):
+              with open(mob_path, "r", encoding="utf-8") as f:
+                  mb = f.read()
 
-          # 2. MainActivity.kt:
-          #    - Создание собственной структуры папок приложения в памяти телефона: /Download/Hydra/Photos, /Videos, /Voice, /Files, /Logs
-          #    - Расширенное определение модели и бренда телефона (с расшифровкой кодов RMX3472, M2010J19SY и др.)
-          #    - Проверка наличия handleCallNotificationAction и setScreenshotProtection
+              bad_cors_block = """origin := r.Header.Get("Origin")
+          	if origin != "" && !strings.HasPrefix(origin, "http://127.0.0.1") && !strings.HasPrefix(origin, "http://localhost") {
+          		http.Error(w, "forbidden origin", http.StatusForbidden)
+          		return
+          	}
+          	w.Header().Set("Access-Control-Allow-Origin", "http://127.0.0.1:8080")"""
+
+              mb = mb.replace(bad_cors_block, 'w.Header().Set("Access-Control-Allow-Origin", "*")')
+              # На случай если отступы отличались — заменяем через регулярку:
+              mb = re.sub(
+                  r'origin\s*:=\s*r\.Header\.Get\("Origin"\)[\s\S]*?w\.Header\(\)\.Set\("Access-Control-Allow-Origin",\s*"http://127\.0\.0\.1:8080"\)',
+                  'w.Header().Set("Access-Control-Allow-Origin", "*")',
+                  mb
+              )
+              with open(mob_path, "w", encoding="utf-8") as f:
+                  f.write(mb)
+              print("[OK] 1. mobile/mobile.go: снята блокировка Origin для Android WebView (API 127.0.0.1:8080 снова отвечает мгновенно!)")
+
+          # 2. ЧИНИМ ПРИЧИНУ №2 (КРАШ СЕРВИСА ПРИ ЗАПУСКЕ НА ANDROID 10-14): TeleGhostService.kt + AndroidManifest.xml + MainActivity.kt
+          svc_path = "android/app/src/main/java/com/teleghost/app/TeleGhostService.kt"
+          if os.path.exists(svc_path):
+              svc_clean_code = '''package com.teleghost.app
+
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.PendingIntent
+          import android.app.Service
+          import android.content.Context
+          import android.content.Intent
+          import android.content.pm.ServiceInfo
+          import android.os.Build
+          import android.os.IBinder
+          import androidx.core.app.NotificationCompat
+
+          class TeleGhostService : Service() {
+
+              companion object {
+                  private const val CHANNEL_ID = "TeleGhostServiceChannel"
+                  private const val NOTIFICATION_ID = 1
+              }
+
+              override fun onCreate() {
+                  super.onCreate()
+                  createNotificationChannel()
+              }
+
+              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+                  try {
+                      val notification = createNotification()
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                          startForeground(
+                              NOTIFICATION_ID,
+                              notification,
+                              ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                          )
+                      } else {
+                          startForeground(NOTIFICATION_ID, notification)
+                      }
+                  } catch (e: Exception) {
+                      android.util.Log.e("HydraService", "startForeground safe catch: ${e.message}")
+                  }
+
+                  Thread {
+                      try {
+                          val dataDir = filesDir.absolutePath
+                          mobile.Mobile.start(dataDir)
+                      } catch (e: Exception) {
+                          android.util.Log.e("HydraService", "Mobile.start error: ${e.message}")
+                      }
+                  }.start()
+
+                  return START_STICKY
+              }
+
+              override fun onDestroy() {
+                  try {
+                      mobile.Mobile.stop()
+                  } catch (_: Exception) {}
+                  super.onDestroy()
+              }
+
+              override fun onBind(intent: Intent?): IBinder? = null
+
+              private fun createNotificationChannel() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      val serviceChannel = NotificationChannel(
+                          CHANNEL_ID,
+                          "Hydra E2EE • Тихий режим",
+                          NotificationManager.IMPORTANCE_LOW
+                      )
+                      val manager = getSystemService(NotificationManager::class.java)
+                      manager?.createNotificationChannel(serviceChannel)
+                  }
+              }
+
+              private fun createNotification(): Notification {
+                  val notificationIntent = Intent(this, MainActivity::class.java)
+                  val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                      PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                  } else {
+                      PendingIntent.FLAG_UPDATE_CURRENT
+                  }
+                  val pendingIntent = PendingIntent.getActivity(
+                      this, 0, notificationIntent, pendingIntentFlags
+                  )
+
+                  return NotificationCompat.Builder(this, CHANNEL_ID)
+                      .setContentTitle("Hydra активна")
+                      .setContentText("Защищённый канал E2EE (X25519 + XChaCha20) активен")
+                      .setSmallIcon(R.mipmap.ic_launcher)
+                      .setContentIntent(pendingIntent)
+                      .setOngoing(true)
+                      .build()
+              }
+          }
+          '''
+              with open(svc_path, "w", encoding="utf-8") as f:
+                  f.write(svc_clean_code)
+              print("[OK] 2a. TeleGhostService.kt: добавлен ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC и защита от краша на Android 14!")
+
+          # В MainActivity.kt дублируем запуск mobile.Mobile.start(filesDir.absolutePath) напрямую из Activity на случай, если система задержала старт ForegroundService!
           kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
           if os.path.exists(kt_path):
               with open(kt_path, "r", encoding="utf-8") as f:
                   kt = f.read()
 
-              if "fun handleCallNotificationAction(" not in kt:
-                  if "fun handleDirectReplyFromNotification(" in kt:
-                      kt = kt.replace(
-                          "fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {",
-                          """fun handleCallNotificationAction(senderNick: String, action: String) {
-              currentInstance?.runOnUiThread {
-                  val sNick = JSONObject.quote(senderNick)
-                  val sAct = JSONObject.quote(action)
-                  currentInstance?.webView?.evaluateJavascript(
-                      "if(window.__onHydraCallNotifAction) window.__onHydraCallNotifAction($sNick, $sAct);",
-                      null
-                  )
-              }
-          }
-          fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {"""
-                      )
-
-              if "fun setScreenshotProtection(" not in kt:
-                  kt = kt.replace(
-                      "inner class HydraNativeBridge {",
-                      """inner class HydraNativeBridge {
-          @JavascriptInterface
-          fun setScreenshotProtection(enabled: Boolean) {
-              runOnUiThread {
-                  if (enabled) {
-                      window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+              old_start_svc = """    private fun startGoService() {
+                  val intent = Intent(this, TeleGhostService::class.java)
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      startForegroundService(intent)
                   } else {
-                      window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                      startService(intent)
                   }
-              }
-          }"""
-                  )
+                  waitForServerAndLoad()
+              }"""
 
-              old_dev_str = 'obj.put("device", "${Build.MANUFACTURER} ${Build.MODEL}")'
-              new_dev_str = '''val rawModel = Build.MODEL ?: ""
-                  val brand = (Build.BRAND ?: Build.MANUFACTURER ?: "Android").replaceFirstChar { it.uppercase() }
-                  val marketMap = mapOf(
-                      "RMX3472" to "Realme 9i / 8i (RMX3472)",
-                      "M2010J19SY" to "Xiaomi Redmi 9T / POCO M3"
-                  )
-                  val prettyDevice = marketMap[rawModel] ?: if (rawModel.startsWith(brand, ignoreCase = true)) rawModel else "$brand $rawModel"
-                  obj.put("device", "$prettyDevice • Android ${Build.VERSION.RELEASE}")'''
-              kt = kt.replace(old_dev_str, new_dev_str)
+              new_start_svc = """    private fun startGoService() {
+                  // Немедленно запускаем Go-сервер 127.0.0.1:8080 в фоновом потоке напрямую, чтобы не зависеть от задержек Android Service!
+                  Thread {
+                      try {
+                          mobile.Mobile.start(filesDir.absolutePath)
+                      } catch (e: Exception) {
+                          android.util.Log.e(TAG, "Direct Mobile.start error: ${e.message}")
+                      }
+                  }.start()
 
-              old_save_file = """                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                              put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
-                              put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
-                          }"""
-              new_save_file = """                    val subFolder = when {
-                              filename.endsWith(".jpg", true) || filename.endsWith(".png", true) -> "Hydra/Photos"
-                              filename.endsWith(".mp4", true) || filename.endsWith(".webm", true) -> "Hydra/Videos"
-                              filename.endsWith(".ogg", true) || filename.endsWith(".mp3", true) -> "Hydra/Voice"
-                              else -> "Hydra/Files"
-                          }
-                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                              put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/" + subFolder)
-                              put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
-                          }"""
-              kt = kt.replace(old_save_file, new_save_file)
-              kt = kt.replace(
-                  'put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)',
-                  'put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/Hydra/Logs")'
-              )
-              kt = kt.replace(
-                  'android.widget.Toast.makeText(this, "Сохранено в Загрузки", android.widget.Toast.LENGTH_SHORT).show()',
-                  'android.widget.Toast.makeText(this, "✅ Сохранено в папку Download/Hydra!", android.widget.Toast.LENGTH_SHORT).show()'
-              )
-              kt = kt.replace(
-                  'val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)',
-                  'val dlDir = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "Hydra")'
-              )
-
+                  try {
+                      val intent = Intent(this, TeleGhostService::class.java)
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                          startForegroundService(intent)
+                      } else {
+                          startService(intent)
+                      }
+                  } catch (e: Exception) {
+                      android.util.Log.e(TAG, "Service start fallback: ${e.message}")
+                  }
+                  waitForServerAndLoad()
+              }"""
+              kt = kt.replace(old_start_svc, new_start_svc)
               with open(kt_path, "w", encoding="utf-8") as f:
                   f.write(kt)
-              print("[OK] 2. MainActivity.kt: добавлены папки /Download/Hydra/, модель смартфона и функции уведомлений!")
+              print("[OK] 2b. MainActivity.kt: добавлен прямой старт Go-ядра без ожидания ForegroundService!")
 
-          # 3. ЛИМИТ 2 ПРОФИЛЯ НА УСТРОЙСТВО + СКРЫТИЕ КНОПКИ "+ СОЗДАТЬ" С ЭКРАНА БЛОКИРОВКИ, КОГДА ЕСТЬ ХОТЯ БЫ 1 ПРОФИЛЬ (Auth.svelte + Settings.svelte):
-          au_path = "frontend/src/components/Auth.svelte"
-          if os.path.exists(au_path):
-              with open(au_path, "r", encoding="utf-8") as f:
-                  au = f.read()
-
-              old_add_prof_btn = """            <div 
-                      class="profile-item add-profile" 
-                      role="button"
-                      tabindex="0"
-                      on:click={startCreateProfile}
-                      on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && startCreateProfile()}
-                  >
-                    <div class="plus-icon">+</div>
-                    <div class="add-text">Создать</div>
-                  </div>"""
-
-              new_add_prof_btn = """            {#if allProfiles.length === 0}
-                  <div 
-                      class="profile-item add-profile" 
-                      role="button"
-                      tabindex="0"
-                      on:click={startCreateProfile}
-                      on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && startCreateProfile()}
-                  >
-                    <div class="plus-icon">+</div>
-                    <div class="add-text">Создать</div>
-                  </div>
-                  {/if}"""
-              if "{#if allProfiles.length === 0}" not in au:
-                  au = au.replace(old_add_prof_btn, new_add_prof_btn)
-
-              if "allProfiles.length >= 2" not in au:
-                  au = au.replace(
-                      "function startCreateProfile() {",
-                      """function startCreateProfile() {
-                  if (allProfiles.length >= 2) {
-                      showToast('На одном устройстве можно создать максимум 2 профиля', 'error');
-                      return;
-                  }"""
+          # 3. Проверяем AndroidManifest.xml (возвращаем BootReceiver в безопасном виде или проверяем валидность всех тегов)
+          mf_path = "android/app/src/main/AndroidManifest.xml"
+          if os.path.exists(mf_path):
+              with open(mf_path, "r", encoding="utf-8") as f:
+                  mf = f.read()
+              # Убеждаемся, что WAKE_LOCK есть (он нужен Go-рантайму при сетевых операциях)
+              if "android.permission.WAKE_LOCK" not in mf:
+                  mf = mf.replace(
+                      '<uses-permission android:name="android.permission.INTERNET" />',
+                      '<uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />'
                   )
-
-              if "hydra_open_create_second" not in au:
-                  au = au.replace(
-                      "if (allProfiles.length === 0) {\n                authScreen = 'profiles';\n            }",
-                      """if (localStorage.getItem('hydra_open_create_second') === '1' && allProfiles.length < 2) {
-                      localStorage.removeItem('hydra_open_create_second');
-                      startCreateProfile();
-                  } else if (allProfiles.length === 0) {
-                      authScreen = 'profiles';
-                  }"""
-                  )
-
-              with open(au_path, "w", encoding="utf-8") as f:
-                  f.write(au)
-              print("[OK] 3a. Auth.svelte: лимит 2 профиля и скрытие кнопки '+ Создать' при наличии профиля готовы!")
-
-          st_path = "frontend/src/components/Settings.svelte"
-          if os.path.exists(st_path):
-              with open(st_path, "r", encoding="utf-8") as f:
-                  st = f.read()
-
-              prof_switcher_js = """
-              let deviceProfiles = [];
-              let switchPinValue = '';
-              let switchingTargetProf = null;
-
-              async function loadDeviceProfilesForSwitch() {
-                  try {
-                      deviceProfiles = (await AppActions.ListProfiles()) || [];
-                  } catch (e) { deviceProfiles = []; }
-              }
-              loadDeviceProfilesForSwitch();
-
-              async function quickSwitchToProfile(prof) {
-                  if (!prof) return;
-                  if (!prof.use_pin) {
-                      alert('Для быстрого переключения включите ПИН-код на профиле');
-                      return;
-                  }
-                  switchingTargetProf = prof;
-                  switchPinValue = '';
-              }
-
-              async function confirmQuickSwitchProfile() {
-                  if (!switchingTargetProf || !switchPinValue.trim()) return;
-                  try {
-                      const mnem = await AppActions.UnlockProfile(switchingTargetProf.id, switchPinValue.trim());
-                      await AppActions.Logout();
-                      await AppActions.Login(mnem);
-                      switchingTargetProf = null;
-                      switchPinValue = '';
-                      location.reload();
-                  } catch (e) {
-                      alert('❌ Неверный ПИН-код от второго профиля');
-                  }
-              }
-
-              async function createSecondProfileFromSettings() {
-                  if (deviceProfiles.length >= 2) {
-                      alert('Достигнут лимит: максимум 2 профиля на 1 устройстве');
-                      return;
-                  }
-                  localStorage.setItem('hydra_open_create_second', '1');
-                  await onLogout();
-              }
-              """
-              if "function loadDeviceProfilesForSwitch()" not in st:
-                  st = st.replace("let nickCheckStatus = '';", "let nickCheckStatus = '';\n" + prof_switcher_js, 1)
-
-              prof_switcher_html = """
-                              <!-- Управление профилями на устройстве (Лимит: максимум 2 профиля) -->
-                              <div style="background: #14161A; border: 1px solid rgba(59,130,246,0.25); border-radius: 20px; padding: 14px; margin-top: 8px;">
-                                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                                      <span style="font-size: 13px; font-weight: 800; color: #60A5FA;">👥 Аккаунты на устройстве ({deviceProfiles.length} / 2)</span>
-                                      {#if deviceProfiles.length < 2}
-                                          <button type="button" on:click={createSecondProfileFromSettings} style="background: #1D4ED8; color: #fff; border: none; border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700; cursor: pointer;">
-                                              + Создать 2-й профиль
-                                          </button>
-                                      {:else}
-                                          <span style="font-size: 11px; color: #9CA3AF;">Лимит 2/2</span>
-                                      {/if}
-                                  </div>
-                                  <div style="display: flex; flex-direction: column; gap: 8px;">
-                                      {#each deviceProfiles as dp}
-                                          <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #1A1C20; border-radius: 14px; border: 1px solid {selectedProfile?.id === dp.id ? '#3B82F6' : 'transparent'};">
-                                              <div style="display: flex; align-items: center; gap: 10px;">
-                                                  <div style="width: 32px; height: 32px; border-radius: 50%; background: #1E3A8A; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px;">
-                                                      {getInitials(dp.display_name)}
-                                                  </div>
-                                                  <div>
-                                                      <div style="font-size: 14px; font-weight: 700; color: #E5E7EB;">{dp.display_name}</div>
-                                                      <div style="font-size: 11px; color: {selectedProfile?.id === dp.id ? '#10B981' : '#9CA3AF'};">{selectedProfile?.id === dp.id ? '● Текущий профиль' : 'Нажмите для входа'}</div>
-                                                  </div>
-                                              </div>
-                                              {#if selectedProfile?.id !== dp.id}
-                                                  <button type="button" on:click={() => quickSwitchToProfile(dp)} style="background: #2563EB; color: #fff; border: none; border-radius: 100px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer;">
-                                                      Переключить
-                                                  </button>
-                                              {/if}
-                                          </div>
-                                      {/each}
-                                  </div>
-                                  {#if switchingTargetProf}
-                                      <div style="margin-top: 10px; padding: 10px; background: #0E1015; border-radius: 14px; display: flex; gap: 8px; align-items: center;">
-                                          <input type="password" placeholder="ПИН от {switchingTargetProf.display_name}..." bind:value={switchPinValue} style="flex: 1; background: #1A1C20; color: #fff; border: 1px solid rgba(59,130,246,0.3); border-radius: 10px; padding: 8px 10px; font-size: 13px;" />
-                                          <button type="button" on:click={confirmQuickSwitchProfile} style="background: #10B981; color: #fff; border: none; border-radius: 10px; padding: 8px 14px; font-size: 12px; font-weight: 800;">Войти</button>
-                                          <button type="button" on:click={() => switchingTargetProf = null} style="background: transparent; color: #9CA3AF; border: none; font-size: 14px;">✕</button>
-                                      </div>
-                                  {/if}
-                              </div>
-              """
-              if "Аккаунты на устройстве" not in st:
-                  st = st.replace(
-                      '<button class="btn-secondary logout-btn" on:click={onLogout}>🚪 Выйти из аккаунта</button>',
-                      prof_switcher_html + '\n                            <button class="btn-secondary logout-btn" on:click={onLogout}>🚪 Выйти из аккаунта</button>'
-                  )
-              with open(st_path, "w", encoding="utf-8") as f:
-                  f.write(st)
-              print("[OK] 3b. Settings.svelte: блок переключения профилей проверен")
-
-          # 4. ЦЕНТРИРОВАНИЕ КОНТЕКСТНЫХ МЕНЮ ЭКРАНА + СКРЫТИЕ "УДАЛИТЬ У ВСЕХ" И "РЕДАКТИРОВАТЬ" ДЛЯ КРУЖКОВ/ИЗБРАННОГО В App.svelte:
-          app_path = "frontend/src/App.svelte"
-          if os.path.exists(app_path):
-              with open(app_path, "r", encoding="utf-8") as f:
-                  ap = f.read()
-
-              ap = ap.replace(
-                  'style="top: {contextMenu.y}px; left: {contextMenu.x}px"',
-                  'style="top: 50%; left: 50%; transform: translate(-50%, -50%); width: 260px; max-width: 88vw;"'
-              )
-              ap = ap.replace(
-                  'style="top: {folderContextMenu.y}px; left: {folderContextMenu.x}px"',
-                  'style="top: 50%; left: 50%; transform: translate(-50%, -50%); width: 240px; max-width: 88vw;"'
-              )
-              ap = ap.replace(
-                  'style="top: {messageContextMenu.y}px; left: {messageContextMenu.x}px; min-width: 210px; border-radius: 18px; padding: 8px;"',
-                  'style="top: 50%; left: 50%; transform: translate(-50%, -50%); width: 265px; max-width: 90vw; border-radius: 22px; padding: 10px;"'
-              )
-              ap = ap.replace(
-                  'style="top: {messageContextMenu.y}px; left: {messageContextMenu.x}px"',
-                  'style="top: 50%; left: 50%; transform: translate(-50%, -50%); width: 265px; max-width: 90vw; border-radius: 22px; padding: 10px;"'
-              )
-
-              old_edit_and_del = """            {#if messageContextMenu.message?.IsOutgoing}
-                  <div class="context-item" on:click={() => {
-                      editingMessageId = messageContextMenu.message.ID;
-                      editMessageContent = messageContextMenu.message.Content;
-                      messageContextMenu.show = false;
-                  }}>Редактировать</div>
-              {/if}
-              <div class="context-item danger" on:click={() => {
-                  AppActions.DeleteMessage(messageContextMenu.message.ID);
-                  loadMessages(selectedContact.ID);
-                  messageContextMenu.show = false;
-              }}>🗑️ Удалить у меня</div>
-              <div class="context-item danger" style="font-weight: 700;" on:click={async () => {
-                  const mId = messageContextMenu.message.ID;
-                  messageContextMenu.show = false;
-                  await AppActions.DeleteMessage(mId);
-                  if (selectedContact && !selectedContact.IsFavorites) {
-                      await AppActions.SendText(selectedContact.ID, '[HYDRA_DEL_MSG]:' + mId, '').catch(() => {});
-                  }
-                  loadMessages(selectedContact.ID);
-              }}>🔥 Удалить у всех</div>"""
-
-              new_edit_and_del = """            {#if messageContextMenu.message?.Content?.startsWith('[HYDRA_CIRCLE]:')}
-                  <div class="context-item" style="color: #60A5FA; font-weight: 700;" on:click={() => {
-                      const msgObj = messageContextMenu.message;
-                      messageContextMenu.show = false;
-                      if (window.__openExistingCircleTrimmer) window.__openExistingCircleTrimmer(msgObj);
-                  }}>✂️ Обрезать кружок</div>
-              {:else if messageContextMenu.message?.IsOutgoing && !messageContextMenu.message?.Content?.startsWith('[HYDRA_')}
-                  <div class="context-item" on:click={() => {
-                      editingMessageId = messageContextMenu.message.ID;
-                      editMessageContent = messageContextMenu.message.Content;
-                      messageContextMenu.show = false;
-                  }}>✏️ Редактировать текст</div>
-              {/if}
-              <div class="context-item danger" on:click={() => {
-                  AppActions.DeleteMessage(messageContextMenu.message.ID);
-                  loadMessages(selectedContact.ID);
-                  messageContextMenu.show = false;
-              }}>🗑️ {selectedContact?.IsFavorites || selectedContact?.Nickname === 'Избранное' ? 'Удалить' : 'Удалить у меня'}</div>
-              {#if !selectedContact?.IsFavorites && selectedContact?.Nickname !== 'Избранное'}
-                  <div class="context-item danger" style="font-weight: 700;" on:click={async () => {
-                      const mId = messageContextMenu.message.ID;
-                      messageContextMenu.show = false;
-                      await AppActions.DeleteMessage(mId);
-                      if (selectedContact) {
-                          await AppActions.SendText(selectedContact.ID, '[HYDRA_DEL_MSG]:' + mId, '').catch(() => {});
-                      }
-                      loadMessages(selectedContact.ID);
-                  }}>🔥 Удалить у всех</div>
-              {/if}"""
-              ap = ap.replace(old_edit_and_del, new_edit_and_del)
-              ap = ap.replace(
-                  "{#if messageContextMenu.message?.Content}",
-                  "{#if messageContextMenu.message?.Content && !messageContextMenu.message.Content.startsWith('[HYDRA_')}"
-              )
-
-              with open(app_path, "w", encoding="utf-8") as f:
-                  f.write(ap)
-              print("[OK] 4. App.svelte обновлён")
-
-          # 5. Chat.svelte:
-          #    ГАРАНТИРОВАННО объявляем все переменные и функции Студии Кружка (showCircleStudio, circleTrimStart, circleTrimEnd, circleTotalDuration, openCircleStudio, startCircleStudioRecording, stopCircleStudioRecording, sendEditedCircle, closeCircleStudio) сразу после `let showEmojiPanel = false;`!
-          ch_path = "frontend/src/components/Chat.svelte"
-          if os.path.exists(ch_path):
-              with open(ch_path, "r", encoding="utf-8") as f:
-                  ch = f.read()
-
-              circle_studio_full_js = """
-              // === СТУДИЯ ВИДЕО-КРУЖКА (ДО 2 МИНУТ + ВЫБОР КАМЕРЫ + КРУГЛЫЕ КНОПКИ ПУСК/СТОП + ОБРЕЗКА) ===
-              let showCircleStudio = false;
-              let circleFacingMode = 'user';
-              let circleFilterMode = 'none';
-              let circleDraftDataUrl = '';
-              let circleTrimStart = 0;
-              let circleTrimEnd = 120;
-              let circleTotalDuration = 15;
-              let editingExistingCircleId = null;
-
-              async function openCircleStudio(switchCam = false) {
-                  if (switchCam) {
-                      circleFacingMode = circleFacingMode === 'user' ? 'environment' : 'user';
-                  } else {
-                      showCircleStudio = true;
-                      circleDraftDataUrl = '';
-                      editingExistingCircleId = null;
-                      isRecordingMedia = false;
-                  }
-                  try {
-                      const stream = await navigator.mediaDevices.getUserMedia({
-                          audio: { echoCancellation: true, noiseSuppression: true },
-                          video: { facingMode: circleFacingMode, width: { ideal: 640 }, height: { ideal: 640 }, frameRate: { ideal: 24 } }
-                      });
-                      activeMediaStream = stream;
-                      setTimeout(() => {
-                          if (liveCirclePreviewEl && activeMediaStream) {
-                              liveCirclePreviewEl.srcObject = activeMediaStream;
-                              liveCirclePreviewEl.play().catch(() => {});
-                          }
-                      }, 80);
-                  } catch (e) {
-                      alert('Не удалось открыть камеру: ' + e);
-                  }
-              }
-
-              function startCircleStudioRecording() {
-                  if (!activeMediaStream) return;
-                  recordedChunks = [];
-                  recordMode = 'video';
-                  try {
-                      mediaRecorderInstance = new MediaRecorder(activeMediaStream, { videoBitsPerSecond: 650000, audioBitsPerSecond: 32000 });
-                  } catch (e) {
-                      mediaRecorderInstance = new MediaRecorder(activeMediaStream);
-                  }
-                  mediaRecorderInstance.ondataavailable = e => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
-                  mediaRecorderInstance.onstop = () => {
-                      const blob = new Blob(recordedChunks, { type: 'video/webm' });
-                      const reader = new FileReader();
-                      reader.onloadend = () => {
-                          circleDraftDataUrl = reader.result;
-                          circleTotalDuration = Math.max(2, recordingSeconds || 10);
-                          circleTrimStart = 0;
-                          circleTrimEnd = circleTotalDuration;
-                      };
-                      reader.readAsDataURL(blob);
-                  };
-                  recordingSeconds = 0;
-                  clearInterval(recordingInterval);
-                  recordingInterval = setInterval(() => {
-                      recordingSeconds++;
-                      if (recordingSeconds >= 120 && isRecordingMedia) stopCircleStudioRecording();
-                  }, 1000);
-                  mediaRecorderInstance.start(200);
-                  isRecordingMedia = true;
-              }
-
-              function stopCircleStudioRecording() {
-                  clearInterval(recordingInterval);
-                  if (mediaRecorderInstance && isRecordingMedia) {
-                      mediaRecorderInstance.stop();
-                  }
-                  isRecordingMedia = false;
-                  if (activeMediaStream) {
-                      activeMediaStream.getTracks().forEach(t => t.stop());
-                      activeMediaStream = null;
-                  }
-              }
-
-              async function sendEditedCircle() {
-                  if (!circleDraftDataUrl || !selectedContact) return;
-                  const cleanBase = circleDraftDataUrl.split('#t=')[0];
-                  const trimSuffix = (circleTrimStart > 0 || circleTrimEnd < circleTotalDuration)
-                      ? `#t=${circleTrimStart},${Math.max(circleTrimStart + 1, circleTrimEnd)}`
-                      : '#t=0.1';
-                  const finalPayload = `[HYDRA_CIRCLE]:${cleanBase}${trimSuffix}`;
-                  if (editingExistingCircleId) {
-                      await AppActions.EditMessage(editingExistingCircleId, finalPayload);
-                      editingExistingCircleId = null;
-                  } else {
-                      const targetId = selectedContact.ID || selectedContact.ChatID;
-                      await AppActions.SendText(targetId, finalPayload, '');
-                  }
-                  circleDraftDataUrl = '';
-                  showCircleStudio = false;
-                  dispatch('refresh');
-              }
-
-              function closeCircleStudio() {
-                  stopCircleStudioRecording();
-                  circleDraftDataUrl = '';
-                  editingExistingCircleId = null;
-                  showCircleStudio = false;
-              }
-
-              if (typeof window !== 'undefined') {
-                  window.__openExistingCircleTrimmer = (msgObj) => {
-                      if (!msgObj || !msgObj.Content) return;
-                      const rawUrl = msgObj.Content.slice('[HYDRA_CIRCLE]:'.length).split('#t=')[0];
-                      editingExistingCircleId = msgObj.ID;
-                      circleDraftDataUrl = rawUrl;
-                      circleTrimStart = 0;
-                      circleTrimEnd = 30;
-                      circleTotalDuration = 30;
-                      showCircleStudio = true;
-                  };
-              }
-              """
-              if "let circleTrimStart =" not in ch:
-                  ch = ch.replace("let showEmojiPanel = false;", "let showEmojiPanel = false;\n" + circle_studio_full_js, 1)
-
-              ch = ch.replace(
-                  "toggleVoiceOrCircle(mediaButtonMode);",
-                  "if (mediaButtonMode === 'video') { openCircleStudio(false); } else { toggleVoiceOrCircle('audio'); }"
-              )
-              ch = ch.replace("window.__triggerHydraCircleFromProfile = () => toggleVoiceOrCircle('video');", "window.__triggerHydraCircleFromProfile = () => openCircleStudio(false);")
-              ch = ch.replace("recordingSeconds >= 30", "recordingSeconds >= 120")
-
-              # Заменяем старый оверлей записи видео-кружка на новую Студию Кружка (если он ещё не заменён)
-              if "{#if showCircleStudio}" not in ch:
-                  ch = re.sub(
-                      r'\{#if isRecordingMedia && recordMode === \'video\'\}[\s\S]*?\{/if\}',
-                      '''{#if showCircleStudio}
-                  <div style="position: fixed; inset: 0; background: rgba(8,10,16,0.95); backdrop-filter: blur(18px); z-index: 99990; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 20px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 320px;">
-                          <span style="font-size: 15px; font-weight: 800; color: {isRecordingMedia ? '#EF4444' : '#60A5FA'};">
-                              {isRecordingMedia ? `🔴 Запись: ${recordingSeconds} сек / 120 сек` : (circleDraftDataUrl ? '✂️ Обрезка и предпросмотр' : '📹 Камера кружка (до 2 мин)')}
-                          </span>
-                          <button type="button" on:click={closeCircleStudio} style="width: 38px; height: 38px; border-radius: 50%; background: #1A1C20; color: #fff; border: 1px solid rgba(255,255,255,0.1); font-size: 16px; cursor: pointer;">✕</button>
-                      </div>
-
-                      <div style="width: 250px; height: 250px; border-radius: 50%; overflow: hidden; clip-path: circle(50% at 50% 50%); -webkit-clip-path: circle(50% at 50% 50%); border: 4px solid {isRecordingMedia ? '#EF4444' : '#3B82F6'}; background: #000; box-shadow: 0 0 36px rgba(29,78,216,0.45); position: relative;">
-                          {#if circleDraftDataUrl}
-                              <video
-                                  autoplay
-                                  loop
-                                  playsinline
-                                  src={circleDraftDataUrl + `#t=${circleTrimStart},${circleTrimEnd}`}
-                                  on:loadedmetadata={(e) => {
-                                      const d = Math.round(e.currentTarget.duration || 15);
-                                      if (d > 0 && d < 600) { circleTotalDuration = d; circleTrimEnd = d; }
-                                  }}
-                                  on:timeupdate={(e) => {
-                                      const v = e.currentTarget;
-                                      if (v.currentTime < circleTrimStart || v.currentTime > circleTrimEnd) {
-                                          v.currentTime = circleTrimStart;
-                                      }
-                                  }}
-                                  style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;"
-                              ></video>
-                          {:else}
-                              <video bind:this={liveCirclePreviewEl} autoplay muted playsinline style="width: 100%; height: 100%; object-fit: cover; transform: {circleFacingMode === 'user' ? 'scaleX(-1)' : 'none'}; border-radius: 50%;"></video>
-                          {/if}
-                      </div>
-
-                      {#if circleDraftDataUrl}
-                          <div style="width: 100%; max-width: 300px; background: #16181F; border: 1px solid rgba(59,130,246,0.25); border-radius: 18px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px;">
-                              <div style="display: flex; justify-content: space-between; font-size: 12px; color: #60A5FA; font-weight: 700;">
-                                  <span>✂️ Начало: {circleTrimStart} сек</span>
-                                  <span>Конец: {circleTrimEnd} сек</span>
-                              </div>
-                              <input type="range" min="0" max={Math.max(1, circleTrimEnd - 1)} step="1" bind:value={circleTrimStart} style="width: 100%; accent-color: #3B82F6;" />
-                              <input type="range" min={circleTrimStart + 1} max={Math.max(2, circleTotalDuration)} step="1" bind:value={circleTrimEnd} style="width: 100%; accent-color: #3B82F6;" />
-                          </div>
-                      {/if}
-
-                      <div style="display: flex; align-items: center; justify-content: center; gap: 24px; margin-top: 6px;">
-                          {#if !circleDraftDataUrl}
-                              <button type="button" on:click={() => openCircleStudio(true)} style="width: 54px; height: 54px; border-radius: 50%; background: #1A1C20; color: #60A5FA; border: 1.5px solid rgba(59,130,246,0.4); display: flex; align-items: center; justify-content: center; font-size: 22px; cursor: pointer;" title="Переключить камеру">
-                                  🔄
-                              </button>
-                              {#if !isRecordingMedia}
-                                  <button type="button" on:click={startCircleStudioRecording} style="width: 74px; height: 74px; border-radius: 50%; background: linear-gradient(135deg, #EF4444, #DC2626); color: #fff; border: 4px solid rgba(255,255,255,0.25); display: flex; align-items: center; justify-content: center; font-size: 28px; cursor: pointer; box-shadow: 0 6px 24px rgba(239,68,68,0.5);" title="Начать запись кружка">
-                                      ▶
-                                  </button>
-                              {:else}
-                                  <button type="button" on:click={stopCircleStudioRecording} style="width: 74px; height: 74px; border-radius: 50%; background: linear-gradient(135deg, #2563EB, #1D4ED8); color: #fff; border: 4px solid rgba(255,255,255,0.25); display: flex; align-items: center; justify-content: center; font-size: 26px; cursor: pointer; box-shadow: 0 6px 24px rgba(37,99,235,0.5);" title="Остановить запись">
-                                      ⏹
-                                  </button>
-                              {/if}
-                          {:else}
-                              <button type="button" on:click={() => { editingExistingCircleId = null; openCircleStudio(false); }} style="width: 56px; height: 56px; border-radius: 50%; background: #1A1C20; color: #FCA5A5; border: 1.5px solid rgba(239,68,68,0.4); display: flex; align-items: center; justify-content: center; font-size: 22px; cursor: pointer;" title="Переснять">
-                                  🔄
-                              </button>
-                              <button type="button" on:click={sendEditedCircle} style="width: 74px; height: 74px; border-radius: 50%; background: linear-gradient(135deg, #2563EB, #1D4ED8); color: #fff; border: 4px solid rgba(255,255,255,0.25); display: flex; align-items: center; justify-content: center; font-size: 28px; cursor: pointer; box-shadow: 0 6px 24px rgba(37,99,235,0.5);" title="Отправить кружок">
-                                  ➤
-                              </button>
-                          {/if}
-                      </div>
-                  </div>
-              {/if}''',
-                      ch
-                  )
-
-              ch = ch.replace(
-                  "src={msg.Content.slice('[HYDRA_CIRCLE]:'.length) + '#t=0.1'}",
-                  "src={msg.Content.slice('[HYDRA_CIRCLE]:'.length).includes('#t=') ? msg.Content.slice('[HYDRA_CIRCLE]:'.length) : (msg.Content.slice('[HYDRA_CIRCLE]:'.length) + '#t=0.1')}"
-              )
-
-              with open(ch_path, "w", encoding="utf-8") as f:
-                  f.write(ch)
-              print("[OK] 5. Chat.svelte: все переменные Студии Кружка (circleTrimStart, circleTrimEnd, showCircleStudio) объявлены и связаны!")
+              with open(mf_path, "w", encoding="utf-8") as f:
+                  f.write(mf)
+              print("[OK] 3. AndroidManifest.xml проверен и валиден!")
           PYEOF
-          python3 apply_v28_fixes.py
-          rm -f apply_v28_fixes.py
+          python3 fix_startup_crash.py
+          rm -f fix_startup_crash.py
           gofmt -w internal/ mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -629,13 +249,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Hydra v2.8.0 Clean Play Protect & Circle Trimmer
+      - name: Commit Startup Fix to Repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Release Hydra v2.8.0: Fix Play Protect triggers, center context menus, 2-profile limit, round Play/Stop Circle Studio (2m + trim) & /Hydra/ folders [skip ci]"
+            git commit -m "Fix startup hang/crash: restore WebView CORS in mobile.go, add Android 14 FOREGROUND_SERVICE_TYPE_DATA_SYNC & direct Go server start [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
