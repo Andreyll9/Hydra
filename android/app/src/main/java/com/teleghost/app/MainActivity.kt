@@ -650,11 +650,24 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
     }
 
     private fun startGoService() {
-        val intent = Intent(this, TeleGhostService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
+        // Немедленно запускаем Go-сервер 127.0.0.1:8080 в фоновом потоке напрямую, чтобы не зависеть от задержек Android Service!
+        Thread {
+            try {
+                mobile.Mobile.start(filesDir.absolutePath)
+            } catch (e: Exception) {
+                android.util.Log.e(TAG, "Direct Mobile.start error: ${e.message}")
+            }
+        }.start()
+
+        try {
+            val intent = Intent(this, TeleGhostService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "Service start fallback: ${e.message}")
         }
         waitForServerAndLoad()
     }

@@ -1,194 +1,95 @@
 package com.teleghost.app
 
-import android.app.*
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
-import android.os.PowerManager
-import android.util.Log
 import androidx.core.app.NotificationCompat
 
-/**
- * TeleGhostService — Foreground Service для работы I2P в фоне.
- *
- * Ключевые моменты:
- * - Foreground Service гарантирует, что Android не убьёт процесс I2P.
- * - Постоянное уведомление в шторке информирует пользователя.
- * - WakeLock предотвращает засыпание CPU (критично для I2P).
- * - При нажатии на уведомление — открывается MainActivity.
- * - Кнопка "Остановить" в уведомлении завершает service.
- *
- * Жизненный цикл:
- *   MainActivity → startForegroundService() → onStartCommand() → Mobile.start()
- *   Уведомление "Остановить" → stopSelf() → Mobile.stop()
- */
 class TeleGhostService : Service() {
 
     companion object {
-        private const val TAG = "TeleGhostService"
-        private const val CHANNEL_ID = "teleghost_i2p_channel"
-        private const val NOTIFICATION_ID = 1337
-        private const val WAKELOCK_TAG = "TeleGhost::I2PService"
+        private const val CHANNEL_ID = "TeleGhostServiceChannel"
+        private const val NOTIFICATION_ID = 1
     }
-
-    private var wakeLock: PowerManager.WakeLock? = null
-    private var isGoServerRunning = false
 
     override fun onCreate() {
         super.onCreate()
-        Log.i(TAG, "Service created")
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.i(TAG, "Service started")
-
-        // Обработка action "STOP" из уведомления
-        if (intent?.action == "STOP_SERVICE") {
-            Log.i(TAG, "Stop action received")
-            stopGoServer()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
-        // Показываем уведомление НЕМЕДЛЕННО (требование Android для Foreground Service)
-        val notification = buildNotification()
-        startForeground(NOTIFICATION_ID, notification)
-
-        // Захватываем WakeLock
-        acquireWakeLock()
-
-        // Стартуем Go HTTP сервер в фоне
-        startGoServer()
-
-        // START_STICKY = системa перезапустит service если его убьют
-        return START_STICKY
-    }
-
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onDestroy() {
-        Log.i(TAG, "Service destroyed")
-        stopGoServer()
-        releaseWakeLock()
-        super.onDestroy()
-    }
-
-    // ─── Go Server Management ─────────────────────────────────────────────
-
-    private fun startGoServer() {
-        if (isGoServerRunning) {
-            Log.w(TAG, "Go server already running")
-            return
+        try {
+            val notification = createNotification()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("HydraService", "startForeground safe catch: ${e.message}")
         }
 
         Thread {
             try {
                 val dataDir = filesDir.absolutePath
-                Log.i(TAG, "Starting Go server with dataDir=$dataDir")
-
-                // Вызов gomobile-сгенерированного метода
-                // Mobile — автоматически созданный класс из пакета mobile
                 mobile.Mobile.start(dataDir)
-
-                isGoServerRunning = true
-                Log.i(TAG, "Go server started successfully")
-            } catch (t: Throwable) {
-                Log.e(TAG, "CRITICAL ERROR: Failed to start Go server", t)
-                // Можно отправить уведомление пользователю
+            } catch (e: Exception) {
+                android.util.Log.e("HydraService", "Mobile.start error: ${e.message}")
             }
         }.start()
+
+        return START_STICKY
     }
 
-    private fun stopGoServer() {
-        if (!isGoServerRunning) return
-
+    override fun onDestroy() {
         try {
             mobile.Mobile.stop()
-            isGoServerRunning = false
-            Log.i(TAG, "Go server stopped")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error stopping Go server", e)
-        }
+        } catch (_: Exception) {}
+        super.onDestroy()
     }
 
-    // ─── Notification ─────────────────────────────────────────────────────
+    override fun onBind(intent: Intent?): IBinder? = null
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
+            val serviceChannel = NotificationChannel(
                 CHANNEL_ID,
-                getString(R.string.notification_channel_name),
-                NotificationManager.IMPORTANCE_MIN // LOW = silent but visible in shade
-            ).apply {
-                description = getString(R.string.notification_channel_description)
-                setShowBadge(false)
-            }
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.createNotificationChannel(channel)
+                "Hydra E2EE • Тихий режим",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.createNotificationChannel(serviceChannel)
         }
     }
 
-    private fun buildNotification(): Notification {
-        // Intent для открытия MainActivity при нажатии на уведомление
-        val openIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+    private fun createNotification(): Notification {
+        val notificationIntent = Intent(this, MainActivity::class.java)
+        val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
         }
-        val openPending = PendingIntent.getActivity(
-            this, 0, openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        // Intent для кнопки "Остановить"
-        val stopIntent = Intent(this, TeleGhostService::class.java).apply {
-            action = "STOP_SERVICE"
-        }
-        val stopPending = PendingIntent.getService(
-            this, 1, stopIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, notificationIntent, pendingIntentFlags
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(getString(R.string.notification_title))
-            .setContentText(getString(R.string.notification_text))
-            .setSmallIcon(R.mipmap.ic_launcher_foreground) // TODO: заменить на кастомную иконку
-            .setContentIntent(openPending)
-            .setOngoing(true)          // Non-dismissible
-            .setAutoCancel(false)      // Doesn't close on click
-            .setShowWhen(false)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .addAction(
-                android.R.drawable.ic_menu_close_clear_cancel,
-                getString(R.string.notification_stop),
-                stopPending
-            )
+            .setContentTitle("Hydra активна")
+            .setContentText("Защищённый канал E2EE (X25519 + XChaCha20) активен")
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
             .build()
-    }
-
-    // ─── WakeLock ─────────────────────────────────────────────────────────
-
-    private fun acquireWakeLock() {
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            WAKELOCK_TAG
-        ).apply {
-            acquire(10 * 60 * 1000L) // 10 минут, будет обновляться
-        }
-        Log.d(TAG, "WakeLock acquired")
-    }
-
-    private fun releaseWakeLock() {
-        wakeLock?.let {
-            if (it.isHeld) {
-                it.release()
-                Log.d(TAG, "WakeLock released")
-            }
-        }
-        wakeLock = null
     }
 }
