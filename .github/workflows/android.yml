@@ -38,13 +38,22 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply Group Members & Link Join, 1-on-1 Calls Only, Call Mute/Record, Unified Presence, Story Compression Sync, Outside Click Menu & Timed User Block
+      - name: Clean Audit & Synchronization of Go Core and Svelte Components (v2.9.5-hydra)
         run: |
-          cat << 'PYEOF' > apply_v29_all_fixes.py
-          import os, re
+          cat << 'PYEOF' > clean_audit_v295.py
+          import os, re, shutil
+
+          # 0. Гарантируем фирменную иконку щита Гидры (logo.png)
+          real_hydra_logo = "frontend/src/assets/images/logo.png"
+          if os.path.exists(real_hydra_logo):
+              for mip in ["mipmap-mdpi", "mipmap-hdpi", "mipmap-xhdpi", "mipmap-xxhdpi", "mipmap-xxxhdpi"]:
+                  for fname in ["ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png"]:
+                      dst = f"android/app/src/main/res/{mip}/{fname}"
+                      os.makedirs(os.path.dirname(dst), exist_ok=True)
+                      shutil.copyfile(real_hydra_logo, dst)
 
           # 1. internal/network/messenger/messenger.go:
-          #    Снимаем старое ограничение 4096 байт, из-за которого обрезались картинки Историй и кружки
+          #    Увеличиваем лимит размера пакета с 4096 байт до 15 МБ
           ms_path = "internal/network/messenger/messenger.go"
           if os.path.exists(ms_path):
               with open(ms_path, "r", encoding="utf-8") as f:
@@ -52,516 +61,431 @@ jobs:
               ms = ms.replace("len(textMsg.Content) > 4096", "len(textMsg.Content) > 15*1024*1024")
               with open(ms_path, "w", encoding="utf-8") as f:
                   f.write(ms)
-              print("[OK] 1. messenger.go: лимит пакета увеличен до 15 МБ для Историй и кружков")
+              print("[OK] 1. messenger.go: лимит сообщения 15 МБ проверен")
 
-          # 2. frontend/src/utils.js:
-          #    Единая функция статуса присутствия getUnifiedPresence(contact, messages) для чата и профиля
-          ut_path = "frontend/src/utils.js"
-          if os.path.exists(ut_path):
-              with open(ut_path, "r", encoding="utf-8") as f:
-                  ut = f.read()
+          # 2. internal/appcore/messages.go:
+          #    - Убираем дублирующийся if strings.HasPrefix(text, "[HYDRA_CALL_ANSWER]:") (строки 131-137)
+          #    - Добавляем фильтрацию [HYDRA_GROUP_MEMBERS]:
+          msg_path = "internal/appcore/messages.go"
+          if os.path.exists(msg_path):
+              with open(msg_path, "r", encoding="utf-8") as f:
+                  mc = f.read()
 
-              presence_helper = '''
-          export function getUnifiedPresence(contact, msgs = []) {
-              if (!contact) return { text: 'Оффлайн', online: false };
-              if (contact.IsFavorites || contact.Nickname === 'Избранное') {
-                  return { text: 'Локальное хранилище E2EE', online: true };
-              }
-              const sName = String(contact.Nickname || '');
-              if (sName.startsWith('👥 ')) return { text: 'Группа E2EE • Участники защищены', online: true };
-              if (sName.startsWith('📢 ')) return { text: 'Канал E2EE • Вещание', online: true };
+              dup_block = """	// Технические пакеты WebRTC (CALL_ANSWER / CALL_ICE / GROUP_INVITE) не сохраняем как текстовые пузыри в истории чата
+          	if strings.HasPrefix(text, "[HYDRA_CALL_ANSWER]:") || strings.HasPrefix(text, "[HYDRA_CALL_ICE]:") || strings.HasPrefix(text, "[HYDRA_GROUP_INVITE]:") {
+          		return nil
+          	}
+          	if strings.HasPrefix(text, "[HYDRA_CALL_ANSWER]:") || strings.HasPrefix(text, "[HYDRA_CALL_ICE]:") || strings.HasPrefix(text, "[HYDRA_GROUP_INVITE]:") || strings.HasPrefix(text, "[HYDRA_DEL_MSG]:") || strings.HasPrefix(text, "[HYDRA_READ_ACK]:") || strings.HasPrefix(text, "[HYDRA_STORY_SYNC]:") || strings.HasPrefix(text, "[HYDRA_REACT]:") {
+          		return nil
+          	}"""
 
-              try {
-                  const blockUntil = Number(localStorage.getItem('hydra_block_until_' + contact.ID) || 0);
-                  if (blockUntil > Date.now()) {
-                      return { text: '🚫 Заблокирован до ' + new Date(blockUntil).toLocaleString().slice(0, 16), online: false };
-                  } else if (blockUntil > 0) {
-                      localStorage.removeItem('hydra_block_until_' + contact.ID);
-                  }
-              } catch (e) {}
+              clean_filter_block = """	// Технические пакеты (WebRTC, синхронизация историй, реакций, удалений и участников групп) не сохраняем как пузыри в чате
+          	for _, prefix := range []string{
+          		"[HYDRA_CALL_ANSWER]:",
+          		"[HYDRA_CALL_ICE]:",
+          		"[HYDRA_GROUP_INVITE]:",
+          		"[HYDRA_GROUP_MEMBERS]:",
+          		"[HYDRA_DEL_MSG]:",
+          		"[HYDRA_READ_ACK]:",
+          		"[HYDRA_STORY_SYNC]:",
+          		"[HYDRA_REACT]:",
+          	} {
+          		if strings.HasPrefix(text, prefix) {
+          			return nil
+          		}
+          	}"""
 
-              const hideExactTime = localStorage.getItem('hydra_hide_last_seen') === '1';
-              const incomingMsgs = (msgs || []).filter(m => !m.IsOutgoing && !String(m.Content || '').startsWith('[HYDRA_CALL_END]'));
-              const lastIncoming = incomingMsgs.length > 0 ? incomingMsgs[incomingMsgs.length - 1] : null;
-              const lastTs = lastIncoming?.Timestamp || (contact.LastMessageTime ? new Date(contact.LastMessageTime).getTime() : 0);
-              const diffMs = lastTs > 0 ? (Date.now() - lastTs) : 999999999;
+              mc = mc.replace(dup_block, clean_filter_block)
+              with open(msg_path, "w", encoding="utf-8") as f:
+                  f.write(mc)
+              print("[OK] 2. messages.go: очищены дубли фильтрации технических пакетов!")
 
-              const isOnlineNow = lastTs > 0 && diffMs < 65000;
-              if (isOnlineNow) {
-                  return { text: 'В сети', online: true };
-              }
-              if (hideExactTime) {
-                  return { text: 'Был(а) недавно (скрыто)', online: false };
-              }
-              if (lastTs > 0) {
-                  const d = new Date(lastTs);
-                  const hm = d.toTimeString().slice(0, 5);
-                  if (diffMs < 86400000) return { text: 'Был(а) сегодня в ' + hm, online: false };
-                  return { text: 'Был(а) ' + d.toLocaleDateString() + ' в ' + hm, online: false };
-              }
-              return { text: 'Был(а) недавно', online: false };
-          }
-          '''
-              if "export function getUnifiedPresence(" not in ut:
-                  ut += "\n" + presence_helper
-              with open(ut_path, "w", encoding="utf-8") as f:
-                  f.write(ut)
-              print("[OK] 2. utils.js: добавлена единая синхронизированная функция статуса присутствия getUnifiedPresence")
+          # 3. internal/appcore/appcore.go:
+          #    - В OnMessageReceived добавляем недостающие обработчики:
+          #      [HYDRA_STORY_SYNC]: (приём Историй от друзей!),
+          #      [HYDRA_DEL_MSG]: (удаление сообщений у обоих!),
+          #      [HYDRA_READ_ACK]: (синий круг Прочитано!),
+          #      [HYDRA_REACT]: (реакции на сообщения!),
+          #      [HYDRA_GROUP_MEMBERS]: (синхронизация списка участников группы!)
+          #    - В StartVPSRelayLoop добавляем опрос очередей Групп/Каналов (SFlEUkFfUk9PTV...), чтобы сообщения в группах доходили всем участникам!
+          ac_path = "internal/appcore/appcore.go"
+          if os.path.exists(ac_path):
+              with open(ac_path, "r", encoding="utf-8") as f:
+                  ac = f.read()
 
-          # 3. frontend/src/components/Sidebar.svelte:
-          #    - Сжатие фото из Галереи при публикации Истории (до 720p JPEG 0.8) для мгновенной пересылки
-          #    - Поиск по ID группы/контакта + кнопка "➡️ Перейти" при вставке ключа группы SFlEUkFfUk9PTV...
+              old_group_invite_block = """	msg.ChatID = contact.ChatID
+
+          	if strings.HasPrefix(msg.Content, "[HYDRA_GROUP_INVITE]:") {
+          		parts := strings.SplitN(strings.TrimPrefix(msg.Content, "[HYDRA_GROUP_INVITE]:"), "|", 2)
+          		if len(parts) == 2 {
+          			_, _ = a.AddContact(parts[0], parts[1])
+          			msg.Content = "🎟️ Вас добавили в «" + parts[0] + "»"
+          		}
+          	}"""
+
+              new_all_signals_block = """	msg.ChatID = contact.ChatID
+
+          	if strings.HasPrefix(msg.Content, "[HYDRA_DEL_MSG]:") {
+          		targetMsgID := strings.TrimSpace(strings.TrimPrefix(msg.Content, "[HYDRA_DEL_MSG]:"))
+          		if targetMsgID != "" && a.Repo != nil {
+          			_ = a.Repo.DeleteMessage(a.Ctx, targetMsgID)
+          			a.Emitter.Emit("remote_message_deleted", targetMsgID)
+          		}
+          		return
+          	}
+          	if strings.HasPrefix(msg.Content, "[HYDRA_READ_ACK]:") {
+          		a.Emitter.Emit("remote_chat_read", contact.ChatID)
+          		return
+          	}
+          	if strings.HasPrefix(msg.Content, "[HYDRA_REACT]:") {
+          		a.Emitter.Emit("remote_reaction", strings.TrimPrefix(msg.Content, "[HYDRA_REACT]:"))
+          		return
+          	}
+          	if strings.HasPrefix(msg.Content, "[HYDRA_STORY_SYNC]:") {
+          		storyJson := strings.TrimPrefix(msg.Content, "[HYDRA_STORY_SYNC]:")
+          		a.Emitter.Emit("remote_story_received", map[string]interface{}{
+          			"author": contact.Nickname,
+          			"pub":    senderPubKey,
+          			"data":   storyJson,
+          		})
+          		return
+          	}
+          	if strings.HasPrefix(msg.Content, "[HYDRA_GROUP_MEMBERS]:") {
+          		a.Emitter.Emit("remote_group_members", strings.TrimPrefix(msg.Content, "[HYDRA_GROUP_MEMBERS]:"))
+          		return
+          	}
+          	if strings.HasPrefix(msg.Content, "[HYDRA_GROUP_INVITE]:") {
+          		parts := strings.SplitN(strings.TrimPrefix(msg.Content, "[HYDRA_GROUP_INVITE]:"), "|", 3)
+          		if len(parts) >= 2 {
+          			grpInfo, _ := a.AddContact(parts[0], parts[1])
+          			if len(parts) == 3 && grpInfo != nil {
+          				a.Emitter.Emit("remote_group_members", grpInfo.ID+"|"+parts[2])
+          			}
+          			msg.Content = "🎟️ Вас добавили в «" + parts[0] + "»"
+          		}
+          	}"""
+
+              ac = ac.replace(old_group_invite_block, new_all_signals_block)
+
+              # Чиним дубль if len(seenIDs) > 1000 в StartVPSRelayLoop и добавляем опрос групповых комнат SFlEUkFfUk9PTV...
+              ac = ac.replace(
+                  """							if len(seenIDs) > 1000 {
+          								seenIDs = make(map[string]bool)
+          							}
+          							if len(seenIDs) > 1000 {
+          								seenIDs = make(map[string]bool)
+          							}""",
+                  """							if len(seenIDs) > 1000 {
+          								seenIDs = make(map[string]bool)
+          							}"""
+              )
+
+              old_poll_end = """				resp.Body.Close()
+          			}
+          		}
+          		time.Sleep(2 * time.Second)"""
+
+              new_poll_end = """				resp.Body.Close()
+          			}
+          			// Опрашиваем также очереди всех Групп и Каналов (SFlEUkFfUk9PTV...), в которых состоит пользователь
+          			if contactsList, errC := a.Repo.ListContacts(a.Ctx); errC == nil {
+          				for _, grp := range contactsList {
+          					if strings.HasPrefix(grp.I2PAddress, "SFlEUkFfUk9PTV") {
+          						gResp, gErr := client.Get("http://191.223.137.164:8085/relay/poll?pub=" + url.QueryEscape(grp.I2PAddress))
+          						if gErr == nil && gResp != nil {
+          							if gResp.StatusCode == http.StatusOK {
+          								var gItems []map[string]interface{}
+          								if json.NewDecoder(gResp.Body).Decode(&gItems) == nil {
+          									for _, item := range gItems {
+          										mID, _ := item["id"].(string)
+          										fromPub, _ := item["from"].(string)
+          										fromNick, _ := item["from_nick"].(string)
+          										content, _ := item["content"].(string)
+          										if mID == "" || fromPub == myPub || seenIDs[mID] {
+          											continue
+          										}
+          										seenIDs[mID] = true
+          										displayContent := content
+          										if fromNick != "" && !strings.HasPrefix(content, "[HYDRA_") {
+          											displayContent = "**" + fromNick + ":** " + content
+          										}
+          										gMsg := &core.Message{
+          											ID:          mID,
+          											ChatID:      grp.ChatID,
+          											SenderID:    grp.PublicKey,
+          											SenderAddr:  grp.I2PAddress,
+          											Content:     displayContent,
+          											ContentType: "text",
+          											Status:      core.MessageStatusDelivered,
+          											IsOutgoing:  false,
+          											Timestamp:   time.Now().UnixMilli(),
+          											CreatedAt:   time.Now(),
+          											UpdatedAt:   time.Now(),
+          										}
+          										a.OnMessageReceived(gMsg, grp.PublicKey, grp.I2PAddress)
+          									}
+          								}
+          							}
+          							gResp.Body.Close()
+          						}
+          					}
+          				}
+          			}
+          		}
+          		time.Sleep(2 * time.Second)"""
+
+              ac = ac.replace(old_poll_end, new_poll_end)
+
+              with open(ac_path, "w", encoding="utf-8") as f:
+                  f.write(ac)
+              print("[OK] 3. appcore.go: добавлена синхронизация Историй, реакций, удалений и опрос очередей Групп/Каналов!")
+
+          # 4. frontend/src/components/Sidebar.svelte:
+          #    В publishHydraStory добавляем реальную отправку новой Истории ([HYDRA_STORY_SYNC]:...) всем контактам, с кем есть чат,
+          #    и добавляем EventsOn('remote_story_received') для отображения Историй друзей в верхней ленте!
           sb_path = "frontend/src/components/Sidebar.svelte"
           if os.path.exists(sb_path):
               with open(sb_path, "r", encoding="utf-8") as f:
                   sb = f.read()
 
-              if "const addr = (c.I2PAddress" not in sb:
-                  sb = sb.replace(
-                      "return nickname.includes(query) || lastMsg.includes(query);",
-                      "const addr = (c.I2PAddress || c.PublicKey || '').toLowerCase();\n        return nickname.includes(query) || lastMsg.includes(query) || addr.includes(query);"
-                  )
+              old_pub_st = """        localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
+                  if (window.__addHydraLog) window.__addHydraLog('STORY-PUB', 'Опубликована новая история на 24 часа');"""
 
-              old_story_file = """    function handleStoryFile(e) {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  if (window.__addHydraLog) window.__addHydraLog('STORY-FILE', 'Выбран файл для Сторис: ' + file.name + ' (' + file.type + ')');
-                  const reader = new FileReader();
-                  reader.onload = () => {
-                      if (file.type && file.type.startsWith('video/')) {
-                          newStoryVideo = reader.result;
-                          newStoryImage = '';
-                      } else {
-                          newStoryImage = reader.result;
-                          newStoryVideo = '';
+              new_pub_st = """        localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
+                  const publishedStory = hydraStories[0];
+                  (contacts || []).forEach(c => {
+                      if (c && c.ID && !c.IsFavorites && !String(c.Nickname || '').startsWith('👥') && !String(c.Nickname || '').startsWith('📢')) {
+                          AppActions.SendText(c.ID, '[HYDRA_STORY_SYNC]:' + JSON.stringify(publishedStory), '').catch(() => {});
                       }
-                  };
-                  reader.readAsDataURL(file);
-              }"""
+                  });
+                  if (window.__addHydraLog) window.__addHydraLog('STORY-PUB', 'Опубликована и разослана контактам новая История на 24ч');"""
 
-              new_story_file = """    function handleStoryFile(e) {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = () => {
-                      if (file.type && file.type.startsWith('video/')) {
-                          newStoryVideo = reader.result;
-                          newStoryImage = '';
-                      } else {
-                          const img = new Image();
-                          img.onload = () => {
-                              const canvas = document.createElement('canvas');
-                              const maxDim = 720;
-                              let w = img.width || 600, h = img.height || 800;
-                              if (w > maxDim || h > maxDim) {
-                                  if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
-                                  else { w = Math.round(w * maxDim / h); h = maxDim; }
-                              }
-                              canvas.width = w;
-                              canvas.height = h;
-                              canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-                              newStoryImage = canvas.toDataURL('image/jpeg', 0.8);
-                              newStoryVideo = '';
-                          };
-                          img.src = reader.result;
-                      }
-                  };
-                  reader.readAsDataURL(file);
-              }"""
-              sb = sb.replace(old_story_file, new_story_file)
+              sb = sb.replace(old_pub_st, new_pub_st)
 
-              join_by_key_js = """
-              async function joinGroupByInviteKey(rawKey) {
-                  const cleanKey = String(rawKey || '').trim();
-                  let roomTitle = '👥 Группа Hydra';
+              remote_story_hook = """
+              EventsOn('remote_story_received', (payload) => {
+                  if (!payload || !payload.data) return;
                   try {
-                      const decoded = decodeURIComponent(escape(atob(cleanKey)));
-                      if (decoded.startsWith('HYDRA_ROOM_')) {
-                          const body = decoded.slice('HYDRA_ROOM_'.length);
-                          const namePart = body.split('_')[0];
-                          if (namePart) roomTitle = namePart;
+                      const stObj = JSON.parse(payload.data);
+                      stObj.author = payload.author || stObj.author || 'Контакт';
+                      loadHydraStories();
+                      if (!hydraStories.some(s => s.id === stObj.id)) {
+                          hydraStories = [stObj, ...hydraStories];
+                          localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
                       }
                   } catch (e) {}
-                  try {
-                      const created = await AppActions.AddContact(roomTitle, cleanKey);
-                      searchQuery = '';
-                      if (created && onSelectContact) onSelectContact(created);
-                      else location.reload();
-                  } catch (e) {
-                      alert('Ошибка перехода в группу: ' + e);
-                  }
-              }
-              if (typeof window !== 'undefined') {
-                  window.__joinHydraGroupByKey = joinGroupByInviteKey;
-              }
+              });
               """
-              if "function joinGroupByInviteKey(" not in sb:
-                  sb = sb.replace("loadHydraStories();", "loadHydraStories();\n" + join_by_key_js, 1)
-
-              search_join_banner = """
-                  {#if searchQuery && searchQuery.trim().startsWith('SFlEUkFfUk9PTV')}
-                      <div style="margin: 6px 16px; padding: 12px 14px; background: linear-gradient(135deg, #172554, #1E3A8A); border: 1px solid #3B82F6; border-radius: 16px; display: flex; justify-content: space-between; align-items: center;">
-                          <div>
-                              <div style="font-size: 13px; font-weight: 800; color: #fff;">🎟️ Найдена ссылка-ключ группы</div>
-                              <div style="font-size: 11px; color: #93C5FD;">Нажмите, чтобы открыть или вступить</div>
-                          </div>
-                          <button type="button" on:click={() => joinGroupByInviteKey(searchQuery)} style="background: #fff; color: #1E3A8A; border: none; border-radius: 100px; padding: 7px 14px; font-size: 12px; font-weight: 800; cursor: pointer;">
-                              ➡️ Перейти
-                          </button>
-                      </div>
-                  {/if}
-              """
-              if "Найдена ссылка-ключ группы" not in sb:
-                  sb = sb.replace('<div class="mobile-folders-bar">', search_join_banner + '\n        <div class="mobile-folders-bar">', 1)
+              if "remote_story_received" not in sb:
+                  sb = sb.replace("loadHydraStories();", "loadHydraStories();\n" + remote_story_hook, 1)
 
               with open(sb_path, "w", encoding="utf-8") as f:
                   f.write(sb)
-              print("[OK] 3. Sidebar.svelte: сжатие фото Историй и вход в группу по ID из поиска готовы")
+              print("[OK] 4. Sidebar.svelte: включена сетевая отправка и приём Историй между телефонами!")
 
-          # 4. frontend/src/components/Modals.svelte:
-          #    - Единый статус getUnifiedPresence(contact)
-          #    - Кнопка "🔔 Звук / 🔕 Выключен"
-          #    - Замена кнопки "Кружок" на "🚫 Блок" с выбором срока (Минуты / Часы / Дни / Месяцы / Годы)
-          #    - Список участников группы и тумблер видимости участников в профиле группы
-          md_path = "frontend/src/components/Modals.svelte"
-          if os.path.exists(md_path):
-              with open(md_path, "r", encoding="utf-8") as f:
-                  md = f.read()
+          # 5. frontend/src/components/Auth.svelte:
+          #    Оборачиваем кнопку "+ Создать" на главном экране в {#if allProfiles.length === 0}, чтобы при наличии 1 профиля она скрывалась!
+          au_path = "frontend/src/components/Auth.svelte"
+          if os.path.exists(au_path):
+              with open(au_path, "r", encoding="utf-8") as f:
+                  au = f.read()
 
-              if "getUnifiedPresence" not in md:
-                  md = md.replace(
-                      "import { getInitials, getAvatarGradient } from '../utils.js';",
-                      "import { getInitials, getAvatarGradient, getUnifiedPresence } from '../utils.js';"
-                  )
+              old_create_tile = """            <div 
+                          class="profile-item add-profile" 
+                          role="button"
+                          tabindex="0"
+                          on:click={startCreateProfile}
+                          on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && startCreateProfile()}
+                      >
+                        <div class="plus-icon">+</div>
+                        <div class="add-text">Создать</div>
+                      </div>"""
 
-              block_modal_js = """
-              let showBlockDurationModal = false;
-              let blockAmount = 1;
-              let blockUnit = 'days';
-              let isContactBlockedNow = false;
-              let groupMembersInProfile = [];
-              let groupHideMembers = false;
+              new_create_tile = """            {#if allProfiles.length === 0}
+                        <div 
+                            class="profile-item add-profile" 
+                            role="button"
+                            tabindex="0"
+                            on:click={startCreateProfile}
+                            on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && startCreateProfile()}
+                        >
+                          <div class="plus-icon">+</div>
+                          <div class="add-text">Создать</div>
+                        </div>
+                      {/if}"""
 
-              $: if (contact) {
-                  contactMuted = localStorage.getItem('hydra_mute_' + contact.ID) === '1';
-                  const bUntil = Number(localStorage.getItem('hydra_block_until_' + contact.ID) || 0);
-                  isContactBlockedNow = bUntil > Date.now();
-                  try {
-                      groupMembersInProfile = JSON.parse(localStorage.getItem('hydra_group_members_' + contact.ID) || '["Вы (Создатель)"]');
-                      groupHideMembers = localStorage.getItem('hydra_group_hide_members_' + contact.ID) === '1';
-                  } catch (e) { groupMembersInProfile = ['Вы (Создатель)']; }
+              if "{#if allProfiles.length === 0}" not in au:
+                  au = au.replace(old_create_tile, new_create_tile)
+
+              with open(au_path, "w", encoding="utf-8") as f:
+                  f.write(au)
+              print("[OK] 5. Auth.svelte: кнопка '+ Создать' на главном экране скрыта, если профиль уже создан!")
+
+          # 6. frontend/src/components/Settings.svelte:
+          #    - Чиним CopyToClipboard -> ClipboardSet
+          #    - Добавляем в Приватность тумблеры "👥 Добавление в группы только друзьями" и "🔒 Защита от скриншотов (FLAG_SECURE)"
+          st_path = "frontend/src/components/Settings.svelte"
+          if os.path.exists(st_path):
+              with open(st_path, "r", encoding="utf-8") as f:
+                  st = f.read()
+
+              st = st.replace("AppActions.CopyToClipboard(", "AppActions.ClipboardSet(")
+
+              priv_vars_js = """
+              let groupInviteFriendsOnly = localStorage.getItem('hydra_group_friends_only') === '1';
+              let flagSecureEnabled = localStorage.getItem('hydra_flag_secure') === '1';
+              function toggleGroupInviteFriendsOnly() {
+                  groupInviteFriendsOnly = !groupInviteFriendsOnly;
+                  localStorage.setItem('hydra_group_friends_only', groupInviteFriendsOnly ? '1' : '0');
               }
-
-              function toggleContactMute() {
-                  if (!contact) return;
-                  contactMuted = !contactMuted;
-                  localStorage.setItem('hydra_mute_' + contact.ID, contactMuted ? '1' : '0');
-              }
-
-              function toggleGroupMembersVisibility() {
-                  if (!contact) return;
-                  groupHideMembers = !groupHideMembers;
-                  localStorage.setItem('hydra_group_hide_members_' + contact.ID, groupHideMembers ? '1' : '0');
-              }
-
-              function applyTimedUserBlock() {
-                  if (!contact) return;
-                  const multMap = {
-                      minutes: 60 * 1000,
-                      hours: 3600 * 1000,
-                      days: 86400 * 1000,
-                      months: 30 * 86400 * 1000,
-                      years: 365 * 86400 * 1000
-                  };
-                  const durationMs = Math.max(1, Number(blockAmount || 1)) * (multMap[blockUnit] || 86400000);
-                  const untilTs = Date.now() + durationMs;
-                  localStorage.setItem('hydra_block_until_' + contact.ID, String(untilTs));
-                  isContactBlockedNow = true;
-                  showBlockDurationModal = false;
-              }
-
-              function unblockCurrentUser() {
-                  if (!contact) return;
-                  localStorage.removeItem('hydra_block_until_' + contact.ID);
-                  isContactBlockedNow = false;
-                  showBlockDurationModal = false;
+              function toggleFlagSecureSetting() {
+                  flagSecureEnabled = !flagSecureEnabled;
+                  localStorage.setItem('hydra_flag_secure', flagSecureEnabled ? '1' : '0');
+                  if (window.HydraNative && typeof window.HydraNative.setScreenshotProtection === 'function') {
+                      window.HydraNative.setScreenshotProtection(flagSecureEnabled);
+                  }
               }
               """
-              if "let showBlockDurationModal =" not in md:
-                  md = md.replace("let contactMuted = false;", "let contactMuted = false;\n" + block_modal_js, 1)
+              if "let groupInviteFriendsOnly =" not in st:
+                  st = st.replace("let hideLastSeenEnabled =", priv_vars_js + "\n    let hideLastSeenEnabled =", 1)
 
-              md = md.replace(
-                  'был(а) недавно <span style="background: rgba(255,255,255,0.08); padding: 2px 8px; border-radius: 100px; font-size: 11px; margin-left: 4px;">защищено E2EE</span>',
-                  '{getUnifiedPresence(contact).text} <span style="background: rgba(255,255,255,0.08); padding: 2px 8px; border-radius: 100px; font-size: 11px; margin-left: 4px;">защищено E2EE</span>'
-              )
-
-              old_4_tiles = """        <!-- 4 плитки действий как на Скриншоте 2: Чат | Звук | Звонок | Видео -->
-                  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; width: 100%; max-width: 400px; margin-top: 20px;">
-                      <button type="button" on:click={onCloseContactProfile} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
-                          <span style="font-size: 18px;">💬</span>
-                          <span style="font-size: 12px; font-weight: 600;">Чат</span>
-                      </button>
-                      <button type="button" on:click={() => contactMuted = !contactMuted} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
-                          <span style="font-size: 18px;">{contactMuted ? '🔕' : '🔔'}</span>
-                          <span style="font-size: 12px; font-weight: 600;">{contactMuted ? 'Без звука' : 'Звук'}</span>
-                      </button>
-                      <button type="button" on:click={() => { onCloseContactProfile(); if (window.__triggerHydraCallFromProfile) window.__triggerHydraCallFromProfile(); }} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
-                          <span style="font-size: 18px;">📞</span>
-                          <span style="font-size: 12px; font-weight: 600;">Звонок</span>
-                      </button>
-                      <button type="button" on:click={() => { onCloseContactProfile(); if (window.__triggerHydraCircleFromProfile) window.__triggerHydraCircleFromProfile(); }} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
-                          <span style="font-size: 18px;">📹</span>
-                          <span style="font-size: 12px; font-weight: 600;">Кружок</span>
-                      </button>
-                  </div>"""
-
-              new_4_tiles = """        <!-- Плитки действий профиля: Чат | Звук | Звонок (только 1-на-1) | Блокировка по таймеру -->
-                  <div style="display: grid; grid-template-columns: repeat({String(contact.Nickname || '').startsWith('👥') || String(contact.Nickname || '').startsWith('📢') ? 3 : 4}, 1fr); gap: 8px; width: 100%; max-width: 400px; margin-top: 20px;">
-                      <button type="button" on:click={onCloseContactProfile} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
-                          <span style="font-size: 18px;">💬</span>
-                          <span style="font-size: 12px; font-weight: 600;">Чат</span>
-                      </button>
-                      <button type="button" on:click={toggleContactMute} style="background: {contactMuted ? 'rgba(239,68,68,0.18)' : '#1A1C20'}; border: 1px solid {contactMuted ? 'rgba(239,68,68,0.4)' : 'transparent'}; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
-                          <span style="font-size: 18px;">{contactMuted ? '🔕' : '🔔'}</span>
-                          <span style="font-size: 12px; font-weight: 600;">{contactMuted ? 'Выключен' : 'Звук'}</span>
-                      </button>
-                      {#if !String(contact.Nickname || '').startsWith('👥') && !String(contact.Nickname || '').startsWith('📢')}
-                          <button type="button" on:click={() => { onCloseContactProfile(); if (window.__triggerHydraCallFromProfile) window.__triggerHydraCallFromProfile(); }} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
-                              <span style="font-size: 18px;">📞</span>
-                              <span style="font-size: 12px; font-weight: 600;">Звонок</span>
-                          </button>
-                      {/if}
-                      <button type="button" on:click={() => showBlockDurationModal = true} style="background: {isContactBlockedNow ? 'rgba(239,68,68,0.22)' : '#1A1C20'}; border: 1px solid {isContactBlockedNow ? '#EF4444' : 'transparent'}; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: {isContactBlockedNow ? '#FCA5A5' : '#fff'}; cursor: pointer;">
-                          <span style="font-size: 18px;">{isContactBlockedNow ? '🔓' : '🚫'}</span>
-                          <span style="font-size: 12px; font-weight: 600;">{isContactBlockedNow ? 'Разблок.' : 'Блок'}</span>
-                      </button>
+              extra_priv_cards = """
+                  <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                          <div>
+                              <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">👥 Кто может добавлять меня в группы</div>
+                              <div style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">{groupInviteFriendsOnly ? 'Только мои контакты (друзья)' : 'Все пользователи Hydra'}</div>
+                          </div>
+                          <input type="checkbox" checked={groupInviteFriendsOnly} on:change={toggleGroupInviteFriendsOnly} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
+                      </div>
                   </div>
 
-                  {#if showBlockDurationModal}
-                      <div on:click|stopPropagation style="margin-top: 14px; width: 100%; max-width: 400px; background: #16181F; border: 1px solid rgba(239,68,68,0.4); border-radius: 20px; padding: 16px; box-sizing: border-box;">
-                          <div style="font-size: 14px; font-weight: 800; color: #FCA5A5; margin-bottom: 10px;">🚫 Блокировка: {contact.Nickname}</div>
-                          <div style="font-size: 12px; color: #9CA3AF; margin-bottom: 10px;">Выберите срок, на который нужно заблокировать пользователя:</div>
-                          <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-                              <input type="number" min="1" max="999" bind:value={blockAmount} style="width: 80px; padding: 10px; border-radius: 12px; background: #0E1015; color: #fff; border: 1px solid rgba(255,255,255,0.15); font-size: 14px; font-weight: 700; text-align: center;" />
-                              <select bind:value={blockUnit} style="flex: 1; padding: 10px; border-radius: 12px; background: #0E1015; color: #fff; border: 1px solid rgba(255,255,255,0.15); font-size: 13px; font-weight: 600;">
-                                  <option value="minutes">Минут</option>
-                                  <option value="hours">Часов</option>
-                                  <option value="days">Дней</option>
-                                  <option value="months">Месяцев</option>
-                                  <option value="years">Лет</option>
-                              </select>
+                  <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                          <div>
+                              <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🔒 Запрет скриншотов и записи экрана</div>
+                              <div style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">Аппаратная защита окна приложения (FLAG_SECURE)</div>
                           </div>
-                          <div style="display: flex; gap: 8px;">
-                              {#if isContactBlockedNow}
-                                  <button type="button" on:click={unblockCurrentUser} style="flex: 1; padding: 10px; border-radius: 100px; background: #10B981; color: #fff; border: none; font-weight: 800; font-size: 12px; cursor: pointer;">🔓 Снять блок</button>
-                              {/if}
-                              <button type="button" on:click={() => showBlockDurationModal = false} style="flex: 1; padding: 10px; border-radius: 100px; background: #22252A; color: #E5E7EB; border: none; font-size: 12px; cursor: pointer;">Отмена</button>
-                              <button type="button" on:click={applyTimedUserBlock} style="flex: 1; padding: 10px; border-radius: 100px; background: #EF4444; color: #fff; border: none; font-weight: 800; font-size: 12px; cursor: pointer;">Заблокировать</button>
-                          </div>
+                          <input type="checkbox" checked={flagSecureEnabled} on:change={toggleFlagSecureSetting} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
                       </div>
-                  {/if}"""
-              md = md.replace(old_4_tiles, new_4_tiles)
-
-              group_members_profile_card = """
-                  {#if String(contact.Nickname || '').startsWith('👥') || String(contact.Nickname || '').startsWith('📢')}
-                      <div style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 12px;">
-                          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                              <span style="font-size: 13px; font-weight: 800; color: #60A5FA;">👥 Участники группы ({groupMembersInProfile.length})</span>
-                              <button type="button" on:click={toggleGroupMembersVisibility} style="background: rgba(59,130,246,0.15); color: #93C5FD; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 700; cursor: pointer;">
-                                  {groupHideMembers ? '🙈 Список скрыт' : '👁️ Виден всем'}
-                              </button>
-                          </div>
-                          {#if !groupHideMembers}
-                              <div style="display: flex; flex-wrap: wrap; gap: 6px;">
-                                  {#each groupMembersInProfile as gm}
-                                      <span style="background: #121316; border: 1px solid rgba(59,130,246,0.25); color: #E5E7EB; padding: 5px 10px; border-radius: 100px; font-size: 12px; font-weight: 600;">👤 {gm}</span>
-                                  {/each}
-                              </div>
-                          {:else}
-                              <div style="font-size: 12px; color: #9CA3AF;">Список участников скрыт настройками приватности группы.</div>
-                          {/if}
-                      </div>
-                  {/if}
+                  </div>
               """
-              if "Участники группы (" not in md:
-                  md = md.replace(
-                      '<div style="font-size: 12px; color: #9CA3AF; margin-top: 2px;">Крипто-ID ключ (нажмите, чтобы {showFullAddress ? \'скрыть\' : \'показать полностью\'})</div>\n            </div>',
-                      '<div style="font-size: 12px; color: #9CA3AF; margin-top: 2px;">Крипто-ID ключ (нажмите, чтобы {showFullAddress ? \'скрыть\' : \'показать полностью\'})</div>\n            </div>\n' + group_members_profile_card
+              if "Кто может добавлять меня в группы" not in st:
+                  st = st.replace(
+                      '<div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🕒 Скрывать точное время входа</div>',
+                      extra_priv_cards.strip() + '\n        </div>\n        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">\n            <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">\n                <div>\n                    <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🕒 Скрывать точное время входа</div>',
+                      1
                   )
 
-              with open(md_path, "w", encoding="utf-8") as f:
-                  f.write(md)
-              print("[OK] 4. Modals.svelte: добавлена блокировка по таймеру, Звук и участники группы")
+              with open(st_path, "w", encoding="utf-8") as f:
+                  f.write(st)
+              print("[OK] 6. Settings.svelte: исправлен ClipboardSet и добавлены тумблеры приватности групп и скриншотов!")
 
-          # 5. frontend/src/components/Chat.svelte (БЕЗ РЕГУЛЯРКИ, ЛОМАЮЩЕЙ ТЕГИ):
+          # 7. frontend/src/components/Chat.svelte:
+          #    - Чистим мёртвый код в cycleDisappearingTimer()
+          #    - При приглашении участника в группу передаём ему весь список участников группы (чтобы у него в профиле группы тоже были видны все участники!)
+          #    - Блокируем входящие звонки от пользователей, которые находятся во временном блоке (hydra_block_until_)
           ch_path = "frontend/src/components/Chat.svelte"
           if os.path.exists(ch_path):
               with open(ch_path, "r", encoding="utf-8") as f:
                   ch = f.read()
 
-              if "getUnifiedPresence" not in ch:
-                  ch = ch.replace(
-                      "import { getInitials, formatTime, parseMarkdown, getAvatarGradient } from '../utils.js';",
-                      "import { getInitials, formatTime, parseMarkdown, getAvatarGradient, getUnifiedPresence } from '../utils.js';"
-                  )
-
               ch = ch.replace(
-                  'style="background: {(messages || []).some(m => !m.IsOutgoing && m.SenderID === selectedContact?.PublicKey && (Date.now() - m.Timestamp < 300000)) ? \'#4CAF50\' : \'#9E9E9E\'};"',
-                  'style="background: {getUnifiedPresence(selectedContact, messages).online ? \'#4CAF50\' : \'#9E9E9E\'};"'
-              )
-              ch = ch.replace(
-                  "{getContactPresenceText(selectedContact, messages)}",
-                  "{getUnifiedPresence(selectedContact, messages).text}"
+                  """    function cycleDisappearingTimer() {
+                  toggleAndSaveDisappearingTimer();
+                  return;
+                  if (disappearingTimer === 0) disappearingTimer = 60;
+                  else if (disappearingTimer === 60) disappearingTimer = 3600;
+                  else disappearingTimer = 0;
+              }""",
+                  """    function cycleDisappearingTimer() {
+                  toggleAndSaveDisappearingTimer();
+              }"""
               )
 
-              # Скрываем кнопку звонка 📞 в Группах (👥) и Каналах (📢) и закрываем меню ⋮ при клике на пустую область
-              old_header_actions = """            <button type="button" on:click={startHydraCall} style="background: #1D4ED8; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; flex-shrink: 0;" title="Позвонить">📞</button>
-                      <div style="position: relative;">
-                          <button type="button" on:click|stopPropagation={() => showChatHeaderMenu = !showChatHeaderMenu} style="background: #22252A; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.25); border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; cursor: pointer;">⋮</button>
-                          {#if showChatHeaderMenu}
-                              <div style="position: fixed; top: 62px; right: 14px; background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 16px; padding: 6px; z-index: 99995; min-width: 210px; box-shadow: 0 12px 32px rgba(0,0,0,0.7);">"""
-
-              new_header_actions = """            {#if !String(selectedContact.Nickname || '').startsWith('👥') && !String(selectedContact.Nickname || '').startsWith('📢')}
-                          <button type="button" on:click={startHydraCall} style="background: #1D4ED8; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; flex-shrink: 0;" title="Позвонить">📞</button>
-                      {/if}
-                      <div style="position: relative;">
-                          <button type="button" on:click|stopPropagation={() => showChatHeaderMenu = !showChatHeaderMenu} style="background: #22252A; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.25); border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; cursor: pointer;">⋮</button>
-                          {#if showChatHeaderMenu}
-                              <div on:click={() => showChatHeaderMenu = false} style="position: fixed; inset: 0; z-index: 99990; background: transparent;"></div>
-                              <div style="position: fixed; top: 62px; right: 14px; background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 16px; padding: 6px; z-index: 99995; min-width: 225px; box-shadow: 0 12px 32px rgba(0,0,0,0.7);">"""
-              ch = ch.replace(old_header_actions, new_header_actions)
-
-              call_mute_rec_js = """
-              let isCallMuted = false;
-              let isRecordingCall = false;
-              let callRecorder = null;
-              let callRecordedChunks = [];
-
-              function toggleCallMute() {
-                  isCallMuted = !isCallMuted;
-                  if (window.__hydraCallStream) {
-                      window.__hydraCallStream.getAudioTracks().forEach(t => { t.enabled = !isCallMuted; });
-                  }
-              }
-
-              function toggleCallRecording() {
-                  if (isRecordingCall && callRecorder) {
-                      callRecorder.stop();
-                      isRecordingCall = false;
-                      return;
-                  }
+              # Синхронизация списка участников группы при добавлении нового участника
+              old_invite_fn = """    async function inviteContactToGroup(targetContact) {
+                  if (!selectedContact || !targetContact) return;
+                  const invitePayload = `[HYDRA_GROUP_INVITE]:${selectedContact.Nickname}|${selectedContact.I2PAddress}`;
                   try {
-                      const s = window.__hydraCallStream;
-                      if (!s) return alert('Микрофон ещё не активен');
-                      callRecordedChunks = [];
-                      callRecorder = new MediaRecorder(s);
-                      callRecorder.ondataavailable = e => { if (e.data && e.data.size > 0) callRecordedChunks.push(e.data); };
-                      callRecorder.onstop = async () => {
-                          const blob = new Blob(callRecordedChunks, { type: 'audio/webm' });
-                          const reader = new FileReader();
-                          reader.onloadend = async () => {
-                              await saveMediaDataUrlToGallery(reader.result, 'hydra_call_rec');
-                              alert('✅ Запись разговора сохранена в папку Download/Hydra!');
-                          };
-                          reader.readAsDataURL(blob);
-                      };
-                      callRecorder.start(250);
-                      isRecordingCall = true;
-                  } catch (e) {
-                      alert('Ошибка записи: ' + e);
-                  }
-              }
-              """
-              if "function toggleCallMute()" not in ch:
-                  ch = ch.replace("let activeCallModal = false;", "let activeCallModal = false;\n" + call_mute_rec_js, 1)
-
-              # Безопасная точечная вставка кнопок Микрофона и Записи в модалку звонка (без регулярки по {/if}!)
-              mute_rec_buttons_html = """        <div style="display: flex; gap: 14px; margin-top: 8px;">
-                      <button type="button" on:click={toggleCallMute} style="background: {isCallMuted ? '#EF4444' : '#1E222B'}; color: #fff; border: 1px solid rgba(255,255,255,0.15); border-radius: 100px; padding: 11px 18px; font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;">
-                          <span>{isCallMuted ? '🔇' : '🎙️'}</span>
-                          <span>{isCallMuted ? 'Микрофон выкл' : 'Микрофон вкл'}</span>
-                      </button>
-                      <button type="button" on:click={toggleCallRecording} style="background: {isRecordingCall ? '#EF4444' : '#1E222B'}; color: #fff; border: 1px solid rgba(255,255,255,0.15); border-radius: 100px; padding: 11px 18px; font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;">
-                          <span>{isRecordingCall ? '⏹' : '🔴'}</span>
-                          <span>{isRecordingCall ? 'Стоп запись' : 'Запись вызова'}</span>
-                      </button>
-                  </div>"""
-
-              if "toggleCallMute" not in ch.split("{#if activeCallModal}")[-1]:
-                  ch = ch.replace(
-                      '<div style="font-size: 14px; color: #60A5FA; text-align: center;">{callStatusText}</div>',
-                      '<div style="font-size: 14px; color: #60A5FA; text-align: center;">{callStatusText}</div>\n' + mute_rec_buttons_html
-                  )
-                  ch = ch.replace(
-                      '<div style="font-size: 14px; color: #8AB4F8; text-align: center;">{callStatusText}</div>',
-                      '<div style="font-size: 14px; color: #8AB4F8; text-align: center;">{callStatusText}</div>\n' + mute_rec_buttons_html
-                  )
-
-              # Кликабельная карточка для ID группы SFlEUkFfUk9PTV... в чате
-              old_text_msg_render = """                {:else}
-                              <div class="message-content">{@html parseMarkdown(msg.Content)}</div>
-                          {/if}"""
-
-              new_text_msg_render = """                {:else if msg.Content && (msg.Content.trim().startsWith('SFlEUkFfUk9PTV') || msg.Content.startsWith('🎟️ Вас добавили в'))}
-                              <div style="display: flex; flex-direction: column; gap: 8px; padding: 4px;">
-                                  <div style="font-weight: 700; font-size: 13px; color: #93C5FD;">
-                                      {msg.Content.startsWith('🎟️') ? msg.Content : '🎟️ Ссылка-приглашение в группу Hydra'}
-                                  </div>
-                                  {#if msg.Content.trim().startsWith('SFlEUkFfUk9PTV')}
-                                      <div style="font-size: 11px; opacity: 0.75; font-family: monospace; word-break: break-all;">{msg.Content.trim()}</div>
-                                      <button type="button" on:click|stopPropagation={() => { if (window.__joinHydraGroupByKey) window.__joinHydraGroupByKey(msg.Content.trim()); }} style="background: #fff; color: #1E3A8A; border: none; border-radius: 100px; padding: 8px 16px; font-size: 12px; font-weight: 800; cursor: pointer; align-self: flex-start;">
-                                          ➡️ Перейти / Вступить в группу
-                                      </button>
-                                  {/if}
-                              </div>
-                          {:else}
-                              <div class="message-content">{@html parseMarkdown(msg.Content)}</div>
-                          {/if}"""
-              if "➡️ Перейти / Вступить в группу" not in ch:
-                  ch = ch.replace(old_text_msg_render, new_text_msg_render)
-
-              if "currentGroupMembers" not in ch:
-                  grp_members_js = """
-              let currentGroupMembers = ['Вы (Создатель)'];
-              let currentGroupHideMembers = false;
-              $: if (selectedContact) {
-                  try {
-                      currentGroupMembers = JSON.parse(localStorage.getItem('hydra_group_members_' + selectedContact.ID) || '["Вы (Создатель)"]');
-                      currentGroupHideMembers = localStorage.getItem('hydra_group_hide_members_' + selectedContact.ID) === '1';
-                  } catch (e) { currentGroupMembers = ['Вы (Создатель)']; }
-              }
-              """
-                  ch = ch.replace("let allExistingContactsForGroup = [];", grp_members_js + "\n    let allExistingContactsForGroup = [];", 1)
-
-              ch = ch.replace(
-                  "alert(`✅ Приглашение в «${selectedContact.Nickname}» отправлено пользователю ${targetContact.Nickname}!`);",
-                  """if (!currentGroupMembers.includes(targetContact.Nickname)) {
+                      await AppActions.SendText(targetContact.ID, invitePayload, '');
+                      if (!currentGroupMembers.includes(targetContact.Nickname)) {
                           currentGroupMembers = [...currentGroupMembers, targetContact.Nickname];
                           localStorage.setItem('hydra_group_members_' + selectedContact.ID, JSON.stringify(currentGroupMembers));
                       }
-                      alert(`✅ Пользователь ${targetContact.Nickname} добавлен в «${selectedContact.Nickname}»!`);"""
+                      alert(`✅ Пользователь ${targetContact.Nickname} добавлен в «${selectedContact.Nickname}»!`);
+                  } catch (e) {
+                      alert('Ошибка отправки приглашения: ' + e);
+                  }
+              }"""
+
+              new_invite_fn = """    async function inviteContactToGroup(targetContact) {
+                  if (!selectedContact || !targetContact) return;
+                  if (!currentGroupMembers.includes(targetContact.Nickname)) {
+                      currentGroupMembers = [...currentGroupMembers, targetContact.Nickname];
+                      localStorage.setItem('hydra_group_members_' + selectedContact.ID, JSON.stringify(currentGroupMembers));
+                  }
+                  const membersStr = currentGroupMembers.join(', ');
+                  const invitePayload = `[HYDRA_GROUP_INVITE]:${selectedContact.Nickname}|${selectedContact.I2PAddress}|${membersStr}`;
+                  try {
+                      await AppActions.SendText(targetContact.ID, invitePayload, '');
+                      alert(`✅ Пользователь ${targetContact.Nickname} добавлен в «${selectedContact.Nickname}»!`);
+                  } catch (e) {
+                      alert('Ошибка отправки приглашения: ' + e);
+                  }
+              }"""
+              ch = ch.replace(old_invite_fn, new_invite_fn)
+
+              # Слушатель remote_group_members для сохранения списка участников группы у приглашённого пользователя
+              remote_grp_hook = """
+              EventsOn('remote_group_members', (raw) => {
+                  const [gId, membersCsv] = String(raw || '').split('|');
+                  if (gId && membersCsv) {
+                      const arr = membersCsv.split(',').map(s => s.trim()).filter(Boolean);
+                      localStorage.setItem('hydra_group_members_' + gId, JSON.stringify(arr));
+                      if (selectedContact && selectedContact.ID === gId) {
+                          currentGroupMembers = arr;
+                      }
+                  }
+              });
+              """
+              if "remote_group_members" not in ch:
+                  ch = ch.replace("EventsOn('remote_reaction',", remote_grp_hook + "\n    EventsOn('remote_reaction',", 1)
+
+              # Игнорируем входящий звонок, если пользователь заблокирован по таймеру
+              ch = ch.replace(
+                  "if (c.startsWith('[HYDRA_CALL_RING]:')) {",
+                  """if (c.startsWith('[HYDRA_CALL_RING]:')) {
+                      const bUntil = Number(localStorage.getItem('hydra_block_until_' + (sig.contact_id || selectedContact?.ID)) || 0);
+                      if (bUntil > Date.now()) return;"""
               )
 
-              old_room_header = """<div style="font-size: 12px; color: #9CA3AF; margin-bottom: 6px;">Добавить по @нику или крипто-ID:</div>"""
-              new_room_header = """<div style="padding: 10px 12px; background: #121316; border: 1px solid rgba(59,130,246,0.25); border-radius: 14px; margin-bottom: 12px;">
-                          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                              <span style="font-size: 12px; font-weight: 800; color: #60A5FA;">👥 Участники ({currentGroupMembers.length}):</span>
-                              <button type="button" on:click={() => { currentGroupHideMembers = !currentGroupHideMembers; localStorage.setItem('hydra_group_hide_members_' + selectedContact.ID, currentGroupHideMembers ? '1' : '0'); }} style="background: rgba(59,130,246,0.18); color: #93C5FD; border: none; border-radius: 100px; padding: 3px 9px; font-size: 10px; font-weight: 700; cursor: pointer;">
-                                  {currentGroupHideMembers ? '🙈 Скрыты от других' : '👁️ Видны всем'}
-                              </button>
-                          </div>
-                          <div style="font-size: 12px; color: #E5E7EB;">{currentGroupMembers.join(', ')}</div>
-                      </div>
-                      <div style="font-size: 12px; color: #9CA3AF; margin-bottom: 6px;">Добавить по @нику или крипто-ID:</div>"""
-              if "Скрыты от других" not in ch:
-                  ch = ch.replace(old_room_header, new_room_header)
+              # В окне участников группы показываем "✅ Добавлен" вместо кнопки "+ Добавить", если человек уже в группе
+              old_contact_row = """                    {#each allExistingContactsForGroup as c}
+                                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #121316; border-radius: 12px;">
+                                      <span style="font-size: 13px; color: #E5E7EB; font-weight: 600;">{c.Nickname}</span>
+                                      <button type="button" on:click={() => inviteContactToGroup(c)} style="background: #1E3A8A; color: #60A5FA; border: 1px solid rgba(59,130,246,0.3); border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700;">+ Добавить</button>
+                                  </div>
+                              {/each}"""
+
+              new_contact_row = """                    {#each allExistingContactsForGroup as c}
+                                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #121316; border-radius: 12px;">
+                                      <span style="font-size: 13px; color: #E5E7EB; font-weight: 600;">{c.Nickname}</span>
+                                      {#if currentGroupMembers.includes(c.Nickname)}
+                                          <span style="color: #10B981; font-size: 12px; font-weight: 800; padding: 4px 10px;">✅ Добавлен</span>
+                                      {:else}
+                                          <button type="button" on:click={() => inviteContactToGroup(c)} style="background: #1E3A8A; color: #60A5FA; border: 1px solid rgba(59,130,246,0.3); border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700; cursor: pointer;">+ Добавить</button>
+                                      {/if}
+                                  </div>
+                              {/each}"""
+              ch = ch.replace(old_contact_row, new_contact_row)
 
               with open(ch_path, "w", encoding="utf-8") as f:
                   f.write(ch)
-              print("[OK] 5. Chat.svelte: все теги сбалансированы, кнопки звонка и перехода в группу готовы!")
+              print("[OK] 7. Chat.svelte: очищен мёртвый код, синхронизированы участники групп и проверка блокировки при звонке!")
           PYEOF
-          python3 apply_v29_all_fixes.py
-          rm -f apply_v29_all_fixes.py
+          python3 clean_audit_v295.py
+          rm -f clean_audit_v295.py
           gofmt -w internal/ mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -571,13 +495,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Hydra v2.9.0 Complete Fixes
+      - name: Commit Audited Hydra v2.9.5 Build
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Release Hydra v2.9.0: Group member visibility & clickable ID join, 1-on-1 calls only, Call Mute/Record, Unified Presence, Story sync & Timed Block [skip ci]"
+            git commit -m "Release Hydra v2.9.5: Clean audited Go core & Svelte components, Group relay polling, Story sync & 2-profile limit [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
