@@ -38,242 +38,259 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply Clean Android-Only Fixes (Call Notif, PIN Update, Video Picker, Disable Desktop Mode, Clean Duplicates)
+      - name: Enable Real E2EE (X25519 + XChaCha20-Poly1305), Ed25519 Relay Auth & HTTPS/WSS (rtbeta.duckdns.org)
         run: |
-          cat << 'PYEOF' > apply_android_cleanup.py
-          import os, re
+          cat << 'PYEOF' > enable_e2ee_https.py
+          import os
 
-          # 1. MainActivity.kt: кнопки звонка (Принять/Отклонить без RemoteInput), папка Download/Hydra, выбор видео+фото
-          kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
-          if os.path.exists(kt_path):
-              with open(kt_path, "r", encoding="utf-8") as f:
-                  kt = f.read()
+          # 1. Переводим все адреса сервера на HTTPS / WSS (rtbeta.duckdns.org:443)
+          url_files = [
+              "internal/appcore/appcore.go",
+              "internal/appcore/contacts.go",
+              "internal/network/messenger/messenger.go",
+              "frontend/src/components/Settings.svelte",
+              "frontend/src/components/Sidebar.svelte",
+              "frontend/src/components/Modals.svelte",
+              "frontend/src/components/Auth.svelte",
+          ]
+          for path in url_files:
+              if os.path.exists(path):
+                  with open(path, "r", encoding="utf-8") as f:
+                      txt = f.read()
+                  txt = txt.replace("http://191.223.137.164:8085", "https://rtbeta.duckdns.org")
+                  txt = txt.replace("ws://191.223.137.164:8085/ws", "wss://rtbeta.duckdns.org/ws")
+                  with open(path, "w", encoding="utf-8") as f:
+                      f.write(txt)
+          print("[OK] 1. Все адреса переведены на https://rtbeta.duckdns.org и wss://rtbeta.duckdns.org/ws")
 
-              new_show_notif = '''    override fun showNotification(title: String, message: String) {
-                  runOnUiThread {
-                      try {
-                          val notifId = (System.currentTimeMillis() and 0xFFFFFFF).toInt()
-                          val senderNick = title.removePrefix("Hydra - ").trim()
-                          val replyFlags = if (Build.VERSION.SDK_INT >= 31) {
-                              android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE
-                          } else {
-                              android.app.PendingIntent.FLAG_UPDATE_CURRENT
-                          }
-                          val intent = Intent(this, MainActivity::class.java).apply {
-                              flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                          }
-                          val pendingIntent = android.app.PendingIntent.getActivity(
-                              this, 0, intent, android.app.PendingIntent.FLAG_IMMUTABLE
-                          )
+          # 2. Создаём файл internal/core/identity/e2ee.go с настоящим X25519 + XChaCha20-Poly1305
+          e2ee_code = '''package identity
 
-                          val isCallNotif = message.contains("вызов", ignoreCase = true) ||
-                              message.contains("звонок", ignoreCase = true)
+          import (
+          	"crypto/rand"
+          	"crypto/sha256"
+          	"crypto/sha512"
+          	"encoding/base64"
+          	"errors"
+          	"io"
+          	"math/big"
+          	"strings"
 
-                          val builder = androidx.core.app.NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-                              .setSmallIcon(R.mipmap.ic_launcher)
-                              .setContentTitle(title)
-                              .setContentText(message)
-                              .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
-                              .setCategory(
-                                  if (isCallNotif) androidx.core.app.NotificationCompat.CATEGORY_CALL
-                                  else androidx.core.app.NotificationCompat.CATEGORY_MESSAGE
-                              )
-                              .setDefaults(androidx.core.app.NotificationCompat.DEFAULT_ALL)
-                              .setAutoCancel(true)
-                              .setContentIntent(pendingIntent)
+          	"golang.org/x/crypto/chacha20poly1305"
+          	"golang.org/x/crypto/curve25519"
+          )
 
-                          if (isCallNotif) {
-                              val accIntent = Intent(this, DirectReplyReceiver::class.java).apply {
-                                  putExtra("sender_nick", senderNick)
-                                  putExtra("notif_id", notifId)
-                                  putExtra("call_action", "accept_call")
-                              }
-                              val decIntent = Intent(this, DirectReplyReceiver::class.java).apply {
-                                  putExtra("sender_nick", senderNick)
-                                  putExtra("notif_id", notifId)
-                                  putExtra("call_action", "decline_call")
-                              }
-                              val accPending = android.app.PendingIntent.getBroadcast(this, notifId + 1, accIntent, replyFlags)
-                              val decPending = android.app.PendingIntent.getBroadcast(this, notifId + 2, decIntent, replyFlags)
-                              builder.addAction(R.mipmap.ic_launcher, "🟢 Принять", accPending)
-                              builder.addAction(R.mipmap.ic_launcher, "🔴 Отклонить", decPending)
-                          } else {
-                              val remoteInput = androidx.core.app.RemoteInput.Builder("key_text_reply")
-                                  .setLabel("Быстрый ответ...")
-                                  .build()
-                              val replyIntent = Intent(this, DirectReplyReceiver::class.java).apply {
-                                  putExtra("sender_nick", senderNick)
-                                  putExtra("notif_id", notifId)
-                              }
-                              val replyPendingIntent = android.app.PendingIntent.getBroadcast(this, notifId, replyIntent, replyFlags)
-                              val replyAction = androidx.core.app.NotificationCompat.Action.Builder(
-                                  R.mipmap.ic_launcher,
-                                  "Ответить",
-                                  replyPendingIntent
-                              ).addRemoteInput(remoteInput).build()
-                              builder.addAction(replyAction)
-                          }
+          const E2EEPrefix = "[HYDRA_E2EE]:"
 
-                          with(androidx.core.app.NotificationManagerCompat.from(this)) {
-                              notify(notifId, builder.build())
-                          }
-                      } catch (e: Exception) {
-                          android.util.Log.e(TAG, "Notification failed", e)
-                      }
-                  }
-              }
+          func ed25519PrivToX25519(edPriv []byte) []byte {
+          	h := sha512.Sum512(edPriv[:32])
+          	h[0] &= 248
+          	h[31] &= 127
+          	h[31] |= 64
+          	return h[:32]
+          }
 
+          func ed25519PubToX25519(edPub []byte) ([]byte, error) {
+          	if len(edPub) != 32 {
+          		return nil, errors.New("invalid ed25519 pubkey length")
+          	}
+          	// p = 2^255 - 19
+          	p := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 255), big.NewInt(19))
+          	yBE := make([]byte, 32)
+          	for i := 0; i < 32; i++ {
+          		yBE[31-i] = edPub[i]
+          	}
+          	yBE[0] &= 0x7f
+          	y := new(big.Int).SetBytes(yBE)
+
+          	one := big.NewInt(1)
+          	num := new(big.Int).Add(one, y)
+          	den := new(big.Int).Sub(one, y)
+          	den.Mod(den, p)
+          	denInv := new(big.Int).ModInverse(den, p)
+          	if denInv == nil {
+          		return nil, errors.New("invalid curve point")
+          	}
+          	u := new(big.Int).Mul(num, denInv)
+          	u.Mod(u, p)
+
+          	uBE := make([]byte, 32)
+          	u.FillBytes(uBE)
+          	uLE := make([]byte, 32)
+          	for i := 0; i < 32; i++ {
+          		uLE[i] = uBE[31-i]
+          	}
+          	return uLE, nil
+          }
+
+          func (k *Keys) deriveSharedKey(peerPubBase64 string) ([]byte, error) {
+          	peerPubBase64 = strings.TrimSpace(peerPubBase64)
+          	if strings.HasPrefix(peerPubBase64, "SFlEUkFfUk9PTV") {
+          		sum := sha256.Sum256([]byte("HYDRA-ROOM-E2EE-V1:" + peerPubBase64))
+          		return sum[:], nil
+          	}
+          	peerBytes, err := base64.StdEncoding.DecodeString(peerPubBase64)
+          	if err != nil {
+          		return nil, err
+          	}
+          	xPub, err := ed25519PubToX25519(peerBytes)
+          	if err != nil {
+          		return nil, err
+          	}
+          	xPriv := ed25519PrivToX25519(k.SigningPrivateKey)
+          	shared, err := curve25519.X25519(xPriv, xPub)
+          	if err != nil {
+          		return nil, err
+          	}
+          	sum := sha256.Sum256(shared)
+          	return sum[:], nil
+          }
+
+          // EncryptForPeer шифрует строку ключом X25519 + XChaCha20-Poly1305
+          func (k *Keys) EncryptForPeer(peerPubBase64, plaintext string) string {
+          	if plaintext == "" || strings.HasPrefix(plaintext, E2EEPrefix) {
+          		return plaintext
+          	}
+          	symKey, err := k.deriveSharedKey(peerPubBase64)
+          	if err != nil {
+          		return plaintext
+          	}
+          	aead, err := chacha20poly1305.NewX(symKey)
+          	if err != nil {
+          		return plaintext
+          	}
+          	nonce := make([]byte, aead.NonceSize())
+          	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+          		return plaintext
+          	}
+          	sealed := aead.Seal(nonce, nonce, []byte(plaintext), nil)
+          	return E2EEPrefix + base64.StdEncoding.EncodeToString(sealed)
+          }
+
+          // DecryptFromPeer расшифровывает строку, если она имеет префикс [HYDRA_E2EE]:
+          func (k *Keys) DecryptFromPeer(peerPubBase64, payload string) string {
+          	if !strings.HasPrefix(payload, E2EEPrefix) {
+          		return payload
+          	}
+          	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(payload, E2EEPrefix))
+          	if err != nil {
+          		return payload
+          	}
+          	symKey, err := k.deriveSharedKey(peerPubBase64)
+          	if err != nil {
+          		return payload
+          	}
+          	aead, err := chacha20poly1305.NewX(symKey)
+          	if err != nil || len(raw) < aead.NonceSize() {
+          		return payload
+          	}
+          	nonce, ct := raw[:aead.NonceSize()], raw[aead.NonceSize():]
+          	plain, err := aead.Open(nil, nonce, ct, nil)
+          	if err != nil {
+          		return payload
+          	}
+          	return string(plain)
+          }
           '''
-              kt = re.sub(
-                  r'    override fun showNotification\(title: String, message: String\) \{[\s\S]*?(?=    override fun saveFile\()',
-                  new_show_notif,
-                  kt,
-                  count=1
-              )
+          with open("internal/core/identity/e2ee.go", "w", encoding="utf-8") as f:
+              f.write(e2ee_code)
+          print("[OK] 2. Создан internal/core/identity/e2ee.go (X25519 + XChaCha20-Poly1305)")
 
-              kt = kt.replace(
-                  'put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/Hydra/Logs")\n                        put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)',
-                  'put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/Hydra")\n                        put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)'
-              )
+          # 3. Включаем E2EE в messenger.go (WebSocket)
+          ms_path = "internal/network/messenger/messenger.go"
+          if os.path.exists(ms_path):
+              with open(ms_path, "r", encoding="utf-8") as f:
+                  ms = f.read()
+              if "EncryptForPeer" not in ms:
+                  ms = ms.replace(
+                      'Content:   content,',
+                      'Content:   s.identity.EncryptForPeer(destination, content),',
+                      1
+                  )
+                  ms = ms.replace(
+                      'Content:     textMsg.Content,',
+                      'Content:     s.identity.DecryptFromPeer(senderPubKey, textMsg.Content),',
+                      1
+                  )
+                  with open(ms_path, "w", encoding="utf-8") as f:
+                      f.write(ms)
+                  print("[OK] 3. messenger.go: включено E2EE для WebSocket")
 
-              kt = kt.replace(
-                  'type = "image/*"',
-                  'type = "*/*"\n                        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))'
-              )
+          # 4. Включаем E2EE и подпись Ed25519 на /relay/send и /relay/poll в appcore.go
+          ac_path = "internal/appcore/appcore.go"
+          if os.path.exists(ac_path):
+              with open(ac_path, "r", encoding="utf-8") as f:
+                  ac = f.read()
 
-              with open(kt_path, "w", encoding="utf-8") as f:
-                  f.write(kt)
-              print("[OK] 1. MainActivity.kt обновлён")
+              # Шифруем контент перед отправкой через HTTP-релей и подписываем запрос заголовками X-Hydra-Ts / X-Hydra-Sig
+              old_send = '''	env := map[string]interface{}{
+          		"id":          msgID,
+          		"from":        myPub,
+          		"from_nick":   myNick,
+          		"to":          strings.TrimSpace(toPub),
+          		"chat_id":     chatID,
+          		"content":     text,
+          		"reply_to_id": replyToID,
+          		"timestamp":   time.Now().UnixMilli(),
+          	}
+          	raw, _ := json.Marshal(env)
+          	client := &http.Client{Timeout: 15 * time.Second}
+          	var resp *http.Response
+          	var err error
+          	for attempt := 0; attempt < 3; attempt++ {
+          		resp, err = client.Post("https://rtbeta.duckdns.org/relay/send", "application/json", bytes.NewReader(raw))'''
 
-          # 2. mobile/mobile.go: добавляем UpdateProfile (для смены PIN) и алиас CopyToClipboard
-          mob_path = "mobile/mobile.go"
-          if os.path.exists(mob_path):
-              with open(mob_path, "r", encoding="utf-8") as f:
-                  mb = f.read()
+              new_send = '''	encText := a.Identity.Keys.EncryptForPeer(toPub, text)
+          	env := map[string]interface{}{
+          		"id":          msgID,
+          		"from":        myPub,
+          		"from_nick":   myNick,
+          		"to":          strings.TrimSpace(toPub),
+          		"chat_id":     chatID,
+          		"content":     encText,
+          		"reply_to_id": replyToID,
+          		"timestamp":   time.Now().UnixMilli(),
+          	}
+          	raw, _ := json.Marshal(env)
+          	client := &http.Client{Timeout: 15 * time.Second}
+          	var resp *http.Response
+          	var err error
+          	tsStr := fmt.Sprintf("%d", time.Now().UnixMilli())
+          	sig := ed25519.Sign(a.Identity.Keys.SigningPrivateKey, []byte("HYDRA-RELAY:send:"+myPub+":"+tsStr))
+          	sigB64 := base64.StdEncoding.EncodeToString(sig)
+          	for attempt := 0; attempt < 3; attempt++ {
+          		req, _ := http.NewRequest("POST", "https://rtbeta.duckdns.org/relay/send", bytes.NewReader(raw))
+          		req.Header.Set("Content-Type", "application/json")
+          		req.Header.Set("X-Hydra-Ts", tsStr)
+          		req.Header.Set("X-Hydra-Sig", sigB64)
+          		resp, err = client.Do(req)'''
 
-              if 'case "UpdateProfile":' not in mb:
-                  mb = mb.replace(
-                      'case "DeleteProfile":',
-                      '''case "UpdateProfile":
-          		var profileID, name, avatarPath, newPin, mnemonic string
-          		var deleteAvatar, usePin bool
-          		parseArgs(args, &profileID, &name, &avatarPath, &deleteAvatar, &usePin, &newPin, &mnemonic)
-          		return nil, app.UpdateProfile(profileID, name, avatarPath, deleteAvatar, usePin, newPin, mnemonic)
+              ac = ac.replace(old_send, new_send)
 
-          	case "DeleteProfile":'''
+              # Подписываем личный /relay/poll заголовками X-Hydra-Ts / X-Hydra-Sig
+              old_poll = 'resp, err := client.Get("https://rtbeta.duckdns.org/relay/poll?pub=" + url.QueryEscape(myPub))'
+              new_poll = '''pTs := fmt.Sprintf("%d", time.Now().UnixMilli())
+          			pSig := base64.StdEncoding.EncodeToString(ed25519.Sign(a.Identity.Keys.SigningPrivateKey, []byte("HYDRA-RELAY:poll:"+myPub+":"+pTs)))
+          			pReq, _ := http.NewRequest("GET", "https://rtbeta.duckdns.org/relay/poll?pub="+url.QueryEscape(myPub), nil)
+          			pReq.Header.Set("X-Hydra-Ts", pTs)
+          			pReq.Header.Set("X-Hydra-Sig", pSig)
+          			resp, err := client.Do(pReq)'''
+              ac = ac.replace(old_poll, new_poll)
+
+              # Расшифровываем входящие сообщения в OnMessageReceived до обработки всех префиксов
+              if "DecryptFromPeer" not in ac:
+                  ac = ac.replace(
+                      'msg.ChatID = contact.ChatID',
+                      'msg.ChatID = contact.ChatID\n\tif a.Identity != nil && a.Identity.Keys != nil {\n\t\tmsg.Content = a.Identity.Keys.DecryptFromPeer(senderPubKey, msg.Content)\n\t}'
                   )
 
-              if '"CopyToClipboard"' not in mb:
-                  mb = mb.replace('case "ClipboardSet":', 'case "ClipboardSet", "CopyToClipboard":')
-
-              with open(mob_path, "w", encoding="utf-8") as f:
-                  f.write(mb)
-              print("[OK] 2. mobile.go обновлён")
-
-          # 3. frontend/src/lib/api_bridge.js: отключаем ПК-режим точной заменой (без обрыва try/catch)
-          ab_path = "frontend/src/lib/api_bridge.js"
-          if os.path.exists(ab_path):
-              with open(ab_path, "r", encoding="utf-8") as f:
-                  ab = f.read()
-              old_is_desktop = """function isDesktop() {
-              try {
-                  return !!(window.go && window.go.main && window.go.main.App);
-              } catch {
-                  return false;
-              }
-          }"""
-              ab = ab.replace(old_is_desktop, "function isDesktop() {\n    return false; // Android-only mode\n}")
-              with open(ab_path, "w", encoding="utf-8") as f:
-                  f.write(ab)
-              print("[OK] 3. api_bridge.js: ПК-режим отключён чисто")
-
-          # 4. frontend/src/components/Chat.svelte: подключаем кнопки уведомления звонка
-          ch_path = "frontend/src/components/Chat.svelte"
-          if os.path.exists(ch_path):
-              with open(ch_path, "r", encoding="utf-8") as f:
-                  ch = f.read()
-              if "window.__onHydraCallNotifAction" not in ch:
-                  ch = ch.replace(
-                      "window.__triggerHydraCallFromProfile = () => startHydraCall();",
-                      """window.__triggerHydraCallFromProfile = () => startHydraCall();
-                  window.__onHydraCallNotifAction = (senderNick, action) => {
-                      if (action === 'accept_call') {
-                          acceptIncomingHydraCall();
-                      } else if (action === 'decline_call') {
-                          endHydraCall(true);
-                      }
-                  };"""
-                  )
-                  with open(ch_path, "w", encoding="utf-8") as f:
-                      f.write(ch)
-                  print("[OK] 4. Chat.svelte: подключён __onHydraCallNotifAction")
-
-          # 5. frontend/src/App.svelte: фиксируем мобильный режим и вычищаем дубли
-          app_path = "frontend/src/App.svelte"
-          if os.path.exists(app_path):
-              with open(app_path, "r", encoding="utf-8") as f:
-                  ap = f.read()
-
-              ap = ap.replace("let isMobile = false;", "let isMobile = true;")
-              ap = ap.replace("isMobile = window.innerWidth < 768;", "isMobile = true; // Android-only")
-
-              ap = re.sub(
-                  r'(\s*if \(typeof window !== \'undefined\' && window\.__setHydraBlur\) window\.__setHydraBlur\(false\);){2,}',
-                  "\n            if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);",
-                  ap
-              )
-
-              old_theme_dup = """    :global(:root) {
-                  --bg-primary: #121212 !important;
-                  --bg-secondary: #1E1F22 !important;
-                  --bg-tertiary: #28292D !important;
-                  --accent: #8AB4F8 !important;
-                  --text-primary: #E3E3E3 !important;
-                  --text-secondary: #9AA0A6 !important;
-              }
-              :global(body), :global(.app-container), :global(.login-screen), :global(.content-area) {
-                  background: #121212 !important;
-                  color: #E3E3E3 !important;
-              }
-              :global(.sidebar), :global(.glass-panel), :global(.settings-card), :global(.modal-content) {
-                  background: #1E1F22 !important;
-                  backdrop-filter: none !important;
-                  border: 1px solid rgba(255,255,255,0.05) !important;
-                  border-radius: 24px !important;
-                  box-shadow: none !important;
-              }
-              :global(.btn-primary), :global(.btn-primary-premium) {
-                  background: #8AB4F8 !important;
-                  color: #062E6F !important;
-                  border-radius: 100px !important;
-                  font-weight: 700 !important;
-                  box-shadow: none !important;
-              }"""
-              ap = ap.replace(old_theme_dup, "")
-
-              with open(app_path, "w", encoding="utf-8") as f:
-                  f.write(ap)
-              print("[OK] 5. App.svelte обновлён")
-
-          # 6. frontend/index.html: убираем дубль проверки 30-секундной блокировки
-          idx_path = "frontend/index.html"
-          if os.path.exists(idx_path):
-              with open(idx_path, "r", encoding="utf-8") as f:
-                  ix = f.read()
-              dup_lock = """            if (window.__hiddenSince && (Date.now() - window.__hiddenSince >= 30000) && window.__lockHydraNow) { window.__lockHydraNow(); }
-                      window.__hiddenSince = 0;
-                      if (window.__hiddenSince && (Date.now() - window.__hiddenSince >= 30000) && window.__lockHydraNow) { window.__lockHydraNow(); }
-                      window.__hiddenSince = 0;"""
-              one_lock = """            if (window.__hiddenSince && (Date.now() - window.__hiddenSince >= 30000) && window.__lockHydraNow) { window.__lockHydraNow(); }
-                      window.__hiddenSince = 0;"""
-              ix = ix.replace(dup_lock, one_lock)
-              with open(idx_path, "w", encoding="utf-8") as f:
-                  f.write(ix)
-              print("[OK] 6. index.html обновлён")
+              with open(ac_path, "w", encoding="utf-8") as f:
+                  f.write(ac)
+              print("[OK] 4. appcore.go: включено E2EE и Ed25519-авторизация на /relay/send и /relay/poll")
           PYEOF
-          python3 apply_android_cleanup.py
-          rm -f apply_android_cleanup.py
-          gofmt -w mobile/
+          python3 enable_e2ee_https.py
+          rm -f enable_e2ee_https.py
+          gofmt -w internal/
 
       - name: Install jsQR & Build Frontend (Svelte)
         working-directory: ./frontend
@@ -282,13 +299,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Android-Only Cleanup & Call Notification Fix
+      - name: Commit E2EE & HTTPS/WSS Upgrade
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Android cleanup: fix call notification buttons, PIN UpdateProfile in mobile.go, video picker & disable desktop mode [skip ci]"
+            git commit -m "Security upgrade: real X25519 + XChaCha20-Poly1305 E2EE, Ed25519 relay auth & HTTPS/WSS on rtbeta.duckdns.org [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
