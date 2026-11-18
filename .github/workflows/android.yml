@@ -131,13 +131,11 @@ jobs:
                   count=1
               )
 
-              # Сохранение файлов из чатов в Download/Hydra (а не в /Logs)
               kt = kt.replace(
                   'put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/Hydra/Logs")\n                        put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)',
                   'put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/Hydra")\n                        put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)'
               )
 
-              # Выбор фото и видео в Галерее (для Сторис и QR)
               kt = kt.replace(
                   'type = "image/*"',
                   'type = "*/*"\n                        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))'
@@ -145,7 +143,7 @@ jobs:
 
               with open(kt_path, "w", encoding="utf-8") as f:
                   f.write(kt)
-              print("[OK] 1. MainActivity.kt обновлён (звонки без RemoteInput, Download/Hydra, фото+видео)")
+              print("[OK] 1. MainActivity.kt обновлён")
 
           # 2. mobile/mobile.go: добавляем UpdateProfile (для смены PIN) и алиас CopyToClipboard
           mob_path = "mobile/mobile.go"
@@ -165,26 +163,29 @@ jobs:
           	case "DeleteProfile":'''
                   )
 
-              mb = mb.replace('case "ClipboardSet":', 'case "ClipboardSet", "CopyToClipboard":')
+              if '"CopyToClipboard"' not in mb:
+                  mb = mb.replace('case "ClipboardSet":', 'case "ClipboardSet", "CopyToClipboard":')
 
               with open(mob_path, "w", encoding="utf-8") as f:
                   f.write(mb)
-              print("[OK] 2. mobile.go: добавлен UpdateProfile и алиас CopyToClipboard")
+              print("[OK] 2. mobile.go обновлён")
 
-          # 3. frontend/src/lib/api_bridge.js: отключаем ПК-режим (Wails)
+          # 3. frontend/src/lib/api_bridge.js: отключаем ПК-режим точной заменой (без обрыва try/catch)
           ab_path = "frontend/src/lib/api_bridge.js"
           if os.path.exists(ab_path):
               with open(ab_path, "r", encoding="utf-8") as f:
                   ab = f.read()
-              ab = re.sub(
-                  r'function isDesktop\(\) \{[\s\S]*?\}',
-                  'function isDesktop() {\n    return false; // Android-only mode\n}',
-                  ab,
-                  count=1
-              )
+              old_is_desktop = """function isDesktop() {
+              try {
+                  return !!(window.go && window.go.main && window.go.main.App);
+              } catch {
+                  return false;
+              }
+          }"""
+              ab = ab.replace(old_is_desktop, "function isDesktop() {\n    return false; // Android-only mode\n}")
               with open(ab_path, "w", encoding="utf-8") as f:
                   f.write(ab)
-              print("[OK] 3. api_bridge.js: ПК-режим отключён")
+              print("[OK] 3. api_bridge.js: ПК-режим отключён чисто")
 
           # 4. frontend/src/components/Chat.svelte: подключаем кнопки уведомления звонка
           ch_path = "frontend/src/components/Chat.svelte"
@@ -216,14 +217,12 @@ jobs:
               ap = ap.replace("let isMobile = false;", "let isMobile = true;")
               ap = ap.replace("isMobile = window.innerWidth < 768;", "isMobile = true; // Android-only")
 
-              # Убираем тройные дубли __setHydraBlur(false)
               ap = re.sub(
                   r'(\s*if \(typeof window !== \'undefined\' && window\.__setHydraBlur\) window\.__setHydraBlur\(false\);){2,}',
                   "\n            if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);",
                   ap
               )
 
-              # Убираем дублирующийся старый блок темы #121212 перед новой темой #121316
               old_theme_dup = """    :global(:root) {
                   --bg-primary: #121212 !important;
                   --bg-secondary: #1E1F22 !important;
@@ -254,7 +253,7 @@ jobs:
 
               with open(app_path, "w", encoding="utf-8") as f:
                   f.write(ap)
-              print("[OK] 5. App.svelte: закреплён Android-режим и очищены дубли")
+              print("[OK] 5. App.svelte обновлён")
 
           # 6. frontend/index.html: убираем дубль проверки 30-секундной блокировки
           idx_path = "frontend/index.html"
@@ -270,7 +269,7 @@ jobs:
               ix = ix.replace(dup_lock, one_lock)
               with open(idx_path, "w", encoding="utf-8") as f:
                   f.write(ix)
-              print("[OK] 6. index.html: убран дубль таймера блокировки")
+              print("[OK] 6. index.html обновлён")
           PYEOF
           python3 apply_android_cleanup.py
           rm -f apply_android_cleanup.py
