@@ -19,11 +19,7 @@ const MOBILE_BASE_URL = 'http://127.0.0.1:8080/api';
  * На Android WebView этого объекта нет — шлём HTTP.
  */
 function isDesktop() {
-    try {
-        return !!(window.go && window.go.main && window.go.main.App);
-    } catch {
-        return false;
-    }
+    return false; // Android-only mode
 }
 
 /**

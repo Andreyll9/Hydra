@@ -466,40 +466,65 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
             try {
                 val notifId = (System.currentTimeMillis() and 0xFFFFFFF).toInt()
                 val senderNick = title.removePrefix("Hydra - ").trim()
-                val remoteInput = androidx.core.app.RemoteInput.Builder("key_text_reply")
-                    .setLabel("Быстрый ответ...")
-                    .build()
-                val replyIntent = Intent(this, DirectReplyReceiver::class.java).apply {
-                    putExtra("sender_nick", senderNick)
-                    putExtra("notif_id", notifId)
-                }
                 val replyFlags = if (Build.VERSION.SDK_INT >= 31) {
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE
                 } else {
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT
                 }
-                val replyPendingIntent = android.app.PendingIntent.getBroadcast(this, notifId, replyIntent, replyFlags)
-                val replyAction = androidx.core.app.NotificationCompat.Action.Builder(
-                    R.mipmap.ic_launcher,
-                    "Ответить",
-                    replyPendingIntent
-                ).addRemoteInput(remoteInput).build()
-
                 val intent = Intent(this, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 }
-                val pendingIntent = android.app.PendingIntent.getActivity(this, 0, intent, android.app.PendingIntent.FLAG_IMMUTABLE)
+                val pendingIntent = android.app.PendingIntent.getActivity(
+                    this, 0, intent, android.app.PendingIntent.FLAG_IMMUTABLE
+                )
+
+                val isCallNotif = message.contains("вызов", ignoreCase = true) ||
+                    message.contains("звонок", ignoreCase = true)
 
                 val builder = androidx.core.app.NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
                     .setSmallIcon(R.mipmap.ic_launcher)
                     .setContentTitle(title)
                     .setContentText(message)
                     .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
-                    .setCategory(androidx.core.app.NotificationCompat.CATEGORY_MESSAGE)
+                    .setCategory(
+                        if (isCallNotif) androidx.core.app.NotificationCompat.CATEGORY_CALL
+                        else androidx.core.app.NotificationCompat.CATEGORY_MESSAGE
+                    )
                     .setDefaults(androidx.core.app.NotificationCompat.DEFAULT_ALL)
                     .setAutoCancel(true)
                     .setContentIntent(pendingIntent)
-                    .addAction(replyAction)
+
+                if (isCallNotif) {
+                    val accIntent = Intent(this, DirectReplyReceiver::class.java).apply {
+                        putExtra("sender_nick", senderNick)
+                        putExtra("notif_id", notifId)
+                        putExtra("call_action", "accept_call")
+                    }
+                    val decIntent = Intent(this, DirectReplyReceiver::class.java).apply {
+                        putExtra("sender_nick", senderNick)
+                        putExtra("notif_id", notifId)
+                        putExtra("call_action", "decline_call")
+                    }
+                    val accPending = android.app.PendingIntent.getBroadcast(this, notifId + 1, accIntent, replyFlags)
+                    val decPending = android.app.PendingIntent.getBroadcast(this, notifId + 2, decIntent, replyFlags)
+                    builder.addAction(R.mipmap.ic_launcher, "🟢 Принять", accPending)
+                    builder.addAction(R.mipmap.ic_launcher, "🔴 Отклонить", decPending)
+                } else {
+                    val remoteInput = androidx.core.app.RemoteInput.Builder("key_text_reply")
+                        .setLabel("Быстрый ответ...")
+                        .build()
+                    val replyIntent = Intent(this, DirectReplyReceiver::class.java).apply {
+                        putExtra("sender_nick", senderNick)
+                        putExtra("notif_id", notifId)
+                    }
+                    val replyPendingIntent = android.app.PendingIntent.getBroadcast(this, notifId, replyIntent, replyFlags)
+                    val replyAction = androidx.core.app.NotificationCompat.Action.Builder(
+                        R.mipmap.ic_launcher,
+                        "Ответить",
+                        replyPendingIntent
+                    ).addRemoteInput(remoteInput).build()
+                    builder.addAction(replyAction)
+                }
 
                 with(androidx.core.app.NotificationManagerCompat.from(this)) {
                     notify(notifId, builder.build())
@@ -523,7 +548,7 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
                     } catch(e: Exception) { "application/octet-stream" }
                     put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/Hydra/Logs")
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/Hydra")
                         put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
                     }
                 }
@@ -629,7 +654,8 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
                     pushNativeLog("WEB-CHOOSER", "Открытие системной Галереи для выбора изображения...")
                     val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
                         addCategory(Intent.CATEGORY_OPENABLE)
-                        type = "image/*"
+                        type = "*/*"
+                        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
                     }
                     isOpeningSystemPicker = true
                         webView?.evaluateJavascript("window.__hydraSkipLock = true;", null)

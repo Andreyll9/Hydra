@@ -111,10 +111,10 @@
 
   // Mobile View
   const mobileView = writable('list'); // 'list', 'chat', 'settings', 'search'
-  let isMobile = false;
+  let isMobile = true;
 
   function updateIsMobile() {
-      isMobile = window.innerWidth < 768;
+      isMobile = true; // Android-only
   }
 
   
@@ -173,8 +173,6 @@
             await loadMyInfo();
             screen = 'main';
             if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
-            if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
-          if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
             loadContacts();
         }
     } catch (e) { console.log("[App] No active session on startup"); }
@@ -356,8 +354,6 @@
           await loadMyInfo();
           screen = 'main';
             if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
-            if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
-          if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
           networkStatus = await AppActions.GetNetworkStatus();
           if (window.__savedViewBeforeLock) {
               showSettings = !!window.__savedSettingsBeforeLock;
@@ -393,8 +389,6 @@
           showToast("Ошибка при загрузке данных: " + err, 'error');
           screen = 'main';
             if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
-            if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
-          if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);
       } finally {
           isInitializing = false;
       }
@@ -1460,32 +1454,7 @@
     .mobile-layout .sidebar { width: 100% !important; border-right: none; }
     .mobile-layout .content-area { width: 100%; height: 100%; }
 
-    :global(:root) {
-        --bg-primary: #121212 !important;
-        --bg-secondary: #1E1F22 !important;
-        --bg-tertiary: #28292D !important;
-        --accent: #8AB4F8 !important;
-        --text-primary: #E3E3E3 !important;
-        --text-secondary: #9AA0A6 !important;
-    }
-    :global(body), :global(.app-container), :global(.login-screen), :global(.content-area) {
-        background: #121212 !important;
-        color: #E3E3E3 !important;
-    }
-    :global(.sidebar), :global(.glass-panel), :global(.settings-card), :global(.modal-content) {
-        background: #1E1F22 !important;
-        backdrop-filter: none !important;
-        border: 1px solid rgba(255,255,255,0.05) !important;
-        border-radius: 24px !important;
-        box-shadow: none !important;
-    }
-    :global(.btn-primary), :global(.btn-primary-premium) {
-        background: #8AB4F8 !important;
-        color: #062E6F !important;
-        border-radius: 100px !important;
-        font-weight: 700 !important;
-        box-shadow: none !important;
-    }
+
 
     :global(:root) {
         --bg-primary: #121316 !important;

@@ -479,6 +479,13 @@
             localStorage.setItem('hydra_pinned_msg_' + selectedContact.ID, JSON.stringify(pinnedChatMsg));
         };
         window.__triggerHydraCallFromProfile = () => startHydraCall();
+        window.__onHydraCallNotifAction = (senderNick, action) => {
+            if (action === 'accept_call') {
+                acceptIncomingHydraCall();
+            } else if (action === 'decline_call') {
+                endHydraCall(true);
+            }
+        };
         window.__triggerHydraCircleFromProfile = () => openCircleStudio(false);
         window.__cycleChatTtlFromProfile = () => cycleDisappearingTimer();
     }

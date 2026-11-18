@@ -400,6 +400,12 @@ func dispatch(app *appcore.AppCore, method string, args []json.RawMessage) (inte
 		parseArgs(args, &profileID, &pin)
 		return app.UnlockProfile(profileID, pin)
 
+	case "UpdateProfile":
+		var profileID, name, avatarPath, newPin, mnemonic string
+		var deleteAvatar, usePin bool
+		parseArgs(args, &profileID, &name, &avatarPath, &deleteAvatar, &usePin, &newPin, &mnemonic)
+		return nil, app.UpdateProfile(profileID, name, avatarPath, deleteAvatar, usePin, newPin, mnemonic)
+
 	case "DeleteProfile":
 		var profileID string
 		parseArgs(args, &profileID)
@@ -568,7 +574,7 @@ func dispatch(app *appcore.AppCore, method string, args []json.RawMessage) (inte
 		return "У вас установлена последняя версия", nil
 
 	// === Utils ===
-	case "ClipboardSet":
+	case "ClipboardSet", "CopyToClipboard":
 		var text string
 		parseArgs(args, &text)
 		if bridge != nil {
