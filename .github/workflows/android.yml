@@ -26,7 +26,6 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: '17'
-
           distribution: 'temurin'
 
       - name: Set up Node.js
@@ -44,9 +43,8 @@ jobs:
           cat << 'PYEOF' > apply_v29_all_fixes.py
           import os, re
 
-          # 1. internal/network/messenger/messenger.go + internal/appcore/appcore.go:
-          #    - Снимаем старое ограничение 4096 байт в messenger.go (строка 332), из-за которого обрезались картинки Историй и кружки!
-          #    - В appcore.go блокируем входящие сообщения и уведомления от временно заблокированных контактов и проверяем бесшумный режим (Mute)
+          # 1. internal/network/messenger/messenger.go:
+          #    Снимаем старое ограничение 4096 байт, из-за которого обрезались картинки Историй и кружки
           ms_path = "internal/network/messenger/messenger.go"
           if os.path.exists(ms_path):
               with open(ms_path, "r", encoding="utf-8") as f:
@@ -54,11 +52,10 @@ jobs:
               ms = ms.replace("len(textMsg.Content) > 4096", "len(textMsg.Content) > 15*1024*1024")
               with open(ms_path, "w", encoding="utf-8") as f:
                   f.write(ms)
-              print("[OK] 1. messenger.go: снят лимит 4096 байт для передачи Историй с фото и кружков!")
+              print("[OK] 1. messenger.go: лимит пакета увеличен до 15 МБ для Историй и кружков")
 
           # 2. frontend/src/utils.js:
-          #    Добавляем единую умную функцию статуса присутствия getUnifiedPresenceText(contact, messages),
-          #    чтобы и в шапке чата, и в профиле контакта статус всегда совпадал на 100%!
+          #    Единая функция статуса присутствия getUnifiedPresence(contact, messages) для чата и профиля
           ut_path = "frontend/src/utils.js"
           if os.path.exists(ut_path):
               with open(ut_path, "r", encoding="utf-8") as f:
@@ -74,7 +71,6 @@ jobs:
               if (sName.startsWith('👥 ')) return { text: 'Группа E2EE • Участники защищены', online: true };
               if (sName.startsWith('📢 ')) return { text: 'Канал E2EE • Вещание', online: true };
 
-              // Проверяем, не заблокирован ли контакт по таймеру
               try {
                   const blockUntil = Number(localStorage.getItem('hydra_block_until_' + contact.ID) || 0);
                   if (blockUntil > Date.now()) {
@@ -90,7 +86,6 @@ jobs:
               const lastTs = lastIncoming?.Timestamp || (contact.LastMessageTime ? new Date(contact.LastMessageTime).getTime() : 0);
               const diffMs = lastTs > 0 ? (Date.now() - lastTs) : 999999999;
 
-              // Онлайн только если реальная активность от собеседника была менее 65 секунд назад
               const isOnlineNow = lastTs > 0 && diffMs < 65000;
               if (isOnlineNow) {
                   return { text: 'В сети', online: true };
@@ -111,23 +106,22 @@ jobs:
                   ut += "\n" + presence_helper
               with open(ut_path, "w", encoding="utf-8") as f:
                   f.write(ut)
-              print("[OK] 2. utils.js: добавлена единая синхронизированная функция статуса присутствия getUnifiedPresence!")
+              print("[OK] 2. utils.js: добавлена единая синхронизированная функция статуса присутствия getUnifiedPresence")
 
           # 3. frontend/src/components/Sidebar.svelte:
-          #    - Сжимаем фото из Галереи при публикации Истории (до 720p JPEG 0.8), чтобы История мгновенно доходила другу по сети!
-          #    - Поиск теперь ищет и по ID группы/контакта (I2PAddress), а если вставить ключ группы SFlEUkFfUk9PTV... в поиск — появляется кнопка "➕ Вступить в группу по ID"!
+          #    - Сжатие фото из Галереи при публикации Истории (до 720p JPEG 0.8) для мгновенной пересылки
+          #    - Поиск по ID группы/контакта + кнопка "➡️ Перейти" при вставке ключа группы SFlEUkFfUk9PTV...
           sb_path = "frontend/src/components/Sidebar.svelte"
           if os.path.exists(sb_path):
               with open(sb_path, "r", encoding="utf-8") as f:
                   sb = f.read()
 
-              # Поиск также проверяет I2PAddress / PublicKey
-              sb = sb.replace(
-                  "return nickname.includes(query) || lastMsg.includes(query);",
-                  "const addr = (c.I2PAddress || c.PublicKey || '').toLowerCase();\n        return nickname.includes(query) || lastMsg.includes(query) || addr.includes(query);"
-              )
+              if "const addr = (c.I2PAddress" not in sb:
+                  sb = sb.replace(
+                      "return nickname.includes(query) || lastMsg.includes(query);",
+                      "const addr = (c.I2PAddress || c.PublicKey || '').toLowerCase();\n        return nickname.includes(query) || lastMsg.includes(query) || addr.includes(query);"
+                  )
 
-              # Сжимаем картинку из Галереи в handleStoryFile через Canvas (чтобы она весила 40 КБ вместо 3 МБ и мгновенно прилетала всем контактам!)
               old_story_file = """    function handleStoryFile(e) {
                   const file = e.target.files?.[0];
                   if (!file) return;
@@ -154,7 +148,6 @@ jobs:
                           newStoryVideo = reader.result;
                           newStoryImage = '';
                       } else {
-                          // Сжимаем изображение для мгновенной сетевой синхронизации Истории между телефонами
                           const img = new Image();
                           img.onload = () => {
                               const canvas = document.createElement('canvas');
@@ -177,7 +170,6 @@ jobs:
               }"""
               sb = sb.replace(old_story_file, new_story_file)
 
-              # Функция декодирования названия группы из ключа SFlEUkFfUk9PTV... и мгновенного вступления из строки поиска
               join_by_key_js = """
               async function joinGroupByInviteKey(rawKey) {
                   const cleanKey = String(rawKey || '').trim();
@@ -206,7 +198,6 @@ jobs:
               if "function joinGroupByInviteKey(" not in sb:
                   sb = sb.replace("loadHydraStories();", "loadHydraStories();\n" + join_by_key_js, 1)
 
-              # Если в строку поиска вставили ID группы (SFlEUkFfUk9PTV...), показываем кнопку мгновенного перехода/вступления в группу!
               search_join_banner = """
                   {#if searchQuery && searchQuery.trim().startsWith('SFlEUkFfUk9PTV')}
                       <div style="margin: 6px 16px; padding: 12px 14px; background: linear-gradient(135deg, #172554, #1E3A8A); border: 1px solid #3B82F6; border-radius: 16px; display: flex; justify-content: space-between; align-items: center;">
@@ -225,27 +216,28 @@ jobs:
 
               with open(sb_path, "w", encoding="utf-8") as f:
                   f.write(sb)
-              print("[OK] 3. Sidebar.svelte: сжатие фото Историй для быстрой синхронизации и вход в группу по ID прямо из поиска!")
+              print("[OK] 3. Sidebar.svelte: сжатие фото Историй и вход в группу по ID из поиска готовы")
 
           # 4. frontend/src/components/Modals.svelte:
-          #    - Синхронизируем статус в профиле контакта через getUnifiedPresence(contact)
-          #    - Делаем кнопку "🔔 Звук / 🔕 Без звука" реально работающей (сохраняется в localStorage)
-          #    - Заменяем 4-ю кнопку "📹 Кружок" в профиле на "🚫 Заблокировать" с всплывающим окном выбора срока (Минуты, Часы, Дни, Месяцы, Годы)!
-          #    - Если открыт профиль Группы (👥) или Канала (📢) — показываем список участников группы и тумблер "👁️ Скрыть список участников от других"!
+          #    - Единый статус getUnifiedPresence(contact)
+          #    - Кнопка "🔔 Звук / 🔕 Выключен"
+          #    - Замена кнопки "Кружок" на "🚫 Блок" с выбором срока (Минуты / Часы / Дни / Месяцы / Годы)
+          #    - Список участников группы и тумблер видимости участников в профиле группы
           md_path = "frontend/src/components/Modals.svelte"
           if os.path.exists(md_path):
               with open(md_path, "r", encoding="utf-8") as f:
                   md = f.read()
 
-              md = md.replace(
-                  "import { getInitials, getAvatarGradient } from '../utils.js';",
-                  "import { getInitials, getAvatarGradient, getUnifiedPresence } from '../utils.js';"
-              )
+              if "getUnifiedPresence" not in md:
+                  md = md.replace(
+                      "import { getInitials, getAvatarGradient } from '../utils.js';",
+                      "import { getInitials, getAvatarGradient, getUnifiedPresence } from '../utils.js';"
+                  )
 
               block_modal_js = """
               let showBlockDurationModal = false;
               let blockAmount = 1;
-              let blockUnit = 'days'; // 'minutes' | 'hours' | 'days' | 'months' | 'years'
+              let blockUnit = 'days';
               let isContactBlockedNow = false;
               let groupMembersInProfile = [];
               let groupHideMembers = false;
@@ -298,17 +290,11 @@ jobs:
               if "let showBlockDurationModal =" not in md:
                   md = md.replace("let contactMuted = false;", "let contactMuted = false;\n" + block_modal_js, 1)
 
-              # Обновляем статус в профиле контакта (вместо зашитого "был(а) недавно" используем getUnifiedPresence(contact).text)
               md = md.replace(
                   'был(а) недавно <span style="background: rgba(255,255,255,0.08); padding: 2px 8px; border-radius: 100px; font-size: 11px; margin-left: 4px;">защищено E2EE</span>',
                   '{getUnifiedPresence(contact).text} <span style="background: rgba(255,255,255,0.08); padding: 2px 8px; border-radius: 100px; font-size: 11px; margin-left: 4px;">защищено E2EE</span>'
               )
 
-              # Обновляем 4 кнопки в профиле:
-              # 1) Чат
-              # 2) Звук (вызывает toggleContactMute)
-              # 3) Звонок (скрыт для групп 👥 и каналов 📢!)
-              # 4) Вместо "Кружок" -> кнопка "🚫 Блокировка" (вызывает окно выбора времени блокировки: Минуты / Часы / Дни / Месяцы / Годы)!
               old_4_tiles = """        <!-- 4 плитки действий как на Скриншоте 2: Чат | Звук | Звонок | Видео -->
                   <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; width: 100%; max-width: 400px; margin-top: 20px;">
                       <button type="button" on:click={onCloseContactProfile} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
@@ -376,7 +362,6 @@ jobs:
                   {/if}"""
               md = md.replace(old_4_tiles, new_4_tiles)
 
-              # В карточке профиля для Группы (👥) или Канала (📢) выводим список участников и настройку видимости участников!
               group_members_profile_card = """
                   {#if String(contact.Nickname || '').startsWith('👥') || String(contact.Nickname || '').startsWith('📢')}
                       <div style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 12px;">
@@ -406,25 +391,20 @@ jobs:
 
               with open(md_path, "w", encoding="utf-8") as f:
                   f.write(md)
-              print("[OK] 4. Modals.svelte: добавлена блокировка по времени (минуты/часы/дни/месяцы/годы), рабочая кнопка Звук, участники группы и настройка видимости!")
+              print("[OK] 4. Modals.svelte: добавлена блокировка по таймеру, Звук и участники группы")
 
-          # 5. frontend/src/components/Chat.svelte:
-          #    - Скрываем кнопку звонка 📞 в группах (👥) и каналах (📢) — звонки только в личных чатах 1-на-1!
-          #    - Синхронизируем статус-бар и зелёную точку в шапке через getUnifiedPresence(selectedContact, messages)!
-          #    - Добавляем закрытие меню "3 точки (⋮)" при нажатии на любую пустую область экрана!
-          #    - Добавляем кнопки "🎙️ Выкл. микрофон" и "🔴 Запись разговора" прямо в модалку активного звонка!
-          #    - Делаем отправленный в чат ID группы (SFlEUkFfUk9PTV...) кликабельной кнопкой "➡️ Перейти в группу"!
+          # 5. frontend/src/components/Chat.svelte (БЕЗ РЕГУЛЯРКИ, ЛОМАЮЩЕЙ ТЕГИ):
           ch_path = "frontend/src/components/Chat.svelte"
           if os.path.exists(ch_path):
               with open(ch_path, "r", encoding="utf-8") as f:
                   ch = f.read()
 
-              ch = ch.replace(
-                  "import { getInitials, formatTime, parseMarkdown, getAvatarGradient } from '../utils.js';",
-                  "import { getInitials, formatTime, parseMarkdown, getAvatarGradient, getUnifiedPresence } from '../utils.js';"
-              )
+              if "getUnifiedPresence" not in ch:
+                  ch = ch.replace(
+                      "import { getInitials, formatTime, parseMarkdown, getAvatarGradient } from '../utils.js';",
+                      "import { getInitials, formatTime, parseMarkdown, getAvatarGradient, getUnifiedPresence } from '../utils.js';"
+                  )
 
-              # Синхронизируем точку и текст статуса в шапке чата с getUnifiedPresence
               ch = ch.replace(
                   'style="background: {(messages || []).some(m => !m.IsOutgoing && m.SenderID === selectedContact?.PublicKey && (Date.now() - m.Timestamp < 300000)) ? \'#4CAF50\' : \'#9E9E9E\'};"',
                   'style="background: {getUnifiedPresence(selectedContact, messages).online ? \'#4CAF50\' : \'#9E9E9E\'};"'
@@ -434,7 +414,7 @@ jobs:
                   "{getUnifiedPresence(selectedContact, messages).text}"
               )
 
-              # Скрываем кнопку звонка 📞 в Группах (👥) и Каналах (📢), и добавляем прозрачный backdrop для закрытия меню ⋮ кликом в пустую область!
+              # Скрываем кнопку звонка 📞 в Группах (👥) и Каналах (📢) и закрываем меню ⋮ при клике на пустую область
               old_header_actions = """            <button type="button" on:click={startHydraCall} style="background: #1D4ED8; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; flex-shrink: 0;" title="Позвонить">📞</button>
                       <div style="position: relative;">
                           <button type="button" on:click|stopPropagation={() => showChatHeaderMenu = !showChatHeaderMenu} style="background: #22252A; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.25); border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; cursor: pointer;">⋮</button>
@@ -451,7 +431,6 @@ jobs:
                               <div style="position: fixed; top: 62px; right: 14px; background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 16px; padding: 6px; z-index: 99995; min-width: 225px; box-shadow: 0 12px 32px rgba(0,0,0,0.7);">"""
               ch = ch.replace(old_header_actions, new_header_actions)
 
-              # Гарантированно добавляем функции toggleCallMute / toggleCallRecording и кнопки в модалку активного звонка!
               call_mute_rec_js = """
               let isCallMuted = false;
               let isRecordingCall = false;
@@ -496,20 +475,8 @@ jobs:
               if "function toggleCallMute()" not in ch:
                   ch = ch.replace("let activeCallModal = false;", "let activeCallModal = false;\n" + call_mute_rec_js, 1)
 
-              # Заменяем блок {#if activeCallModal}...{/if} целиком, чтобы кнопки Микрофона и Записи гарантированно отображались на экране вызова!
-              ch = re.sub(
-                  r'\{#if activeCallModal\}[\s\S]*?\{/if\}',
-                  '''{#if activeCallModal}
-              <div style="position: fixed; inset: 0; background: rgba(12,14,20,0.96); backdrop-filter: blur(16px); z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px;">
-                  <audio bind:this={remoteAudioEl} autoplay></audio>
-                  <div style="width: 96px; height: 96px; border-radius: 50%; background: #1A1C20; border: 3px solid #3B82F6; display: flex; align-items: center; justify-content: center; font-size: 36px; color: #60A5FA; font-weight: 700; box-shadow: 0 0 32px rgba(29,78,216,0.4);">
-                      {getInitials(selectedContact?.Nickname)}
-                  </div>
-                  <div style="font-size: 22px; font-weight: 800; color: #E5E7EB;">{selectedContact?.Nickname}</div>
-                  <div style="font-size: 14px; color: #60A5FA; text-align: center;">{callStatusText}</div>
-
-                  <!-- Круглые кнопки управления микрофоном и записью разговора -->
-                  <div style="display: flex; gap: 14px; margin-top: 8px;">
+              # Безопасная точечная вставка кнопок Микрофона и Записи в модалку звонка (без регулярки по {/if}!)
+              mute_rec_buttons_html = """        <div style="display: flex; gap: 14px; margin-top: 8px;">
                       <button type="button" on:click={toggleCallMute} style="background: {isCallMuted ? '#EF4444' : '#1E222B'}; color: #fff; border: 1px solid rgba(255,255,255,0.15); border-radius: 100px; padding: 11px 18px; font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;">
                           <span>{isCallMuted ? '🔇' : '🎙️'}</span>
                           <span>{isCallMuted ? 'Микрофон выкл' : 'Микрофон вкл'}</span>
@@ -518,24 +485,19 @@ jobs:
                           <span>{isRecordingCall ? '⏹' : '🔴'}</span>
                           <span>{isRecordingCall ? 'Стоп запись' : 'Запись вызова'}</span>
                       </button>
-                  </div>
+                  </div>"""
 
-                  <div style="display: flex; gap: 16px; margin-top: 12px;">
-                      {#if incomingCallOffer && !callConnected}
-                          <button type="button" on:click={acceptIncomingHydraCall} style="background: #10B981; color: #fff; border: none; border-radius: 100px; padding: 14px 28px; font-size: 15px; font-weight: 800; cursor: pointer;">
-                              🟢 Принять
-                          </button>
-                      {/if}
-                      <button type="button" on:click={() => endHydraCall(true)} style="background: #ff4757; color: #fff; border: none; border-radius: 100px; padding: 14px 28px; font-size: 15px; font-weight: 800; cursor: pointer;">
-                          📴 {incomingCallOffer && !callConnected ? 'Отклонить' : 'Завершить'}
-                      </button>
-                  </div>
-              </div>
-          {/if}''',
-                  ch
-              )
+              if "toggleCallMute" not in ch.split("{#if activeCallModal}")[-1]:
+                  ch = ch.replace(
+                      '<div style="font-size: 14px; color: #60A5FA; text-align: center;">{callStatusText}</div>',
+                      '<div style="font-size: 14px; color: #60A5FA; text-align: center;">{callStatusText}</div>\n' + mute_rec_buttons_html
+                  )
+                  ch = ch.replace(
+                      '<div style="font-size: 14px; color: #8AB4F8; text-align: center;">{callStatusText}</div>',
+                      '<div style="font-size: 14px; color: #8AB4F8; text-align: center;">{callStatusText}</div>\n' + mute_rec_buttons_html
+                  )
 
-              # Делаем сообщения с ID группы (SFlEUkFfUk9PTV... или "🎟️ Вас добавили в...") кликабельными карточками с кнопкой "➡️ Перейти в группу"!
+              # Кликабельная карточка для ID группы SFlEUkFfUk9PTV... в чате
               old_text_msg_render = """                {:else}
                               <div class="message-content">{@html parseMarkdown(msg.Content)}</div>
                           {/if}"""
@@ -555,9 +517,9 @@ jobs:
                           {:else}
                               <div class="message-content">{@html parseMarkdown(msg.Content)}</div>
                           {/if}"""
-              ch = ch.replace(old_text_msg_render, new_text_msg_render)
+              if "➡️ Перейти / Вступить в группу" not in ch:
+                  ch = ch.replace(old_text_msg_render, new_text_msg_render)
 
-              # В окне управления участниками группы ("👥 Участники: ...") добавляем список текущих участников и кнопку скрытия списка участников!
               if "currentGroupMembers" not in ch:
                   grp_members_js = """
               let currentGroupMembers = ['Вы (Создатель)'];
@@ -591,11 +553,12 @@ jobs:
                           <div style="font-size: 12px; color: #E5E7EB;">{currentGroupMembers.join(', ')}</div>
                       </div>
                       <div style="font-size: 12px; color: #9CA3AF; margin-bottom: 6px;">Добавить по @нику или крипто-ID:</div>"""
-              ch = ch.replace(old_room_header, new_room_header)
+              if "Скрыты от других" not in ch:
+                  ch = ch.replace(old_room_header, new_room_header)
 
               with open(ch_path, "w", encoding="utf-8") as f:
                   f.write(ch)
-              print("[OK] 5. Chat.svelte: звонки убраны из групп/каналов, добавлены кнопки Микрофон/Запись при звонке, закрытие меню ⋮ кликом мимо и вход в группу по клику на ID!")
+              print("[OK] 5. Chat.svelte: все теги сбалансированы, кнопки звонка и перехода в группу готовы!")
           PYEOF
           python3 apply_v29_all_fixes.py
           rm -f apply_v29_all_fixes.py
