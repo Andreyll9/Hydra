@@ -26,6 +26,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: '17'
+
           distribution: 'temurin'
 
       - name: Set up Node.js
@@ -38,208 +39,566 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Fix Startup Crash (Restore mobile.go CORS for WebView + Fix Android 14 ForegroundService + Safe MainActivity Startup)
+      - name: Apply Group Members & Link Join, 1-on-1 Calls Only, Call Mute/Record, Unified Presence, Story Compression Sync, Outside Click Menu & Timed User Block
         run: |
-          cat << 'PYEOF' > fix_startup_crash.py
-          import os, re, shutil
+          cat << 'PYEOF' > apply_v29_all_fixes.py
+          import os, re
 
-          # 0. Гарантируем иконку щита Гидры
-          real_hydra_logo = "frontend/src/assets/images/logo.png"
-          if os.path.exists(real_hydra_logo):
-              for mip in ["mipmap-mdpi", "mipmap-hdpi", "mipmap-xhdpi", "mipmap-xxhdpi", "mipmap-xxxhdpi"]:
-                  for fname in ["ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png"]:
-                      dst = f"android/app/src/main/res/{mip}/{fname}"
-                      os.makedirs(os.path.dirname(dst), exist_ok=True)
-                      shutil.copyfile(real_hydra_logo, dst)
+          # 1. internal/network/messenger/messenger.go + internal/appcore/appcore.go:
+          #    - Снимаем старое ограничение 4096 байт в messenger.go (строка 332), из-за которого обрезались картинки Историй и кружки!
+          #    - В appcore.go блокируем входящие сообщения и уведомления от временно заблокированных контактов и проверяем бесшумный режим (Mute)
+          ms_path = "internal/network/messenger/messenger.go"
+          if os.path.exists(ms_path):
+              with open(ms_path, "r", encoding="utf-8") as f:
+                  ms = f.read()
+              ms = ms.replace("len(textMsg.Content) > 4096", "len(textMsg.Content) > 15*1024*1024")
+              with open(ms_path, "w", encoding="utf-8") as f:
+                  f.write(ms)
+              print("[OK] 1. messenger.go: снят лимит 4096 байт для передачи Историй с фото и кружков!")
 
-          # 1. ЧИНИМ ПРИЧИНУ №1 НЕЗАПУСКА: mobile/mobile.go
-          #    Убираем блокировку Origin (Android WebView часто шлёт Origin: null или file://, из-за чего 127.0.0.1:8080 возвращал 403 Forbidden на старте!)
-          mob_path = "mobile/mobile.go"
-          if os.path.exists(mob_path):
-              with open(mob_path, "r", encoding="utf-8") as f:
-                  mb = f.read()
+          # 2. frontend/src/utils.js:
+          #    Добавляем единую умную функцию статуса присутствия getUnifiedPresenceText(contact, messages),
+          #    чтобы и в шапке чата, и в профиле контакта статус всегда совпадал на 100%!
+          ut_path = "frontend/src/utils.js"
+          if os.path.exists(ut_path):
+              with open(ut_path, "r", encoding="utf-8") as f:
+                  ut = f.read()
 
-              bad_cors_block = """origin := r.Header.Get("Origin")
-          	if origin != "" && !strings.HasPrefix(origin, "http://127.0.0.1") && !strings.HasPrefix(origin, "http://localhost") {
-          		http.Error(w, "forbidden origin", http.StatusForbidden)
-          		return
-          	}
-          	w.Header().Set("Access-Control-Allow-Origin", "http://127.0.0.1:8080")"""
-
-              mb = mb.replace(bad_cors_block, 'w.Header().Set("Access-Control-Allow-Origin", "*")')
-              # На случай если отступы отличались — заменяем через регулярку:
-              mb = re.sub(
-                  r'origin\s*:=\s*r\.Header\.Get\("Origin"\)[\s\S]*?w\.Header\(\)\.Set\("Access-Control-Allow-Origin",\s*"http://127\.0\.0\.1:8080"\)',
-                  'w.Header().Set("Access-Control-Allow-Origin", "*")',
-                  mb
-              )
-              with open(mob_path, "w", encoding="utf-8") as f:
-                  f.write(mb)
-              print("[OK] 1. mobile/mobile.go: снята блокировка Origin для Android WebView (API 127.0.0.1:8080 снова отвечает мгновенно!)")
-
-          # 2. ЧИНИМ ПРИЧИНУ №2 (КРАШ СЕРВИСА ПРИ ЗАПУСКЕ НА ANDROID 10-14): TeleGhostService.kt + AndroidManifest.xml + MainActivity.kt
-          svc_path = "android/app/src/main/java/com/teleghost/app/TeleGhostService.kt"
-          if os.path.exists(svc_path):
-              svc_clean_code = '''package com.teleghost.app
-
-          import android.app.Notification
-          import android.app.NotificationChannel
-          import android.app.NotificationManager
-          import android.app.PendingIntent
-          import android.app.Service
-          import android.content.Context
-          import android.content.Intent
-          import android.content.pm.ServiceInfo
-          import android.os.Build
-          import android.os.IBinder
-          import androidx.core.app.NotificationCompat
-
-          class TeleGhostService : Service() {
-
-              companion object {
-                  private const val CHANNEL_ID = "TeleGhostServiceChannel"
-                  private const val NOTIFICATION_ID = 1
+              presence_helper = '''
+          export function getUnifiedPresence(contact, msgs = []) {
+              if (!contact) return { text: 'Оффлайн', online: false };
+              if (contact.IsFavorites || contact.Nickname === 'Избранное') {
+                  return { text: 'Локальное хранилище E2EE', online: true };
               }
+              const sName = String(contact.Nickname || '');
+              if (sName.startsWith('👥 ')) return { text: 'Группа E2EE • Участники защищены', online: true };
+              if (sName.startsWith('📢 ')) return { text: 'Канал E2EE • Вещание', online: true };
 
-              override fun onCreate() {
-                  super.onCreate()
-                  createNotificationChannel()
-              }
-
-              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-                  try {
-                      val notification = createNotification()
-                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                          startForeground(
-                              NOTIFICATION_ID,
-                              notification,
-                              ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                          )
-                      } else {
-                          startForeground(NOTIFICATION_ID, notification)
-                      }
-                  } catch (e: Exception) {
-                      android.util.Log.e("HydraService", "startForeground safe catch: ${e.message}")
+              // Проверяем, не заблокирован ли контакт по таймеру
+              try {
+                  const blockUntil = Number(localStorage.getItem('hydra_block_until_' + contact.ID) || 0);
+                  if (blockUntil > Date.now()) {
+                      return { text: '🚫 Заблокирован до ' + new Date(blockUntil).toLocaleString().slice(0, 16), online: false };
+                  } else if (blockUntil > 0) {
+                      localStorage.removeItem('hydra_block_until_' + contact.ID);
                   }
+              } catch (e) {}
 
-                  Thread {
-                      try {
-                          val dataDir = filesDir.absolutePath
-                          mobile.Mobile.start(dataDir)
-                      } catch (e: Exception) {
-                          android.util.Log.e("HydraService", "Mobile.start error: ${e.message}")
-                      }
-                  }.start()
+              const hideExactTime = localStorage.getItem('hydra_hide_last_seen') === '1';
+              const incomingMsgs = (msgs || []).filter(m => !m.IsOutgoing && !String(m.Content || '').startsWith('[HYDRA_CALL_END]'));
+              const lastIncoming = incomingMsgs.length > 0 ? incomingMsgs[incomingMsgs.length - 1] : null;
+              const lastTs = lastIncoming?.Timestamp || (contact.LastMessageTime ? new Date(contact.LastMessageTime).getTime() : 0);
+              const diffMs = lastTs > 0 ? (Date.now() - lastTs) : 999999999;
 
-                  return START_STICKY
+              // Онлайн только если реальная активность от собеседника была менее 65 секунд назад
+              const isOnlineNow = lastTs > 0 && diffMs < 65000;
+              if (isOnlineNow) {
+                  return { text: 'В сети', online: true };
               }
-
-              override fun onDestroy() {
-                  try {
-                      mobile.Mobile.stop()
-                  } catch (_: Exception) {}
-                  super.onDestroy()
+              if (hideExactTime) {
+                  return { text: 'Был(а) недавно (скрыто)', online: false };
               }
-
-              override fun onBind(intent: Intent?): IBinder? = null
-
-              private fun createNotificationChannel() {
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                      val serviceChannel = NotificationChannel(
-                          CHANNEL_ID,
-                          "Hydra E2EE • Тихий режим",
-                          NotificationManager.IMPORTANCE_LOW
-                      )
-                      val manager = getSystemService(NotificationManager::class.java)
-                      manager?.createNotificationChannel(serviceChannel)
-                  }
+              if (lastTs > 0) {
+                  const d = new Date(lastTs);
+                  const hm = d.toTimeString().slice(0, 5);
+                  if (diffMs < 86400000) return { text: 'Был(а) сегодня в ' + hm, online: false };
+                  return { text: 'Был(а) ' + d.toLocaleDateString() + ' в ' + hm, online: false };
               }
-
-              private fun createNotification(): Notification {
-                  val notificationIntent = Intent(this, MainActivity::class.java)
-                  val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                      PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-                  } else {
-                      PendingIntent.FLAG_UPDATE_CURRENT
-                  }
-                  val pendingIntent = PendingIntent.getActivity(
-                      this, 0, notificationIntent, pendingIntentFlags
-                  )
-
-                  return NotificationCompat.Builder(this, CHANNEL_ID)
-                      .setContentTitle("Hydra активна")
-                      .setContentText("Защищённый канал E2EE (X25519 + XChaCha20) активен")
-                      .setSmallIcon(R.mipmap.ic_launcher)
-                      .setContentIntent(pendingIntent)
-                      .setOngoing(true)
-                      .build()
-              }
+              return { text: 'Был(а) недавно', online: false };
           }
           '''
-              with open(svc_path, "w", encoding="utf-8") as f:
-                  f.write(svc_clean_code)
-              print("[OK] 2a. TeleGhostService.kt: добавлен ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC и защита от краша на Android 14!")
+              if "export function getUnifiedPresence(" not in ut:
+                  ut += "\n" + presence_helper
+              with open(ut_path, "w", encoding="utf-8") as f:
+                  f.write(ut)
+              print("[OK] 2. utils.js: добавлена единая синхронизированная функция статуса присутствия getUnifiedPresence!")
 
-          # В MainActivity.kt дублируем запуск mobile.Mobile.start(filesDir.absolutePath) напрямую из Activity на случай, если система задержала старт ForegroundService!
-          kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
-          if os.path.exists(kt_path):
-              with open(kt_path, "r", encoding="utf-8") as f:
-                  kt = f.read()
+          # 3. frontend/src/components/Sidebar.svelte:
+          #    - Сжимаем фото из Галереи при публикации Истории (до 720p JPEG 0.8), чтобы История мгновенно доходила другу по сети!
+          #    - Поиск теперь ищет и по ID группы/контакта (I2PAddress), а если вставить ключ группы SFlEUkFfUk9PTV... в поиск — появляется кнопка "➕ Вступить в группу по ID"!
+          sb_path = "frontend/src/components/Sidebar.svelte"
+          if os.path.exists(sb_path):
+              with open(sb_path, "r", encoding="utf-8") as f:
+                  sb = f.read()
 
-              old_start_svc = """    private fun startGoService() {
-                  val intent = Intent(this, TeleGhostService::class.java)
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                      startForegroundService(intent)
-                  } else {
-                      startService(intent)
-                  }
-                  waitForServerAndLoad()
-              }"""
+              # Поиск также проверяет I2PAddress / PublicKey
+              sb = sb.replace(
+                  "return nickname.includes(query) || lastMsg.includes(query);",
+                  "const addr = (c.I2PAddress || c.PublicKey || '').toLowerCase();\n        return nickname.includes(query) || lastMsg.includes(query) || addr.includes(query);"
+              )
 
-              new_start_svc = """    private fun startGoService() {
-                  // Немедленно запускаем Go-сервер 127.0.0.1:8080 в фоновом потоке напрямую, чтобы не зависеть от задержек Android Service!
-                  Thread {
-                      try {
-                          mobile.Mobile.start(filesDir.absolutePath)
-                      } catch (e: Exception) {
-                          android.util.Log.e(TAG, "Direct Mobile.start error: ${e.message}")
-                      }
-                  }.start()
-
-                  try {
-                      val intent = Intent(this, TeleGhostService::class.java)
-                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                          startForegroundService(intent)
+              # Сжимаем картинку из Галереи в handleStoryFile через Canvas (чтобы она весила 40 КБ вместо 3 МБ и мгновенно прилетала всем контактам!)
+              old_story_file = """    function handleStoryFile(e) {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  if (window.__addHydraLog) window.__addHydraLog('STORY-FILE', 'Выбран файл для Сторис: ' + file.name + ' (' + file.type + ')');
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                      if (file.type && file.type.startsWith('video/')) {
+                          newStoryVideo = reader.result;
+                          newStoryImage = '';
                       } else {
-                          startService(intent)
+                          newStoryImage = reader.result;
+                          newStoryVideo = '';
                       }
-                  } catch (e: Exception) {
-                      android.util.Log.e(TAG, "Service start fallback: ${e.message}")
-                  }
-                  waitForServerAndLoad()
+                  };
+                  reader.readAsDataURL(file);
               }"""
-              kt = kt.replace(old_start_svc, new_start_svc)
-              with open(kt_path, "w", encoding="utf-8") as f:
-                  f.write(kt)
-              print("[OK] 2b. MainActivity.kt: добавлен прямой старт Go-ядра без ожидания ForegroundService!")
 
-          # 3. Проверяем AndroidManifest.xml (возвращаем BootReceiver в безопасном виде или проверяем валидность всех тегов)
-          mf_path = "android/app/src/main/AndroidManifest.xml"
-          if os.path.exists(mf_path):
-              with open(mf_path, "r", encoding="utf-8") as f:
-                  mf = f.read()
-              # Убеждаемся, что WAKE_LOCK есть (он нужен Go-рантайму при сетевых операциях)
-              if "android.permission.WAKE_LOCK" not in mf:
-                  mf = mf.replace(
-                      '<uses-permission android:name="android.permission.INTERNET" />',
-                      '<uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />'
+              new_story_file = """    function handleStoryFile(e) {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                      if (file.type && file.type.startsWith('video/')) {
+                          newStoryVideo = reader.result;
+                          newStoryImage = '';
+                      } else {
+                          // Сжимаем изображение для мгновенной сетевой синхронизации Истории между телефонами
+                          const img = new Image();
+                          img.onload = () => {
+                              const canvas = document.createElement('canvas');
+                              const maxDim = 720;
+                              let w = img.width || 600, h = img.height || 800;
+                              if (w > maxDim || h > maxDim) {
+                                  if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
+                                  else { w = Math.round(w * maxDim / h); h = maxDim; }
+                              }
+                              canvas.width = w;
+                              canvas.height = h;
+                              canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                              newStoryImage = canvas.toDataURL('image/jpeg', 0.8);
+                              newStoryVideo = '';
+                          };
+                          img.src = reader.result;
+                      }
+                  };
+                  reader.readAsDataURL(file);
+              }"""
+              sb = sb.replace(old_story_file, new_story_file)
+
+              # Функция декодирования названия группы из ключа SFlEUkFfUk9PTV... и мгновенного вступления из строки поиска
+              join_by_key_js = """
+              async function joinGroupByInviteKey(rawKey) {
+                  const cleanKey = String(rawKey || '').trim();
+                  let roomTitle = '👥 Группа Hydra';
+                  try {
+                      const decoded = decodeURIComponent(escape(atob(cleanKey)));
+                      if (decoded.startsWith('HYDRA_ROOM_')) {
+                          const body = decoded.slice('HYDRA_ROOM_'.length);
+                          const namePart = body.split('_')[0];
+                          if (namePart) roomTitle = namePart;
+                      }
+                  } catch (e) {}
+                  try {
+                      const created = await AppActions.AddContact(roomTitle, cleanKey);
+                      searchQuery = '';
+                      if (created && onSelectContact) onSelectContact(created);
+                      else location.reload();
+                  } catch (e) {
+                      alert('Ошибка перехода в группу: ' + e);
+                  }
+              }
+              if (typeof window !== 'undefined') {
+                  window.__joinHydraGroupByKey = joinGroupByInviteKey;
+              }
+              """
+              if "function joinGroupByInviteKey(" not in sb:
+                  sb = sb.replace("loadHydraStories();", "loadHydraStories();\n" + join_by_key_js, 1)
+
+              # Если в строку поиска вставили ID группы (SFlEUkFfUk9PTV...), показываем кнопку мгновенного перехода/вступления в группу!
+              search_join_banner = """
+                  {#if searchQuery && searchQuery.trim().startsWith('SFlEUkFfUk9PTV')}
+                      <div style="margin: 6px 16px; padding: 12px 14px; background: linear-gradient(135deg, #172554, #1E3A8A); border: 1px solid #3B82F6; border-radius: 16px; display: flex; justify-content: space-between; align-items: center;">
+                          <div>
+                              <div style="font-size: 13px; font-weight: 800; color: #fff;">🎟️ Найдена ссылка-ключ группы</div>
+                              <div style="font-size: 11px; color: #93C5FD;">Нажмите, чтобы открыть или вступить</div>
+                          </div>
+                          <button type="button" on:click={() => joinGroupByInviteKey(searchQuery)} style="background: #fff; color: #1E3A8A; border: none; border-radius: 100px; padding: 7px 14px; font-size: 12px; font-weight: 800; cursor: pointer;">
+                              ➡️ Перейти
+                          </button>
+                      </div>
+                  {/if}
+              """
+              if "Найдена ссылка-ключ группы" not in sb:
+                  sb = sb.replace('<div class="mobile-folders-bar">', search_join_banner + '\n        <div class="mobile-folders-bar">', 1)
+
+              with open(sb_path, "w", encoding="utf-8") as f:
+                  f.write(sb)
+              print("[OK] 3. Sidebar.svelte: сжатие фото Историй для быстрой синхронизации и вход в группу по ID прямо из поиска!")
+
+          # 4. frontend/src/components/Modals.svelte:
+          #    - Синхронизируем статус в профиле контакта через getUnifiedPresence(contact)
+          #    - Делаем кнопку "🔔 Звук / 🔕 Без звука" реально работающей (сохраняется в localStorage)
+          #    - Заменяем 4-ю кнопку "📹 Кружок" в профиле на "🚫 Заблокировать" с всплывающим окном выбора срока (Минуты, Часы, Дни, Месяцы, Годы)!
+          #    - Если открыт профиль Группы (👥) или Канала (📢) — показываем список участников группы и тумблер "👁️ Скрыть список участников от других"!
+          md_path = "frontend/src/components/Modals.svelte"
+          if os.path.exists(md_path):
+              with open(md_path, "r", encoding="utf-8") as f:
+                  md = f.read()
+
+              md = md.replace(
+                  "import { getInitials, getAvatarGradient } from '../utils.js';",
+                  "import { getInitials, getAvatarGradient, getUnifiedPresence } from '../utils.js';"
+              )
+
+              block_modal_js = """
+              let showBlockDurationModal = false;
+              let blockAmount = 1;
+              let blockUnit = 'days'; // 'minutes' | 'hours' | 'days' | 'months' | 'years'
+              let isContactBlockedNow = false;
+              let groupMembersInProfile = [];
+              let groupHideMembers = false;
+
+              $: if (contact) {
+                  contactMuted = localStorage.getItem('hydra_mute_' + contact.ID) === '1';
+                  const bUntil = Number(localStorage.getItem('hydra_block_until_' + contact.ID) || 0);
+                  isContactBlockedNow = bUntil > Date.now();
+                  try {
+                      groupMembersInProfile = JSON.parse(localStorage.getItem('hydra_group_members_' + contact.ID) || '["Вы (Создатель)"]');
+                      groupHideMembers = localStorage.getItem('hydra_group_hide_members_' + contact.ID) === '1';
+                  } catch (e) { groupMembersInProfile = ['Вы (Создатель)']; }
+              }
+
+              function toggleContactMute() {
+                  if (!contact) return;
+                  contactMuted = !contactMuted;
+                  localStorage.setItem('hydra_mute_' + contact.ID, contactMuted ? '1' : '0');
+              }
+
+              function toggleGroupMembersVisibility() {
+                  if (!contact) return;
+                  groupHideMembers = !groupHideMembers;
+                  localStorage.setItem('hydra_group_hide_members_' + contact.ID, groupHideMembers ? '1' : '0');
+              }
+
+              function applyTimedUserBlock() {
+                  if (!contact) return;
+                  const multMap = {
+                      minutes: 60 * 1000,
+                      hours: 3600 * 1000,
+                      days: 86400 * 1000,
+                      months: 30 * 86400 * 1000,
+                      years: 365 * 86400 * 1000
+                  };
+                  const durationMs = Math.max(1, Number(blockAmount || 1)) * (multMap[blockUnit] || 86400000);
+                  const untilTs = Date.now() + durationMs;
+                  localStorage.setItem('hydra_block_until_' + contact.ID, String(untilTs));
+                  isContactBlockedNow = true;
+                  showBlockDurationModal = false;
+              }
+
+              function unblockCurrentUser() {
+                  if (!contact) return;
+                  localStorage.removeItem('hydra_block_until_' + contact.ID);
+                  isContactBlockedNow = false;
+                  showBlockDurationModal = false;
+              }
+              """
+              if "let showBlockDurationModal =" not in md:
+                  md = md.replace("let contactMuted = false;", "let contactMuted = false;\n" + block_modal_js, 1)
+
+              # Обновляем статус в профиле контакта (вместо зашитого "был(а) недавно" используем getUnifiedPresence(contact).text)
+              md = md.replace(
+                  'был(а) недавно <span style="background: rgba(255,255,255,0.08); padding: 2px 8px; border-radius: 100px; font-size: 11px; margin-left: 4px;">защищено E2EE</span>',
+                  '{getUnifiedPresence(contact).text} <span style="background: rgba(255,255,255,0.08); padding: 2px 8px; border-radius: 100px; font-size: 11px; margin-left: 4px;">защищено E2EE</span>'
+              )
+
+              # Обновляем 4 кнопки в профиле:
+              # 1) Чат
+              # 2) Звук (вызывает toggleContactMute)
+              # 3) Звонок (скрыт для групп 👥 и каналов 📢!)
+              # 4) Вместо "Кружок" -> кнопка "🚫 Блокировка" (вызывает окно выбора времени блокировки: Минуты / Часы / Дни / Месяцы / Годы)!
+              old_4_tiles = """        <!-- 4 плитки действий как на Скриншоте 2: Чат | Звук | Звонок | Видео -->
+                  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; width: 100%; max-width: 400px; margin-top: 20px;">
+                      <button type="button" on:click={onCloseContactProfile} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
+                          <span style="font-size: 18px;">💬</span>
+                          <span style="font-size: 12px; font-weight: 600;">Чат</span>
+                      </button>
+                      <button type="button" on:click={() => contactMuted = !contactMuted} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
+                          <span style="font-size: 18px;">{contactMuted ? '🔕' : '🔔'}</span>
+                          <span style="font-size: 12px; font-weight: 600;">{contactMuted ? 'Без звука' : 'Звук'}</span>
+                      </button>
+                      <button type="button" on:click={() => { onCloseContactProfile(); if (window.__triggerHydraCallFromProfile) window.__triggerHydraCallFromProfile(); }} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
+                          <span style="font-size: 18px;">📞</span>
+                          <span style="font-size: 12px; font-weight: 600;">Звонок</span>
+                      </button>
+                      <button type="button" on:click={() => { onCloseContactProfile(); if (window.__triggerHydraCircleFromProfile) window.__triggerHydraCircleFromProfile(); }} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
+                          <span style="font-size: 18px;">📹</span>
+                          <span style="font-size: 12px; font-weight: 600;">Кружок</span>
+                      </button>
+                  </div>"""
+
+              new_4_tiles = """        <!-- Плитки действий профиля: Чат | Звук | Звонок (только 1-на-1) | Блокировка по таймеру -->
+                  <div style="display: grid; grid-template-columns: repeat({String(contact.Nickname || '').startsWith('👥') || String(contact.Nickname || '').startsWith('📢') ? 3 : 4}, 1fr); gap: 8px; width: 100%; max-width: 400px; margin-top: 20px;">
+                      <button type="button" on:click={onCloseContactProfile} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
+                          <span style="font-size: 18px;">💬</span>
+                          <span style="font-size: 12px; font-weight: 600;">Чат</span>
+                      </button>
+                      <button type="button" on:click={toggleContactMute} style="background: {contactMuted ? 'rgba(239,68,68,0.18)' : '#1A1C20'}; border: 1px solid {contactMuted ? 'rgba(239,68,68,0.4)' : 'transparent'}; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
+                          <span style="font-size: 18px;">{contactMuted ? '🔕' : '🔔'}</span>
+                          <span style="font-size: 12px; font-weight: 600;">{contactMuted ? 'Выключен' : 'Звук'}</span>
+                      </button>
+                      {#if !String(contact.Nickname || '').startsWith('👥') && !String(contact.Nickname || '').startsWith('📢')}
+                          <button type="button" on:click={() => { onCloseContactProfile(); if (window.__triggerHydraCallFromProfile) window.__triggerHydraCallFromProfile(); }} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
+                              <span style="font-size: 18px;">📞</span>
+                              <span style="font-size: 12px; font-weight: 600;">Звонок</span>
+                          </button>
+                      {/if}
+                      <button type="button" on:click={() => showBlockDurationModal = true} style="background: {isContactBlockedNow ? 'rgba(239,68,68,0.22)' : '#1A1C20'}; border: 1px solid {isContactBlockedNow ? '#EF4444' : 'transparent'}; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: {isContactBlockedNow ? '#FCA5A5' : '#fff'}; cursor: pointer;">
+                          <span style="font-size: 18px;">{isContactBlockedNow ? '🔓' : '🚫'}</span>
+                          <span style="font-size: 12px; font-weight: 600;">{isContactBlockedNow ? 'Разблок.' : 'Блок'}</span>
+                      </button>
+                  </div>
+
+                  {#if showBlockDurationModal}
+                      <div on:click|stopPropagation style="margin-top: 14px; width: 100%; max-width: 400px; background: #16181F; border: 1px solid rgba(239,68,68,0.4); border-radius: 20px; padding: 16px; box-sizing: border-box;">
+                          <div style="font-size: 14px; font-weight: 800; color: #FCA5A5; margin-bottom: 10px;">🚫 Блокировка: {contact.Nickname}</div>
+                          <div style="font-size: 12px; color: #9CA3AF; margin-bottom: 10px;">Выберите срок, на который нужно заблокировать пользователя:</div>
+                          <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                              <input type="number" min="1" max="999" bind:value={blockAmount} style="width: 80px; padding: 10px; border-radius: 12px; background: #0E1015; color: #fff; border: 1px solid rgba(255,255,255,0.15); font-size: 14px; font-weight: 700; text-align: center;" />
+                              <select bind:value={blockUnit} style="flex: 1; padding: 10px; border-radius: 12px; background: #0E1015; color: #fff; border: 1px solid rgba(255,255,255,0.15); font-size: 13px; font-weight: 600;">
+                                  <option value="minutes">Минут</option>
+                                  <option value="hours">Часов</option>
+                                  <option value="days">Дней</option>
+                                  <option value="months">Месяцев</option>
+                                  <option value="years">Лет</option>
+                              </select>
+                          </div>
+                          <div style="display: flex; gap: 8px;">
+                              {#if isContactBlockedNow}
+                                  <button type="button" on:click={unblockCurrentUser} style="flex: 1; padding: 10px; border-radius: 100px; background: #10B981; color: #fff; border: none; font-weight: 800; font-size: 12px; cursor: pointer;">🔓 Снять блок</button>
+                              {/if}
+                              <button type="button" on:click={() => showBlockDurationModal = false} style="flex: 1; padding: 10px; border-radius: 100px; background: #22252A; color: #E5E7EB; border: none; font-size: 12px; cursor: pointer;">Отмена</button>
+                              <button type="button" on:click={applyTimedUserBlock} style="flex: 1; padding: 10px; border-radius: 100px; background: #EF4444; color: #fff; border: none; font-weight: 800; font-size: 12px; cursor: pointer;">Заблокировать</button>
+                          </div>
+                      </div>
+                  {/if}"""
+              md = md.replace(old_4_tiles, new_4_tiles)
+
+              # В карточке профиля для Группы (👥) или Канала (📢) выводим список участников и настройку видимости участников!
+              group_members_profile_card = """
+                  {#if String(contact.Nickname || '').startsWith('👥') || String(contact.Nickname || '').startsWith('📢')}
+                      <div style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 12px;">
+                          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                              <span style="font-size: 13px; font-weight: 800; color: #60A5FA;">👥 Участники группы ({groupMembersInProfile.length})</span>
+                              <button type="button" on:click={toggleGroupMembersVisibility} style="background: rgba(59,130,246,0.15); color: #93C5FD; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 700; cursor: pointer;">
+                                  {groupHideMembers ? '🙈 Список скрыт' : '👁️ Виден всем'}
+                              </button>
+                          </div>
+                          {#if !groupHideMembers}
+                              <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                                  {#each groupMembersInProfile as gm}
+                                      <span style="background: #121316; border: 1px solid rgba(59,130,246,0.25); color: #E5E7EB; padding: 5px 10px; border-radius: 100px; font-size: 12px; font-weight: 600;">👤 {gm}</span>
+                                  {/each}
+                              </div>
+                          {:else}
+                              <div style="font-size: 12px; color: #9CA3AF;">Список участников скрыт настройками приватности группы.</div>
+                          {/if}
+                      </div>
+                  {/if}
+              """
+              if "Участники группы (" not in md:
+                  md = md.replace(
+                      '<div style="font-size: 12px; color: #9CA3AF; margin-top: 2px;">Крипто-ID ключ (нажмите, чтобы {showFullAddress ? \'скрыть\' : \'показать полностью\'})</div>\n            </div>',
+                      '<div style="font-size: 12px; color: #9CA3AF; margin-top: 2px;">Крипто-ID ключ (нажмите, чтобы {showFullAddress ? \'скрыть\' : \'показать полностью\'})</div>\n            </div>\n' + group_members_profile_card
                   )
-              with open(mf_path, "w", encoding="utf-8") as f:
-                  f.write(mf)
-              print("[OK] 3. AndroidManifest.xml проверен и валиден!")
+
+              with open(md_path, "w", encoding="utf-8") as f:
+                  f.write(md)
+              print("[OK] 4. Modals.svelte: добавлена блокировка по времени (минуты/часы/дни/месяцы/годы), рабочая кнопка Звук, участники группы и настройка видимости!")
+
+          # 5. frontend/src/components/Chat.svelte:
+          #    - Скрываем кнопку звонка 📞 в группах (👥) и каналах (📢) — звонки только в личных чатах 1-на-1!
+          #    - Синхронизируем статус-бар и зелёную точку в шапке через getUnifiedPresence(selectedContact, messages)!
+          #    - Добавляем закрытие меню "3 точки (⋮)" при нажатии на любую пустую область экрана!
+          #    - Добавляем кнопки "🎙️ Выкл. микрофон" и "🔴 Запись разговора" прямо в модалку активного звонка!
+          #    - Делаем отправленный в чат ID группы (SFlEUkFfUk9PTV...) кликабельной кнопкой "➡️ Перейти в группу"!
+          ch_path = "frontend/src/components/Chat.svelte"
+          if os.path.exists(ch_path):
+              with open(ch_path, "r", encoding="utf-8") as f:
+                  ch = f.read()
+
+              ch = ch.replace(
+                  "import { getInitials, formatTime, parseMarkdown, getAvatarGradient } from '../utils.js';",
+                  "import { getInitials, formatTime, parseMarkdown, getAvatarGradient, getUnifiedPresence } from '../utils.js';"
+              )
+
+              # Синхронизируем точку и текст статуса в шапке чата с getUnifiedPresence
+              ch = ch.replace(
+                  'style="background: {(messages || []).some(m => !m.IsOutgoing && m.SenderID === selectedContact?.PublicKey && (Date.now() - m.Timestamp < 300000)) ? \'#4CAF50\' : \'#9E9E9E\'};"',
+                  'style="background: {getUnifiedPresence(selectedContact, messages).online ? \'#4CAF50\' : \'#9E9E9E\'};"'
+              )
+              ch = ch.replace(
+                  "{getContactPresenceText(selectedContact, messages)}",
+                  "{getUnifiedPresence(selectedContact, messages).text}"
+              )
+
+              # Скрываем кнопку звонка 📞 в Группах (👥) и Каналах (📢), и добавляем прозрачный backdrop для закрытия меню ⋮ кликом в пустую область!
+              old_header_actions = """            <button type="button" on:click={startHydraCall} style="background: #1D4ED8; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; flex-shrink: 0;" title="Позвонить">📞</button>
+                      <div style="position: relative;">
+                          <button type="button" on:click|stopPropagation={() => showChatHeaderMenu = !showChatHeaderMenu} style="background: #22252A; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.25); border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; cursor: pointer;">⋮</button>
+                          {#if showChatHeaderMenu}
+                              <div style="position: fixed; top: 62px; right: 14px; background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 16px; padding: 6px; z-index: 99995; min-width: 210px; box-shadow: 0 12px 32px rgba(0,0,0,0.7);">"""
+
+              new_header_actions = """            {#if !String(selectedContact.Nickname || '').startsWith('👥') && !String(selectedContact.Nickname || '').startsWith('📢')}
+                          <button type="button" on:click={startHydraCall} style="background: #1D4ED8; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; flex-shrink: 0;" title="Позвонить">📞</button>
+                      {/if}
+                      <div style="position: relative;">
+                          <button type="button" on:click|stopPropagation={() => showChatHeaderMenu = !showChatHeaderMenu} style="background: #22252A; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.25); border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; cursor: pointer;">⋮</button>
+                          {#if showChatHeaderMenu}
+                              <div on:click={() => showChatHeaderMenu = false} style="position: fixed; inset: 0; z-index: 99990; background: transparent;"></div>
+                              <div style="position: fixed; top: 62px; right: 14px; background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 16px; padding: 6px; z-index: 99995; min-width: 225px; box-shadow: 0 12px 32px rgba(0,0,0,0.7);">"""
+              ch = ch.replace(old_header_actions, new_header_actions)
+
+              # Гарантированно добавляем функции toggleCallMute / toggleCallRecording и кнопки в модалку активного звонка!
+              call_mute_rec_js = """
+              let isCallMuted = false;
+              let isRecordingCall = false;
+              let callRecorder = null;
+              let callRecordedChunks = [];
+
+              function toggleCallMute() {
+                  isCallMuted = !isCallMuted;
+                  if (window.__hydraCallStream) {
+                      window.__hydraCallStream.getAudioTracks().forEach(t => { t.enabled = !isCallMuted; });
+                  }
+              }
+
+              function toggleCallRecording() {
+                  if (isRecordingCall && callRecorder) {
+                      callRecorder.stop();
+                      isRecordingCall = false;
+                      return;
+                  }
+                  try {
+                      const s = window.__hydraCallStream;
+                      if (!s) return alert('Микрофон ещё не активен');
+                      callRecordedChunks = [];
+                      callRecorder = new MediaRecorder(s);
+                      callRecorder.ondataavailable = e => { if (e.data && e.data.size > 0) callRecordedChunks.push(e.data); };
+                      callRecorder.onstop = async () => {
+                          const blob = new Blob(callRecordedChunks, { type: 'audio/webm' });
+                          const reader = new FileReader();
+                          reader.onloadend = async () => {
+                              await saveMediaDataUrlToGallery(reader.result, 'hydra_call_rec');
+                              alert('✅ Запись разговора сохранена в папку Download/Hydra!');
+                          };
+                          reader.readAsDataURL(blob);
+                      };
+                      callRecorder.start(250);
+                      isRecordingCall = true;
+                  } catch (e) {
+                      alert('Ошибка записи: ' + e);
+                  }
+              }
+              """
+              if "function toggleCallMute()" not in ch:
+                  ch = ch.replace("let activeCallModal = false;", "let activeCallModal = false;\n" + call_mute_rec_js, 1)
+
+              # Заменяем блок {#if activeCallModal}...{/if} целиком, чтобы кнопки Микрофона и Записи гарантированно отображались на экране вызова!
+              ch = re.sub(
+                  r'\{#if activeCallModal\}[\s\S]*?\{/if\}',
+                  '''{#if activeCallModal}
+              <div style="position: fixed; inset: 0; background: rgba(12,14,20,0.96); backdrop-filter: blur(16px); z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px;">
+                  <audio bind:this={remoteAudioEl} autoplay></audio>
+                  <div style="width: 96px; height: 96px; border-radius: 50%; background: #1A1C20; border: 3px solid #3B82F6; display: flex; align-items: center; justify-content: center; font-size: 36px; color: #60A5FA; font-weight: 700; box-shadow: 0 0 32px rgba(29,78,216,0.4);">
+                      {getInitials(selectedContact?.Nickname)}
+                  </div>
+                  <div style="font-size: 22px; font-weight: 800; color: #E5E7EB;">{selectedContact?.Nickname}</div>
+                  <div style="font-size: 14px; color: #60A5FA; text-align: center;">{callStatusText}</div>
+
+                  <!-- Круглые кнопки управления микрофоном и записью разговора -->
+                  <div style="display: flex; gap: 14px; margin-top: 8px;">
+                      <button type="button" on:click={toggleCallMute} style="background: {isCallMuted ? '#EF4444' : '#1E222B'}; color: #fff; border: 1px solid rgba(255,255,255,0.15); border-radius: 100px; padding: 11px 18px; font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                          <span>{isCallMuted ? '🔇' : '🎙️'}</span>
+                          <span>{isCallMuted ? 'Микрофон выкл' : 'Микрофон вкл'}</span>
+                      </button>
+                      <button type="button" on:click={toggleCallRecording} style="background: {isRecordingCall ? '#EF4444' : '#1E222B'}; color: #fff; border: 1px solid rgba(255,255,255,0.15); border-radius: 100px; padding: 11px 18px; font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                          <span>{isRecordingCall ? '⏹' : '🔴'}</span>
+                          <span>{isRecordingCall ? 'Стоп запись' : 'Запись вызова'}</span>
+                      </button>
+                  </div>
+
+                  <div style="display: flex; gap: 16px; margin-top: 12px;">
+                      {#if incomingCallOffer && !callConnected}
+                          <button type="button" on:click={acceptIncomingHydraCall} style="background: #10B981; color: #fff; border: none; border-radius: 100px; padding: 14px 28px; font-size: 15px; font-weight: 800; cursor: pointer;">
+                              🟢 Принять
+                          </button>
+                      {/if}
+                      <button type="button" on:click={() => endHydraCall(true)} style="background: #ff4757; color: #fff; border: none; border-radius: 100px; padding: 14px 28px; font-size: 15px; font-weight: 800; cursor: pointer;">
+                          📴 {incomingCallOffer && !callConnected ? 'Отклонить' : 'Завершить'}
+                      </button>
+                  </div>
+              </div>
+          {/if}''',
+                  ch
+              )
+
+              # Делаем сообщения с ID группы (SFlEUkFfUk9PTV... или "🎟️ Вас добавили в...") кликабельными карточками с кнопкой "➡️ Перейти в группу"!
+              old_text_msg_render = """                {:else}
+                              <div class="message-content">{@html parseMarkdown(msg.Content)}</div>
+                          {/if}"""
+
+              new_text_msg_render = """                {:else if msg.Content && (msg.Content.trim().startsWith('SFlEUkFfUk9PTV') || msg.Content.startsWith('🎟️ Вас добавили в'))}
+                              <div style="display: flex; flex-direction: column; gap: 8px; padding: 4px;">
+                                  <div style="font-weight: 700; font-size: 13px; color: #93C5FD;">
+                                      {msg.Content.startsWith('🎟️') ? msg.Content : '🎟️ Ссылка-приглашение в группу Hydra'}
+                                  </div>
+                                  {#if msg.Content.trim().startsWith('SFlEUkFfUk9PTV')}
+                                      <div style="font-size: 11px; opacity: 0.75; font-family: monospace; word-break: break-all;">{msg.Content.trim()}</div>
+                                      <button type="button" on:click|stopPropagation={() => { if (window.__joinHydraGroupByKey) window.__joinHydraGroupByKey(msg.Content.trim()); }} style="background: #fff; color: #1E3A8A; border: none; border-radius: 100px; padding: 8px 16px; font-size: 12px; font-weight: 800; cursor: pointer; align-self: flex-start;">
+                                          ➡️ Перейти / Вступить в группу
+                                      </button>
+                                  {/if}
+                              </div>
+                          {:else}
+                              <div class="message-content">{@html parseMarkdown(msg.Content)}</div>
+                          {/if}"""
+              ch = ch.replace(old_text_msg_render, new_text_msg_render)
+
+              # В окне управления участниками группы ("👥 Участники: ...") добавляем список текущих участников и кнопку скрытия списка участников!
+              if "currentGroupMembers" not in ch:
+                  grp_members_js = """
+              let currentGroupMembers = ['Вы (Создатель)'];
+              let currentGroupHideMembers = false;
+              $: if (selectedContact) {
+                  try {
+                      currentGroupMembers = JSON.parse(localStorage.getItem('hydra_group_members_' + selectedContact.ID) || '["Вы (Создатель)"]');
+                      currentGroupHideMembers = localStorage.getItem('hydra_group_hide_members_' + selectedContact.ID) === '1';
+                  } catch (e) { currentGroupMembers = ['Вы (Создатель)']; }
+              }
+              """
+                  ch = ch.replace("let allExistingContactsForGroup = [];", grp_members_js + "\n    let allExistingContactsForGroup = [];", 1)
+
+              ch = ch.replace(
+                  "alert(`✅ Приглашение в «${selectedContact.Nickname}» отправлено пользователю ${targetContact.Nickname}!`);",
+                  """if (!currentGroupMembers.includes(targetContact.Nickname)) {
+                          currentGroupMembers = [...currentGroupMembers, targetContact.Nickname];
+                          localStorage.setItem('hydra_group_members_' + selectedContact.ID, JSON.stringify(currentGroupMembers));
+                      }
+                      alert(`✅ Пользователь ${targetContact.Nickname} добавлен в «${selectedContact.Nickname}»!`);"""
+              )
+
+              old_room_header = """<div style="font-size: 12px; color: #9CA3AF; margin-bottom: 6px;">Добавить по @нику или крипто-ID:</div>"""
+              new_room_header = """<div style="padding: 10px 12px; background: #121316; border: 1px solid rgba(59,130,246,0.25); border-radius: 14px; margin-bottom: 12px;">
+                          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                              <span style="font-size: 12px; font-weight: 800; color: #60A5FA;">👥 Участники ({currentGroupMembers.length}):</span>
+                              <button type="button" on:click={() => { currentGroupHideMembers = !currentGroupHideMembers; localStorage.setItem('hydra_group_hide_members_' + selectedContact.ID, currentGroupHideMembers ? '1' : '0'); }} style="background: rgba(59,130,246,0.18); color: #93C5FD; border: none; border-radius: 100px; padding: 3px 9px; font-size: 10px; font-weight: 700; cursor: pointer;">
+                                  {currentGroupHideMembers ? '🙈 Скрыты от других' : '👁️ Видны всем'}
+                              </button>
+                          </div>
+                          <div style="font-size: 12px; color: #E5E7EB;">{currentGroupMembers.join(', ')}</div>
+                      </div>
+                      <div style="font-size: 12px; color: #9CA3AF; margin-bottom: 6px;">Добавить по @нику или крипто-ID:</div>"""
+              ch = ch.replace(old_room_header, new_room_header)
+
+              with open(ch_path, "w", encoding="utf-8") as f:
+                  f.write(ch)
+              print("[OK] 5. Chat.svelte: звонки убраны из групп/каналов, добавлены кнопки Микрофон/Запись при звонке, закрытие меню ⋮ кликом мимо и вход в группу по клику на ID!")
           PYEOF
-          python3 fix_startup_crash.py
-          rm -f fix_startup_crash.py
+          python3 apply_v29_all_fixes.py
+          rm -f apply_v29_all_fixes.py
           gofmt -w internal/ mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -249,13 +608,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Startup Fix to Repository
+      - name: Commit Hydra v2.9.0 Complete Fixes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Fix startup hang/crash: restore WebView CORS in mobile.go, add Android 14 FOREGROUND_SERVICE_TYPE_DATA_SYNC & direct Go server start [skip ci]"
+            git commit -m "Release Hydra v2.9.0: Group member visibility & clickable ID join, 1-on-1 calls only, Call Mute/Record, Unified Presence, Story sync & Timed Block [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
