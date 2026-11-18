@@ -18,7 +18,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const RelayServerURL = "ws://191.223.137.164:8085/ws"
+const RelayServerURL = "wss://rtbeta.duckdns.org/ws"
 
 const (
 	ProtocolVersion   = 1
@@ -272,7 +272,7 @@ func (s *Service) heartbeatLoop() {
 func (s *Service) SendTextMessageWithID(destination, chatID, messageID, content, replyToID string) error {
 	payload, err := proto.Marshal(&pb.TextMessage{
 		ChatId:    chatID,
-		Content:   content,
+		Content:   s.identity.EncryptForPeer(destination, content),
 		Timestamp: time.Now().UnixMilli(),
 		MessageId: messageID,
 		ReplyToId: replyToID,
@@ -410,7 +410,7 @@ func (s *Service) handleTextMessage(packet *pb.Packet, senderPubKey, remoteAddr 
 		ID:          textMsg.MessageId,
 		ChatID:      textMsg.ChatId,
 		SenderID:    senderPubKey,
-		Content:     textMsg.Content,
+		Content:     s.identity.DecryptFromPeer(senderPubKey, textMsg.Content),
 		ContentType: "text",
 		Status:      core.MessageStatusDelivered,
 		IsOutgoing:  false,

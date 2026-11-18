@@ -59,7 +59,7 @@
         pingStatusText = '⏳ Пинг сервера 191.223.137.164:8085...';
         const t0 = Date.now();
         try {
-            const r = await fetch('http://191.223.137.164:8085/health?pub=' + encodeURIComponent(myDestination || 'ping'), { cache: 'no-store' });
+            const r = await fetch('https://rtbeta.duckdns.org/health?pub=' + encodeURIComponent(myDestination || 'ping'), { cache: 'no-store' });
             const d = await r.json();
             const rtt = Date.now() - t0;
             if (d && d.status === 'ok') {
@@ -294,7 +294,7 @@
             const myNick = (profileNickname || '').trim();
             const myPub = (myDestination || '').trim();
             if (!hideMe && myNick && myPub) {
-                await fetch('http://191.223.137.164:8085/relay/send', {
+                await fetch('https://rtbeta.duckdns.org/relay/send', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -308,7 +308,7 @@
                     })
                 }).catch(() => {});
             }
-            const r = await fetch('http://191.223.137.164:8085/relay/poll?pub=' + encodeURIComponent('WIFI_SUBNET_' + subnet));
+            const r = await fetch('https://rtbeta.duckdns.org/relay/poll?pub=' + encodeURIComponent('WIFI_SUBNET_' + subnet));
             if (r.ok) {
                 const items = await r.json();
                 const byPub = {};
@@ -388,7 +388,7 @@
             if (window.__addHydraLog) window.__addHydraLog('TEST-CALL-STREAM', streamTestStatus);
 
             const tm0 = Date.now();
-            const resp = await fetch('http://191.223.137.164:8085/health?pub=diag_msg_loopback');
+            const resp = await fetch('https://rtbeta.duckdns.org/health?pub=diag_msg_loopback');
             const d = await resp.json();
             const msgMs = Date.now() - tm0;
             if (d && d.status === 'ok') {

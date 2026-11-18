@@ -370,7 +370,7 @@
             const myPub = (myInfo?.PublicKey || myInfo?.Destination || identity || '').trim();
 
             if (!hideMe && myNick && myPub) {
-                await fetch('http://191.223.137.164:8085/relay/send', {
+                await fetch('https://rtbeta.duckdns.org/relay/send', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -385,7 +385,7 @@
                 }).catch(() => {});
             }
 
-            const r = await fetch('http://191.223.137.164:8085/relay/poll?pub=' + encodeURIComponent('WIFI_SUBNET_' + subnet));
+            const r = await fetch('https://rtbeta.duckdns.org/relay/poll?pub=' + encodeURIComponent('WIFI_SUBNET_' + subnet));
             if (r.ok) {
                 const items = await r.json();
                 const mapByPub = {};

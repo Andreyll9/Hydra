@@ -286,7 +286,7 @@ func (a *AppCore) UpdateMyProfile(nickname, bio, avatar string) error {
 			"signature": base64.StdEncoding.EncodeToString(sig),
 		})
 		client := &http.Client{Timeout: 12 * time.Second}
-		resp, err := client.Post("http://191.223.137.164:8085/nick/register", "application/json", bytes.NewReader(reqBody))
+		resp, err := client.Post("https://rtbeta.duckdns.org/nick/register", "application/json", bytes.NewReader(reqBody))
 		if err != nil {
 			log.Printf("[AppCore] Warning: nickname server unreachable (%v), saving locally", err)
 		} else {
@@ -294,7 +294,7 @@ func (a *AppCore) UpdateMyProfile(nickname, bio, avatar string) error {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusConflict {
 				// Проверяем, не принадлежит ли этот ник уже нашему собственному ключу
-				chkResp, chkErr := client.Get("http://191.223.137.164:8085/nick/resolve?nick=" + cleanNick)
+				chkResp, chkErr := client.Get("https://rtbeta.duckdns.org/nick/resolve?nick=" + cleanNick)
 				alreadyOurs := false
 				if chkErr == nil && chkResp != nil {
 					var resolved map[string]string
@@ -895,6 +895,9 @@ func (a *AppCore) OnMessageReceived(msg *core.Message, senderPubKey, senderAddr 
 	}
 
 	msg.ChatID = contact.ChatID
+	if a.Identity != nil && a.Identity.Keys != nil {
+		msg.Content = a.Identity.Keys.DecryptFromPeer(senderPubKey, msg.Content)
+	}
 
 	if strings.HasPrefix(msg.Content, "[HYDRA_DEL_MSG]:") {
 		targetMsgID := strings.TrimSpace(strings.TrimPrefix(msg.Content, "[HYDRA_DEL_MSG]:"))
@@ -1232,13 +1235,14 @@ func (a *AppCore) SendViaVPSRelay(toPub, chatID, msgID, text, replyToID string) 
 	if u, _ := a.Repo.GetMyProfile(a.Ctx); u != nil {
 		myNick = u.Nickname
 	}
+	encText := a.Identity.Keys.EncryptForPeer(toPub, text)
 	env := map[string]interface{}{
 		"id":          msgID,
 		"from":        myPub,
 		"from_nick":   myNick,
 		"to":          strings.TrimSpace(toPub),
 		"chat_id":     chatID,
-		"content":     text,
+		"content":     encText,
 		"reply_to_id": replyToID,
 		"timestamp":   time.Now().UnixMilli(),
 	}
@@ -1246,8 +1250,15 @@ func (a *AppCore) SendViaVPSRelay(toPub, chatID, msgID, text, replyToID string) 
 	client := &http.Client{Timeout: 15 * time.Second}
 	var resp *http.Response
 	var err error
+	tsStr := fmt.Sprintf("%d", time.Now().UnixMilli())
+	sig := ed25519.Sign(a.Identity.Keys.SigningPrivateKey, []byte("HYDRA-RELAY:send:"+myPub+":"+tsStr))
+	sigB64 := base64.StdEncoding.EncodeToString(sig)
 	for attempt := 0; attempt < 3; attempt++ {
-		resp, err = client.Post("http://191.223.137.164:8085/relay/send", "application/json", bytes.NewReader(raw))
+		req, _ := http.NewRequest("POST", "https://rtbeta.duckdns.org/relay/send", bytes.NewReader(raw))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Hydra-Ts", tsStr)
+		req.Header.Set("X-Hydra-Sig", sigB64)
+		resp, err = client.Do(req)
 		if err == nil && resp != nil {
 			break
 		}
@@ -1272,7 +1283,12 @@ func (a *AppCore) StartVPSRelayLoop() {
 		}
 		if a.Identity != nil && a.Identity.Keys != nil && a.Repo != nil {
 			myPub := a.Identity.Keys.PublicKeyBase64
-			resp, err := client.Get("http://191.223.137.164:8085/relay/poll?pub=" + url.QueryEscape(myPub))
+			pTs := fmt.Sprintf("%d", time.Now().UnixMilli())
+			pSig := base64.StdEncoding.EncodeToString(ed25519.Sign(a.Identity.Keys.SigningPrivateKey, []byte("HYDRA-RELAY:poll:"+myPub+":"+pTs)))
+			pReq, _ := http.NewRequest("GET", "https://rtbeta.duckdns.org/relay/poll?pub="+url.QueryEscape(myPub), nil)
+			pReq.Header.Set("X-Hydra-Ts", pTs)
+			pReq.Header.Set("X-Hydra-Sig", pSig)
+			resp, err := client.Do(pReq)
 			if err == nil && resp != nil {
 				if resp.StatusCode == http.StatusOK {
 					var items []map[string]interface{}
@@ -1323,7 +1339,7 @@ func (a *AppCore) StartVPSRelayLoop() {
 			if contactsList, errC := a.Repo.ListContacts(a.Ctx); errC == nil {
 				for _, grp := range contactsList {
 					if strings.HasPrefix(grp.I2PAddress, "SFlEUkFfUk9PTV") {
-						gResp, gErr := client.Get("http://191.223.137.164:8085/relay/poll?pub=" + url.QueryEscape(grp.I2PAddress))
+						gResp, gErr := client.Get("https://rtbeta.duckdns.org/relay/poll?pub=" + url.QueryEscape(grp.I2PAddress))
 						if gErr == nil && gResp != nil {
 							if gResp.StatusCode == http.StatusOK {
 								var gItems []map[string]interface{}

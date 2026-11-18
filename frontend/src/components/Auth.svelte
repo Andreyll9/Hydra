@@ -317,7 +317,7 @@
         systemPermStatus.checkingServer = true;
         const t0 = Date.now();
         try {
-            const resp = await fetch('http://191.223.137.164:8085/health?pub=startup', { cache: 'no-store' });
+            const resp = await fetch('https://rtbeta.duckdns.org/health?pub=startup', { cache: 'no-store' });
             const data = await resp.json();
             const rtt = Date.now() - t0;
             systemPermStatus.serverOnline = (data && data.status === 'ok');

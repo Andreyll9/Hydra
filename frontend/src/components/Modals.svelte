@@ -39,7 +39,7 @@
             const cleanNick = rawAddr.replace(/^@/, '').toLowerCase();
             if (!addContactName.trim()) addContactName = '@' + cleanNick;
             try {
-                const r = await fetch('http://191.223.137.164:8085/nick/resolve?nick=' + encodeURIComponent(cleanNick));
+                const r = await fetch('https://rtbeta.duckdns.org/nick/resolve?nick=' + encodeURIComponent(cleanNick));
                 if (r.ok) {
                     const d = await r.json();
                     if (d && d.pub_key) addContactAddress = d.pub_key;
@@ -205,7 +205,7 @@
                     addContactAddress = code.data.trim();
                     qrStatusMsg = '⏳ QR считан! Поиск @никнейма на сервере...';
                     stopLiveQRScanner();
-                    fetch('http://191.223.137.164:8085/nick/resolve?pub=' + encodeURIComponent(addContactAddress))
+                    fetch('https://rtbeta.duckdns.org/nick/resolve?pub=' + encodeURIComponent(addContactAddress))
                         .then(r => r.ok ? r.json() : null)
                         .then(d => {
                             if (d && d.nickname) {
@@ -275,7 +275,7 @@
             if (code && code.data) {
                 addContactAddress = code.data.trim();
                 qrStatusMsg = '⏳ Поиск @никнейма владельца QR...';
-                fetch('http://191.223.137.164:8085/nick/resolve?pub=' + encodeURIComponent(addContactAddress))
+                fetch('https://rtbeta.duckdns.org/nick/resolve?pub=' + encodeURIComponent(addContactAddress))
                     .then(r => r.ok ? r.json() : null)
                     .then(d => {
                         if (d && d.nickname) {

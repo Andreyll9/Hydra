@@ -21,7 +21,7 @@ func resolveNickByPubFromVPS(pub string) string {
 		return ""
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get("http://191.223.137.164:8085/nick/resolve?pub=" + url.QueryEscape(pub))
+	resp, err := client.Get("https://rtbeta.duckdns.org/nick/resolve?pub=" + url.QueryEscape(pub))
 	if err != nil || resp == nil {
 		return ""
 	}
@@ -97,7 +97,7 @@ func (a *AppCore) AddContact(name, destination string) (*ContactInfo, error) {
 	if strings.HasPrefix(destination, "@") || (len(destination) >= 3 && len(destination) < 32 && !strings.Contains(destination, "/")) {
 		cleanNick := strings.ToLower(strings.TrimPrefix(destination, "@"))
 		client := &http.Client{Timeout: 8 * time.Second}
-		resp, err := client.Get("http://191.223.137.164:8085/nick/resolve?nick=" + url.QueryEscape(cleanNick))
+		resp, err := client.Get("https://rtbeta.duckdns.org/nick/resolve?nick=" + url.QueryEscape(cleanNick))
 		if err != nil {
 			return nil, fmt.Errorf("нет связи с сервером никнеймов: %v", err)
 		}
