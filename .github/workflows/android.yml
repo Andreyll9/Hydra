@@ -53,7 +53,6 @@ jobs:
                       shutil.copyfile(real_hydra_logo, dst)
 
           # 1. internal/network/messenger/messenger.go:
-          #    Увеличиваем лимит размера пакета с 4096 байт до 15 МБ
           ms_path = "internal/network/messenger/messenger.go"
           if os.path.exists(ms_path):
               with open(ms_path, "r", encoding="utf-8") as f:
@@ -64,8 +63,6 @@ jobs:
               print("[OK] 1. messenger.go: лимит сообщения 15 МБ проверен")
 
           # 2. internal/appcore/messages.go:
-          #    - Убираем дублирующийся if strings.HasPrefix(text, "[HYDRA_CALL_ANSWER]:") (строки 131-137)
-          #    - Добавляем фильтрацию [HYDRA_GROUP_MEMBERS]:
           msg_path = "internal/appcore/messages.go"
           if os.path.exists(msg_path):
               with open(msg_path, "r", encoding="utf-8") as f:
@@ -101,13 +98,6 @@ jobs:
               print("[OK] 2. messages.go: очищены дубли фильтрации технических пакетов!")
 
           # 3. internal/appcore/appcore.go:
-          #    - В OnMessageReceived добавляем недостающие обработчики:
-          #      [HYDRA_STORY_SYNC]: (приём Историй от друзей!),
-          #      [HYDRA_DEL_MSG]: (удаление сообщений у обоих!),
-          #      [HYDRA_READ_ACK]: (синий круг Прочитано!),
-          #      [HYDRA_REACT]: (реакции на сообщения!),
-          #      [HYDRA_GROUP_MEMBERS]: (синхронизация списка участников группы!)
-          #    - В StartVPSRelayLoop добавляем опрос очередей Групп/Каналов (SFlEUkFfUk9PTV...), чтобы сообщения в группах доходили всем участникам!
           ac_path = "internal/appcore/appcore.go"
           if os.path.exists(ac_path):
               with open(ac_path, "r", encoding="utf-8") as f:
@@ -167,7 +157,6 @@ jobs:
 
               ac = ac.replace(old_group_invite_block, new_all_signals_block)
 
-              # Чиним дубль if len(seenIDs) > 1000 в StartVPSRelayLoop и добавляем опрос групповых комнат SFlEUkFfUk9PTV...
               ac = ac.replace(
                   """							if len(seenIDs) > 1000 {
           								seenIDs = make(map[string]bool)
@@ -187,7 +176,6 @@ jobs:
 
               new_poll_end = """				resp.Body.Close()
           			}
-          			// Опрашиваем также очереди всех Групп и Каналов (SFlEUkFfUk9PTV...), в которых состоит пользователь
           			if contactsList, errC := a.Repo.ListContacts(a.Ctx); errC == nil {
           				for _, grp := range contactsList {
           					if strings.HasPrefix(grp.I2PAddress, "SFlEUkFfUk9PTV") {
@@ -241,8 +229,6 @@ jobs:
               print("[OK] 3. appcore.go: добавлена синхронизация Историй, реакций, удалений и опрос очередей Групп/Каналов!")
 
           # 4. frontend/src/components/Sidebar.svelte:
-          #    В publishHydraStory добавляем реальную отправку новой Истории ([HYDRA_STORY_SYNC]:...) всем контактам, с кем есть чат,
-          #    и добавляем EventsOn('remote_story_received') для отображения Историй друзей в верхней ленте!
           sb_path = "frontend/src/components/Sidebar.svelte"
           if os.path.exists(sb_path):
               with open(sb_path, "r", encoding="utf-8") as f:
@@ -284,7 +270,6 @@ jobs:
               print("[OK] 4. Sidebar.svelte: включена сетевая отправка и приём Историй между телефонами!")
 
           # 5. frontend/src/components/Auth.svelte:
-          #    Оборачиваем кнопку "+ Создать" на главном экране в {#if allProfiles.length === 0}, чтобы при наличии 1 профиля она скрывалась!
           au_path = "frontend/src/components/Auth.svelte"
           if os.path.exists(au_path):
               with open(au_path, "r", encoding="utf-8") as f:
@@ -321,9 +306,7 @@ jobs:
                   f.write(au)
               print("[OK] 5. Auth.svelte: кнопка '+ Создать' на главном экране скрыта, если профиль уже создан!")
 
-          # 6. frontend/src/components/Settings.svelte:
-          #    - Чиним CopyToClipboard -> ClipboardSet
-          #    - Добавляем в Приватность тумблеры "👥 Добавление в группы только друзьями" и "🔒 Защита от скриншотов (FLAG_SECURE)"
+          # 6. frontend/src/components/Settings.svelte (БЕЗ лишнего закрывающего </div>!):
           st_path = "frontend/src/components/Settings.svelte"
           if os.path.exists(st_path):
               with open(st_path, "r", encoding="utf-8") as f:
@@ -349,8 +332,12 @@ jobs:
               if "let groupInviteFriendsOnly =" not in st:
                   st = st.replace("let hideLastSeenEnabled =", priv_vars_js + "\n    let hideLastSeenEnabled =", 1)
 
-              extra_priv_cards = """
-                  <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
+              target_card_anchor = """        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                          <div>
+                              <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🕒 Скрывать точное время входа</div>"""
+
+              balanced_priv_cards = """        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
                       <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
                           <div>
                               <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">👥 Кто может добавлять меня в группы</div>
@@ -369,22 +356,17 @@ jobs:
                           <input type="checkbox" checked={flagSecureEnabled} on:change={toggleFlagSecureSetting} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
                       </div>
                   </div>
-              """
+
+          """ + target_card_anchor
+
               if "Кто может добавлять меня в группы" not in st:
-                  st = st.replace(
-                      '<div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🕒 Скрывать точное время входа</div>',
-                      extra_priv_cards.strip() + '\n        </div>\n        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">\n            <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">\n                <div>\n                    <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🕒 Скрывать точное время входа</div>',
-                      1
-                  )
+                  st = st.replace(target_card_anchor, balanced_priv_cards, 1)
 
               with open(st_path, "w", encoding="utf-8") as f:
                   f.write(st)
-              print("[OK] 6. Settings.svelte: исправлен ClipboardSet и добавлены тумблеры приватности групп и скриншотов!")
+              print("[OK] 6. Settings.svelte: все теги сбалансированы, ClipboardSet исправлен, тумблеры добавлены!")
 
           # 7. frontend/src/components/Chat.svelte:
-          #    - Чистим мёртвый код в cycleDisappearingTimer()
-          #    - При приглашении участника в группу передаём ему весь список участников группы (чтобы у него в профиле группы тоже были видны все участники!)
-          #    - Блокируем входящие звонки от пользователей, которые находятся во временном блоке (hydra_block_until_)
           ch_path = "frontend/src/components/Chat.svelte"
           if os.path.exists(ch_path):
               with open(ch_path, "r", encoding="utf-8") as f:
@@ -403,7 +385,6 @@ jobs:
               }"""
               )
 
-              # Синхронизация списка участников группы при добавлении нового участника
               old_invite_fn = """    async function inviteContactToGroup(targetContact) {
                   if (!selectedContact || !targetContact) return;
                   const invitePayload = `[HYDRA_GROUP_INVITE]:${selectedContact.Nickname}|${selectedContact.I2PAddress}`;
@@ -436,7 +417,6 @@ jobs:
               }"""
               ch = ch.replace(old_invite_fn, new_invite_fn)
 
-              # Слушатель remote_group_members для сохранения списка участников группы у приглашённого пользователя
               remote_grp_hook = """
               EventsOn('remote_group_members', (raw) => {
                   const [gId, membersCsv] = String(raw || '').split('|');
@@ -452,7 +432,6 @@ jobs:
               if "remote_group_members" not in ch:
                   ch = ch.replace("EventsOn('remote_reaction',", remote_grp_hook + "\n    EventsOn('remote_reaction',", 1)
 
-              # Игнорируем входящий звонок, если пользователь заблокирован по таймеру
               ch = ch.replace(
                   "if (c.startsWith('[HYDRA_CALL_RING]:')) {",
                   """if (c.startsWith('[HYDRA_CALL_RING]:')) {
@@ -460,7 +439,6 @@ jobs:
                       if (bUntil > Date.now()) return;"""
               )
 
-              # В окне участников группы показываем "✅ Добавлен" вместо кнопки "+ Добавить", если человек уже в группе
               old_contact_row = """                    {#each allExistingContactsForGroup as c}
                                   <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #121316; border-radius: 12px;">
                                       <span style="font-size: 13px; color: #E5E7EB; font-weight: 600;">{c.Nickname}</span>
