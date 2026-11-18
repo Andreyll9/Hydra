@@ -128,6 +128,20 @@
     }
     loadHydraStories();
 
+    EventsOn('remote_story_received', (payload) => {
+        if (!payload || !payload.data) return;
+        try {
+            const stObj = JSON.parse(payload.data);
+            stObj.author = payload.author || stObj.author || 'Контакт';
+            loadHydraStories();
+            if (!hydraStories.some(s => s.id === stObj.id)) {
+                hydraStories = [stObj, ...hydraStories];
+                localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
+            }
+        } catch (e) {}
+    });
+    
+
     async function joinGroupByInviteKey(rawKey) {
         const cleanKey = String(rawKey || '').trim();
         let roomTitle = '👥 Группа Hydra';
@@ -282,7 +296,13 @@
             anonViews: 0
         }, ...hydraStories];
         localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
-        if (window.__addHydraLog) window.__addHydraLog('STORY-PUB', 'Опубликована новая история на 24 часа');
+        const publishedStory = hydraStories[0];
+        (contacts || []).forEach(c => {
+            if (c && c.ID && !c.IsFavorites && !String(c.Nickname || '').startsWith('👥') && !String(c.Nickname || '').startsWith('📢')) {
+                AppActions.SendText(c.ID, '[HYDRA_STORY_SYNC]:' + JSON.stringify(publishedStory), '').catch(() => {});
+            }
+        });
+        if (window.__addHydraLog) window.__addHydraLog('STORY-PUB', 'Опубликована и разослана контактам новая История на 24ч');
         newStoryText = '';
         newStoryImage = '';
         newStoryVideo = '';

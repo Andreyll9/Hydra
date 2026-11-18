@@ -127,12 +127,20 @@ func (a *AppCore) SendText(contactID, text, replyToID string) error {
 		msg.ReplyToID = &replyToID
 	}
 
-	// Технические пакеты WebRTC (CALL_ANSWER / CALL_ICE / GROUP_INVITE) не сохраняем как текстовые пузыри в истории чата
-	if strings.HasPrefix(text, "[HYDRA_CALL_ANSWER]:") || strings.HasPrefix(text, "[HYDRA_CALL_ICE]:") || strings.HasPrefix(text, "[HYDRA_GROUP_INVITE]:") {
-		return nil
-	}
-	if strings.HasPrefix(text, "[HYDRA_CALL_ANSWER]:") || strings.HasPrefix(text, "[HYDRA_CALL_ICE]:") || strings.HasPrefix(text, "[HYDRA_GROUP_INVITE]:") || strings.HasPrefix(text, "[HYDRA_DEL_MSG]:") || strings.HasPrefix(text, "[HYDRA_READ_ACK]:") || strings.HasPrefix(text, "[HYDRA_STORY_SYNC]:") || strings.HasPrefix(text, "[HYDRA_REACT]:") {
-		return nil
+	// Технические пакеты (WebRTC, синхронизация историй, реакций, удалений и участников групп) не сохраняем как пузыри в чате
+	for _, prefix := range []string{
+		"[HYDRA_CALL_ANSWER]:",
+		"[HYDRA_CALL_ICE]:",
+		"[HYDRA_GROUP_INVITE]:",
+		"[HYDRA_GROUP_MEMBERS]:",
+		"[HYDRA_DEL_MSG]:",
+		"[HYDRA_READ_ACK]:",
+		"[HYDRA_STORY_SYNC]:",
+		"[HYDRA_REACT]:",
+	} {
+		if strings.HasPrefix(text, prefix) {
+			return nil
+		}
 	}
 	if err := a.Repo.SaveMessage(a.Ctx, msg); err != nil {
 		log.Printf("[AppCore] Failed to save message: %v", err)

@@ -483,6 +483,18 @@
         window.__cycleChatTtlFromProfile = () => cycleDisappearingTimer();
     }
 
+    
+    EventsOn('remote_group_members', (raw) => {
+        const [gId, membersCsv] = String(raw || '').split('|');
+        if (gId && membersCsv) {
+            const arr = membersCsv.split(',').map(s => s.trim()).filter(Boolean);
+            localStorage.setItem('hydra_group_members_' + gId, JSON.stringify(arr));
+            if (selectedContact && selectedContact.ID === gId) {
+                currentGroupMembers = arr;
+            }
+        }
+    });
+    
     EventsOn('remote_reaction', (raw) => {
         const [mId, em] = String(raw || '').split('|');
         if (mId && em) {
@@ -543,10 +555,6 @@
     
     function cycleDisappearingTimer() {
         toggleAndSaveDisappearingTimer();
-        return;
-        if (disappearingTimer === 0) disappearingTimer = 60;
-        else if (disappearingTimer === 60) disappearingTimer = 3600;
-        else disappearingTimer = 0;
     }
 
     let recordingSeconds = 0;
@@ -637,13 +645,14 @@
     }
     async function inviteContactToGroup(targetContact) {
         if (!selectedContact || !targetContact) return;
-        const invitePayload = `[HYDRA_GROUP_INVITE]:${selectedContact.Nickname}|${selectedContact.I2PAddress}`;
+        if (!currentGroupMembers.includes(targetContact.Nickname)) {
+            currentGroupMembers = [...currentGroupMembers, targetContact.Nickname];
+            localStorage.setItem('hydra_group_members_' + selectedContact.ID, JSON.stringify(currentGroupMembers));
+        }
+        const membersStr = currentGroupMembers.join(', ');
+        const invitePayload = `[HYDRA_GROUP_INVITE]:${selectedContact.Nickname}|${selectedContact.I2PAddress}|${membersStr}`;
         try {
             await AppActions.SendText(targetContact.ID, invitePayload, '');
-            if (!currentGroupMembers.includes(targetContact.Nickname)) {
-                currentGroupMembers = [...currentGroupMembers, targetContact.Nickname];
-                localStorage.setItem('hydra_group_members_' + selectedContact.ID, JSON.stringify(currentGroupMembers));
-            }
             alert(`✅ Пользователь ${targetContact.Nickname} добавлен в «${selectedContact.Nickname}»!`);
         } catch (e) {
             alert('Ошибка отправки приглашения: ' + e);
@@ -771,6 +780,8 @@
         if (!sig || !sig.content) return;
         const c = String(sig.content);
         if (c.startsWith('[HYDRA_CALL_RING]:')) {
+            const bUntil = Number(localStorage.getItem('hydra_block_until_' + (sig.contact_id || selectedContact?.ID)) || 0);
+            if (bUntil > Date.now()) return;
             incomingCallOffer = c.slice('[HYDRA_CALL_RING]:'.length);
             activeCallModal = true;
             callConnected = false;
@@ -1514,7 +1525,11 @@
                     {#each allExistingContactsForGroup as c}
                         <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #121316; border-radius: 12px;">
                             <span style="font-size: 13px; color: #E5E7EB; font-weight: 600;">{c.Nickname}</span>
-                            <button type="button" on:click={() => inviteContactToGroup(c)} style="background: #1E3A8A; color: #60A5FA; border: 1px solid rgba(59,130,246,0.3); border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700;">+ Добавить</button>
+                            {#if currentGroupMembers.includes(c.Nickname)}
+                                <span style="color: #10B981; font-size: 12px; font-weight: 800; padding: 4px 10px;">✅ Добавлен</span>
+                            {:else}
+                                <button type="button" on:click={() => inviteContactToGroup(c)} style="background: #1E3A8A; color: #60A5FA; border: 1px solid rgba(59,130,246,0.3); border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700; cursor: pointer;">+ Добавить</button>
+                            {/if}
                         </div>
                     {/each}
                 </div>

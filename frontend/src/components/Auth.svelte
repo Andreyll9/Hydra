@@ -430,16 +430,18 @@
               </div>
             {/each}
             
-            <div 
-                class="profile-item add-profile" 
-                role="button"
-                tabindex="0"
-                on:click={startCreateProfile}
-                on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && startCreateProfile()}
-            >
-              <div class="plus-icon">+</div>
-              <div class="add-text">Создать</div>
-            </div>
+            {#if allProfiles.length === 0}
+              <div 
+                  class="profile-item add-profile" 
+                  role="button"
+                  tabindex="0"
+                  on:click={startCreateProfile}
+                  on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && startCreateProfile()}
+              >
+                <div class="plus-icon">+</div>
+                <div class="add-text">Создать</div>
+              </div>
+            {/if}
           </div>
           
           <div class="divider-text">

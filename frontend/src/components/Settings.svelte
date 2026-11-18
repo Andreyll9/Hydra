@@ -190,6 +190,21 @@
 
     let biometricEnabled = localStorage.getItem('hydra_biometric') !== '0';
     
+    
+    let groupInviteFriendsOnly = localStorage.getItem('hydra_group_friends_only') === '1';
+    let flagSecureEnabled = localStorage.getItem('hydra_flag_secure') === '1';
+    function toggleGroupInviteFriendsOnly() {
+        groupInviteFriendsOnly = !groupInviteFriendsOnly;
+        localStorage.setItem('hydra_group_friends_only', groupInviteFriendsOnly ? '1' : '0');
+    }
+    function toggleFlagSecureSetting() {
+        flagSecureEnabled = !flagSecureEnabled;
+        localStorage.setItem('hydra_flag_secure', flagSecureEnabled ? '1' : '0');
+        if (window.HydraNative && typeof window.HydraNative.setScreenshotProtection === 'function') {
+            window.HydraNative.setScreenshotProtection(flagSecureEnabled);
+        }
+    }
+    
     let hideLastSeenEnabled = localStorage.getItem('hydra_hide_last_seen') === '1';
     let hideNearbyWifiEnabled = localStorage.getItem('hydra_hide_nearby_wifi') === '1';
 
@@ -565,6 +580,26 @@
         <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
             <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
                 <div>
+                    <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">👥 Кто может добавлять меня в группы</div>
+                    <div style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">{groupInviteFriendsOnly ? 'Только мои контакты (друзья)' : 'Все пользователи Hydra'}</div>
+                </div>
+                <input type="checkbox" checked={groupInviteFriendsOnly} on:change={toggleGroupInviteFriendsOnly} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
+            </div>
+        </div>
+
+        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                <div>
+                    <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🔒 Запрет скриншотов и записи экрана</div>
+                    <div style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">Аппаратная защита окна приложения (FLAG_SECURE)</div>
+                </div>
+                <input type="checkbox" checked={flagSecureEnabled} on:change={toggleFlagSecureSetting} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
+            </div>
+        </div>
+
+        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                <div>
                     <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🕒 Скрывать точное время входа</div>
                     <div style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">Показывать собеседникам только статус «Был(а) за последние 24ч»</div>
                 </div>
@@ -633,7 +668,7 @@
                     </summary>
                     <div class="destination-box" style="word-break: break-all;">
                         <p class="dest-text">{myDestination}</p>
-                        <button type="button" class="btn-small btn-primary" on:click={() => { AppActions.CopyToClipboard(myDestination); alert("✅ Ключ скопирован"); }}>Скопировать ключ</button>
+                        <button type="button" class="btn-small btn-primary" on:click={() => { AppActions.ClipboardSet(myDestination); alert("✅ Ключ скопирован"); }}>Скопировать ключ</button>
                     </div>
                 </details>
 

@@ -896,10 +896,42 @@ func (a *AppCore) OnMessageReceived(msg *core.Message, senderPubKey, senderAddr 
 
 	msg.ChatID = contact.ChatID
 
+	if strings.HasPrefix(msg.Content, "[HYDRA_DEL_MSG]:") {
+		targetMsgID := strings.TrimSpace(strings.TrimPrefix(msg.Content, "[HYDRA_DEL_MSG]:"))
+		if targetMsgID != "" && a.Repo != nil {
+			_ = a.Repo.DeleteMessage(a.Ctx, targetMsgID)
+			a.Emitter.Emit("remote_message_deleted", targetMsgID)
+		}
+		return
+	}
+	if strings.HasPrefix(msg.Content, "[HYDRA_READ_ACK]:") {
+		a.Emitter.Emit("remote_chat_read", contact.ChatID)
+		return
+	}
+	if strings.HasPrefix(msg.Content, "[HYDRA_REACT]:") {
+		a.Emitter.Emit("remote_reaction", strings.TrimPrefix(msg.Content, "[HYDRA_REACT]:"))
+		return
+	}
+	if strings.HasPrefix(msg.Content, "[HYDRA_STORY_SYNC]:") {
+		storyJson := strings.TrimPrefix(msg.Content, "[HYDRA_STORY_SYNC]:")
+		a.Emitter.Emit("remote_story_received", map[string]interface{}{
+			"author": contact.Nickname,
+			"pub":    senderPubKey,
+			"data":   storyJson,
+		})
+		return
+	}
+	if strings.HasPrefix(msg.Content, "[HYDRA_GROUP_MEMBERS]:") {
+		a.Emitter.Emit("remote_group_members", strings.TrimPrefix(msg.Content, "[HYDRA_GROUP_MEMBERS]:"))
+		return
+	}
 	if strings.HasPrefix(msg.Content, "[HYDRA_GROUP_INVITE]:") {
-		parts := strings.SplitN(strings.TrimPrefix(msg.Content, "[HYDRA_GROUP_INVITE]:"), "|", 2)
-		if len(parts) == 2 {
-			_, _ = a.AddContact(parts[0], parts[1])
+		parts := strings.SplitN(strings.TrimPrefix(msg.Content, "[HYDRA_GROUP_INVITE]:"), "|", 3)
+		if len(parts) >= 2 {
+			grpInfo, _ := a.AddContact(parts[0], parts[1])
+			if len(parts) == 3 && grpInfo != nil {
+				a.Emitter.Emit("remote_group_members", grpInfo.ID+"|"+parts[2])
+			}
 			msg.Content = "🎟️ Вас добавили в «" + parts[0] + "»"
 		}
 	}
@@ -1257,9 +1289,6 @@ func (a *AppCore) StartVPSRelayLoop() {
 							if len(seenIDs) > 1000 {
 								seenIDs = make(map[string]bool)
 							}
-							if len(seenIDs) > 1000 {
-								seenIDs = make(map[string]bool)
-							}
 							seenIDs[mID] = true
 							if existing, _ := a.Repo.GetMessage(a.Ctx, mID); existing != nil {
 								continue
@@ -1290,6 +1319,49 @@ func (a *AppCore) StartVPSRelayLoop() {
 					}
 				}
 				resp.Body.Close()
+			}
+			if contactsList, errC := a.Repo.ListContacts(a.Ctx); errC == nil {
+				for _, grp := range contactsList {
+					if strings.HasPrefix(grp.I2PAddress, "SFlEUkFfUk9PTV") {
+						gResp, gErr := client.Get("http://191.223.137.164:8085/relay/poll?pub=" + url.QueryEscape(grp.I2PAddress))
+						if gErr == nil && gResp != nil {
+							if gResp.StatusCode == http.StatusOK {
+								var gItems []map[string]interface{}
+								if json.NewDecoder(gResp.Body).Decode(&gItems) == nil {
+									for _, item := range gItems {
+										mID, _ := item["id"].(string)
+										fromPub, _ := item["from"].(string)
+										fromNick, _ := item["from_nick"].(string)
+										content, _ := item["content"].(string)
+										if mID == "" || fromPub == myPub || seenIDs[mID] {
+											continue
+										}
+										seenIDs[mID] = true
+										displayContent := content
+										if fromNick != "" && !strings.HasPrefix(content, "[HYDRA_") {
+											displayContent = "**" + fromNick + ":** " + content
+										}
+										gMsg := &core.Message{
+											ID:          mID,
+											ChatID:      grp.ChatID,
+											SenderID:    grp.PublicKey,
+											SenderAddr:  grp.I2PAddress,
+											Content:     displayContent,
+											ContentType: "text",
+											Status:      core.MessageStatusDelivered,
+											IsOutgoing:  false,
+											Timestamp:   time.Now().UnixMilli(),
+											CreatedAt:   time.Now(),
+											UpdatedAt:   time.Now(),
+										}
+										a.OnMessageReceived(gMsg, grp.PublicKey, grp.I2PAddress)
+									}
+								}
+							}
+							gResp.Body.Close()
+						}
+					}
+				}
 			}
 		}
 		time.Sleep(2 * time.Second)
