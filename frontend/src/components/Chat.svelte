@@ -2,7 +2,7 @@
     import * as AppActions from '../../wailsjs/go/main/App.js';
     import { EventsOn } from '../../wailsjs/runtime/runtime.js';
     import { Icons } from '../Icons.js';
-    import { getInitials, formatTime, parseMarkdown, getAvatarGradient } from '../utils.js';
+    import { getInitials, formatTime, parseMarkdown, getAvatarGradient, getUnifiedPresence } from '../utils.js';
     import { fade, fly } from 'svelte/transition';
     import { onMount, tick, createEventDispatcher } from 'svelte';
 
@@ -552,6 +552,47 @@
     let recordingSeconds = 0;
     let recordingInterval = null;
     let activeCallModal = false;
+
+    let isCallMuted = false;
+    let isRecordingCall = false;
+    let callRecorder = null;
+    let callRecordedChunks = [];
+
+    function toggleCallMute() {
+        isCallMuted = !isCallMuted;
+        if (window.__hydraCallStream) {
+            window.__hydraCallStream.getAudioTracks().forEach(t => { t.enabled = !isCallMuted; });
+        }
+    }
+
+    function toggleCallRecording() {
+        if (isRecordingCall && callRecorder) {
+            callRecorder.stop();
+            isRecordingCall = false;
+            return;
+        }
+        try {
+            const s = window.__hydraCallStream;
+            if (!s) return alert('Микрофон ещё не активен');
+            callRecordedChunks = [];
+            callRecorder = new MediaRecorder(s);
+            callRecorder.ondataavailable = e => { if (e.data && e.data.size > 0) callRecordedChunks.push(e.data); };
+            callRecorder.onstop = async () => {
+                const blob = new Blob(callRecordedChunks, { type: 'audio/webm' });
+                const reader = new FileReader();
+                reader.onloadend = async () => {
+                    await saveMediaDataUrlToGallery(reader.result, 'hydra_call_rec');
+                    alert('✅ Запись разговора сохранена в папку Download/Hydra!');
+                };
+                reader.readAsDataURL(blob);
+            };
+            callRecorder.start(250);
+            isRecordingCall = true;
+        } catch (e) {
+            alert('Ошибка записи: ' + e);
+        }
+    }
+    
     let incomingCallOffer = null;
     let callConnected = false;
     let callStatusText = 'Соединение по защищённому WebRTC-каналу...';
@@ -575,6 +616,16 @@
     }
 
     // Выбор участников для группы из существующих контактов
+    
+    let currentGroupMembers = ['Вы (Создатель)'];
+    let currentGroupHideMembers = false;
+    $: if (selectedContact) {
+        try {
+            currentGroupMembers = JSON.parse(localStorage.getItem('hydra_group_members_' + selectedContact.ID) || '["Вы (Создатель)"]');
+            currentGroupHideMembers = localStorage.getItem('hydra_group_hide_members_' + selectedContact.ID) === '1';
+        } catch (e) { currentGroupMembers = ['Вы (Создатель)']; }
+    }
+    
     let allExistingContactsForGroup = [];
     async function openGroupManagementModal() {
         showChatHeaderMenu = false;
@@ -589,7 +640,11 @@
         const invitePayload = `[HYDRA_GROUP_INVITE]:${selectedContact.Nickname}|${selectedContact.I2PAddress}`;
         try {
             await AppActions.SendText(targetContact.ID, invitePayload, '');
-            alert(`✅ Приглашение в «${selectedContact.Nickname}» отправлено пользователю ${targetContact.Nickname}!`);
+            if (!currentGroupMembers.includes(targetContact.Nickname)) {
+                currentGroupMembers = [...currentGroupMembers, targetContact.Nickname];
+                localStorage.setItem('hydra_group_members_' + selectedContact.ID, JSON.stringify(currentGroupMembers));
+            }
+            alert(`✅ Пользователь ${targetContact.Nickname} добавлен в «${selectedContact.Nickname}»!`);
         } catch (e) {
             alert('Ошибка отправки приглашения: ' + e);
         }
@@ -910,9 +965,9 @@
             <div>
                 <div class="chat-name">{selectedContact?.Nickname || 'Unknown'}</div>
                 <div class="chat-status">
-                    <span class="status-dot" style="background: {(messages || []).some(m => !m.IsOutgoing && m.SenderID === selectedContact?.PublicKey && (Date.now() - m.Timestamp < 300000)) ? '#4CAF50' : '#9E9E9E'};"></span>
+                    <span class="status-dot" style="background: {getUnifiedPresence(selectedContact, messages).online ? '#4CAF50' : '#9E9E9E'};"></span>
                     <span class="status-text">
-                        {getContactPresenceText(selectedContact, messages)}
+                        {getUnifiedPresence(selectedContact, messages).text}
                     </span>
                     {#if isMobile}
                          <button class="btn-icon-xs" style="margin-left: 8px; opacity: 0.7;" on:click|stopPropagation={() => {
@@ -937,11 +992,14 @@
                     ⏱ {disappearingTimer === 0 ? 'Выкл' : (disappearingTimer === 60 ? '1м' : '1ч')}
                 </button>
             {/if}
-            <button type="button" on:click={startHydraCall} style="background: #1D4ED8; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; flex-shrink: 0;" title="Позвонить">📞</button>
+            {#if !String(selectedContact.Nickname || '').startsWith('👥') && !String(selectedContact.Nickname || '').startsWith('📢')}
+                <button type="button" on:click={startHydraCall} style="background: #1D4ED8; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; flex-shrink: 0;" title="Позвонить">📞</button>
+            {/if}
             <div style="position: relative;">
                 <button type="button" on:click|stopPropagation={() => showChatHeaderMenu = !showChatHeaderMenu} style="background: #22252A; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.25); border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; cursor: pointer;">⋮</button>
                 {#if showChatHeaderMenu}
-                    <div style="position: fixed; top: 62px; right: 14px; background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 16px; padding: 6px; z-index: 99995; min-width: 210px; box-shadow: 0 12px 32px rgba(0,0,0,0.7);">
+                    <div on:click={() => showChatHeaderMenu = false} style="position: fixed; inset: 0; z-index: 99990; background: transparent;"></div>
+                    <div style="position: fixed; top: 62px; right: 14px; background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 16px; padding: 6px; z-index: 99995; min-width: 225px; box-shadow: 0 12px 32px rgba(0,0,0,0.7);">
                         {#if String(selectedContact?.Nickname || '').startsWith('👥') || String(selectedContact?.Nickname || '').startsWith('📢')}
             <button type="button" on:click={openGroupManagementModal} style="width: 100%; text-align: left; padding: 10px 12px; background: transparent; color: #60A5FA; border: none; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer;">👥 Добавить участников (по ID / из чатов)</button>
         {/if}
@@ -964,6 +1022,16 @@
         </div>
         <div style="font-size: 22px; font-weight: 800; color: #E5E7EB;">{selectedContact?.Nickname}</div>
         <div style="font-size: 14px; color: #60A5FA; text-align: center;">{callStatusText}</div>
+        <div style="display: flex; gap: 14px; margin-top: 8px;">
+            <button type="button" on:click={toggleCallMute} style="background: {isCallMuted ? '#EF4444' : '#1E222B'}; color: #fff; border: 1px solid rgba(255,255,255,0.15); border-radius: 100px; padding: 11px 18px; font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                <span>{isCallMuted ? '🔇' : '🎙️'}</span>
+                <span>{isCallMuted ? 'Микрофон выкл' : 'Микрофон вкл'}</span>
+            </button>
+            <button type="button" on:click={toggleCallRecording} style="background: {isRecordingCall ? '#EF4444' : '#1E222B'}; color: #fff; border: 1px solid rgba(255,255,255,0.15); border-radius: 100px; padding: 11px 18px; font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                <span>{isRecordingCall ? '⏹' : '🔴'}</span>
+                <span>{isRecordingCall ? 'Стоп запись' : 'Запись вызова'}</span>
+            </button>
+        </div>
         <div style="display: flex; gap: 16px; margin-top: 24px;">
             {#if incomingCallOffer && !callConnected}
                 <button type="button" on:click={acceptIncomingHydraCall} style="background: #10B981; color: #fff; border: none; border-radius: 100px; padding: 14px 28px; font-size: 15px; font-weight: 800; cursor: pointer;">
@@ -1160,6 +1228,18 @@
                             </div>
                             <button type="button" on:click|stopPropagation={startHydraCall} style="margin-top: 4px; background: rgba(59,130,246,0.2); color: #60A5FA; border: 1px solid rgba(59,130,246,0.35); border-radius: 100px; padding: 3px 10px; font-size: 11px; font-weight: 700; cursor: pointer;">Перезвонить</button>
                         </div>
+                    </div>
+                {:else if msg.Content && (msg.Content.trim().startsWith('SFlEUkFfUk9PTV') || msg.Content.startsWith('🎟️ Вас добавили в'))}
+                    <div style="display: flex; flex-direction: column; gap: 8px; padding: 4px;">
+                        <div style="font-weight: 700; font-size: 13px; color: #93C5FD;">
+                            {msg.Content.startsWith('🎟️') ? msg.Content : '🎟️ Ссылка-приглашение в группу Hydra'}
+                        </div>
+                        {#if msg.Content.trim().startsWith('SFlEUkFfUk9PTV')}
+                            <div style="font-size: 11px; opacity: 0.75; font-family: monospace; word-break: break-all;">{msg.Content.trim()}</div>
+                            <button type="button" on:click|stopPropagation={() => { if (window.__joinHydraGroupByKey) window.__joinHydraGroupByKey(msg.Content.trim()); }} style="background: #fff; color: #1E3A8A; border: none; border-radius: 100px; padding: 8px 16px; font-size: 12px; font-weight: 800; cursor: pointer; align-self: flex-start;">
+                                ➡️ Перейти / Вступить в группу
+                            </button>
+                        {/if}
                     </div>
                 {:else}
                     <div class="message-content">{@html parseMarkdown(msg.Content)}</div>
@@ -1404,6 +1484,15 @@
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                 <h3 style="margin: 0; color: #E5E7EB; font-size: 16px;">👥 Участники: {selectedContact.Nickname}</h3>
                 <button type="button" on:click={() => showRoomSettingsModal = false} style="background: #28292D; color: #fff; border: none; border-radius: 50%; width: 32px; height: 32px;">✕</button>
+            </div>
+            <div style="padding: 10px 12px; background: #121316; border: 1px solid rgba(59,130,246,0.25); border-radius: 14px; margin-bottom: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <span style="font-size: 12px; font-weight: 800; color: #60A5FA;">👥 Участники ({currentGroupMembers.length}):</span>
+                    <button type="button" on:click={() => { currentGroupHideMembers = !currentGroupHideMembers; localStorage.setItem('hydra_group_hide_members_' + selectedContact.ID, currentGroupHideMembers ? '1' : '0'); }} style="background: rgba(59,130,246,0.18); color: #93C5FD; border: none; border-radius: 100px; padding: 3px 9px; font-size: 10px; font-weight: 700; cursor: pointer;">
+                        {currentGroupHideMembers ? '🙈 Скрыты от других' : '👁️ Видны всем'}
+                    </button>
+                </div>
+                <div style="font-size: 12px; color: #E5E7EB;">{currentGroupMembers.join(', ')}</div>
             </div>
             <div style="font-size: 12px; color: #9CA3AF; margin-bottom: 6px;">Добавить по @нику или крипто-ID:</div>
             <div style="display: flex; gap: 8px; margin-bottom: 14px;">

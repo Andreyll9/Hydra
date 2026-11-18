@@ -1,7 +1,7 @@
 <script>
     import jsQR from 'jsqr';
     import { Icons } from '../Icons.js';
-    import { getInitials, getAvatarGradient } from '../utils.js';
+    import { getInitials, getAvatarGradient, getUnifiedPresence } from '../utils.js';
     import * as AppActions from '../../wailsjs/go/main/App.js';
 
     // Confirm Modal
@@ -70,6 +70,59 @@
     let profileActiveTab = 'media'; // 'media' | 'files' | 'voice'
     let showProfileDotsMenu = false;
     let contactMuted = false;
+
+    let showBlockDurationModal = false;
+    let blockAmount = 1;
+    let blockUnit = 'days';
+    let isContactBlockedNow = false;
+    let groupMembersInProfile = [];
+    let groupHideMembers = false;
+
+    $: if (contact) {
+        contactMuted = localStorage.getItem('hydra_mute_' + contact.ID) === '1';
+        const bUntil = Number(localStorage.getItem('hydra_block_until_' + contact.ID) || 0);
+        isContactBlockedNow = bUntil > Date.now();
+        try {
+            groupMembersInProfile = JSON.parse(localStorage.getItem('hydra_group_members_' + contact.ID) || '["Вы (Создатель)"]');
+            groupHideMembers = localStorage.getItem('hydra_group_hide_members_' + contact.ID) === '1';
+        } catch (e) { groupMembersInProfile = ['Вы (Создатель)']; }
+    }
+
+    function toggleContactMute() {
+        if (!contact) return;
+        contactMuted = !contactMuted;
+        localStorage.setItem('hydra_mute_' + contact.ID, contactMuted ? '1' : '0');
+    }
+
+    function toggleGroupMembersVisibility() {
+        if (!contact) return;
+        groupHideMembers = !groupHideMembers;
+        localStorage.setItem('hydra_group_hide_members_' + contact.ID, groupHideMembers ? '1' : '0');
+    }
+
+    function applyTimedUserBlock() {
+        if (!contact) return;
+        const multMap = {
+            minutes: 60 * 1000,
+            hours: 3600 * 1000,
+            days: 86400 * 1000,
+            months: 30 * 86400 * 1000,
+            years: 365 * 86400 * 1000
+        };
+        const durationMs = Math.max(1, Number(blockAmount || 1)) * (multMap[blockUnit] || 86400000);
+        const untilTs = Date.now() + durationMs;
+        localStorage.setItem('hydra_block_until_' + contact.ID, String(untilTs));
+        isContactBlockedNow = true;
+        showBlockDurationModal = false;
+    }
+
+    function unblockCurrentUser() {
+        if (!contact) return;
+        localStorage.removeItem('hydra_block_until_' + contact.ID);
+        isContactBlockedNow = false;
+        showBlockDurationModal = false;
+    }
+    
     let noCopyProtected = localStorage.getItem('hydra_flag_secure') === '1';
 
     function toggleNoCopyProtection() {
@@ -382,28 +435,54 @@
         </div>
         <div style="font-size: 24px; font-weight: 800; color: #fff; text-align: center;">{contact.Nickname}</div>
         <div style="font-size: 13px; color: #9CA3AF; margin-top: 4px;">
-            был(а) недавно <span style="background: rgba(255,255,255,0.08); padding: 2px 8px; border-radius: 100px; font-size: 11px; margin-left: 4px;">защищено E2EE</span>
+            {getUnifiedPresence(contact).text} <span style="background: rgba(255,255,255,0.08); padding: 2px 8px; border-radius: 100px; font-size: 11px; margin-left: 4px;">защищено E2EE</span>
         </div>
 
-        <!-- 4 плитки действий как на Скриншоте 2: Чат | Звук | Звонок | Видео -->
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; width: 100%; max-width: 400px; margin-top: 20px;">
+        <!-- Плитки действий профиля: Чат | Звук | Звонок (только 1-на-1) | Блокировка по таймеру -->
+        <div style="display: grid; grid-template-columns: repeat({String(contact.Nickname || '').startsWith('👥') || String(contact.Nickname || '').startsWith('📢') ? 3 : 4}, 1fr); gap: 8px; width: 100%; max-width: 400px; margin-top: 20px;">
             <button type="button" on:click={onCloseContactProfile} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
                 <span style="font-size: 18px;">💬</span>
                 <span style="font-size: 12px; font-weight: 600;">Чат</span>
             </button>
-            <button type="button" on:click={() => contactMuted = !contactMuted} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
+            <button type="button" on:click={toggleContactMute} style="background: {contactMuted ? 'rgba(239,68,68,0.18)' : '#1A1C20'}; border: 1px solid {contactMuted ? 'rgba(239,68,68,0.4)' : 'transparent'}; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
                 <span style="font-size: 18px;">{contactMuted ? '🔕' : '🔔'}</span>
-                <span style="font-size: 12px; font-weight: 600;">{contactMuted ? 'Без звука' : 'Звук'}</span>
+                <span style="font-size: 12px; font-weight: 600;">{contactMuted ? 'Выключен' : 'Звук'}</span>
             </button>
-            <button type="button" on:click={() => { onCloseContactProfile(); if (window.__triggerHydraCallFromProfile) window.__triggerHydraCallFromProfile(); }} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
-                <span style="font-size: 18px;">📞</span>
-                <span style="font-size: 12px; font-weight: 600;">Звонок</span>
-            </button>
-            <button type="button" on:click={() => { onCloseContactProfile(); if (window.__triggerHydraCircleFromProfile) window.__triggerHydraCircleFromProfile(); }} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
-                <span style="font-size: 18px;">📹</span>
-                <span style="font-size: 12px; font-weight: 600;">Кружок</span>
+            {#if !String(contact.Nickname || '').startsWith('👥') && !String(contact.Nickname || '').startsWith('📢')}
+                <button type="button" on:click={() => { onCloseContactProfile(); if (window.__triggerHydraCallFromProfile) window.__triggerHydraCallFromProfile(); }} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
+                    <span style="font-size: 18px;">📞</span>
+                    <span style="font-size: 12px; font-weight: 600;">Звонок</span>
+                </button>
+            {/if}
+            <button type="button" on:click={() => showBlockDurationModal = true} style="background: {isContactBlockedNow ? 'rgba(239,68,68,0.22)' : '#1A1C20'}; border: 1px solid {isContactBlockedNow ? '#EF4444' : 'transparent'}; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: {isContactBlockedNow ? '#FCA5A5' : '#fff'}; cursor: pointer;">
+                <span style="font-size: 18px;">{isContactBlockedNow ? '🔓' : '🚫'}</span>
+                <span style="font-size: 12px; font-weight: 600;">{isContactBlockedNow ? 'Разблок.' : 'Блок'}</span>
             </button>
         </div>
+
+        {#if showBlockDurationModal}
+            <div on:click|stopPropagation style="margin-top: 14px; width: 100%; max-width: 400px; background: #16181F; border: 1px solid rgba(239,68,68,0.4); border-radius: 20px; padding: 16px; box-sizing: border-box;">
+                <div style="font-size: 14px; font-weight: 800; color: #FCA5A5; margin-bottom: 10px;">🚫 Блокировка: {contact.Nickname}</div>
+                <div style="font-size: 12px; color: #9CA3AF; margin-bottom: 10px;">Выберите срок, на который нужно заблокировать пользователя:</div>
+                <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                    <input type="number" min="1" max="999" bind:value={blockAmount} style="width: 80px; padding: 10px; border-radius: 12px; background: #0E1015; color: #fff; border: 1px solid rgba(255,255,255,0.15); font-size: 14px; font-weight: 700; text-align: center;" />
+                    <select bind:value={blockUnit} style="flex: 1; padding: 10px; border-radius: 12px; background: #0E1015; color: #fff; border: 1px solid rgba(255,255,255,0.15); font-size: 13px; font-weight: 600;">
+                        <option value="minutes">Минут</option>
+                        <option value="hours">Часов</option>
+                        <option value="days">Дней</option>
+                        <option value="months">Месяцев</option>
+                        <option value="years">Лет</option>
+                    </select>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    {#if isContactBlockedNow}
+                        <button type="button" on:click={unblockCurrentUser} style="flex: 1; padding: 10px; border-radius: 100px; background: #10B981; color: #fff; border: none; font-weight: 800; font-size: 12px; cursor: pointer;">🔓 Снять блок</button>
+                    {/if}
+                    <button type="button" on:click={() => showBlockDurationModal = false} style="flex: 1; padding: 10px; border-radius: 100px; background: #22252A; color: #E5E7EB; border: none; font-size: 12px; cursor: pointer;">Отмена</button>
+                    <button type="button" on:click={applyTimedUserBlock} style="flex: 1; padding: 10px; border-radius: 100px; background: #EF4444; color: #fff; border: none; font-weight: 800; font-size: 12px; cursor: pointer;">Заблокировать</button>
+                </div>
+            </div>
+        {/if}
     </div>
 
     <!-- Карточка с данными пользователя -->

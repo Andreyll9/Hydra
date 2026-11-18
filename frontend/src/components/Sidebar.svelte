@@ -51,7 +51,8 @@
         const query = (searchQuery || "").toLowerCase();
         const nickname = (c.Nickname || "").toLowerCase();
         const lastMsg = (c.LastMessage || "").toLowerCase();
-        return nickname.includes(query) || lastMsg.includes(query);
+        const addr = (c.I2PAddress || c.PublicKey || '').toLowerCase();
+        return nickname.includes(query) || lastMsg.includes(query) || addr.includes(query);
     });
 
     $: sortedContacts = [...filteredContacts].sort((a, b) => {
@@ -126,6 +127,31 @@
         }
     }
     loadHydraStories();
+
+    async function joinGroupByInviteKey(rawKey) {
+        const cleanKey = String(rawKey || '').trim();
+        let roomTitle = '👥 Группа Hydra';
+        try {
+            const decoded = decodeURIComponent(escape(atob(cleanKey)));
+            if (decoded.startsWith('HYDRA_ROOM_')) {
+                const body = decoded.slice('HYDRA_ROOM_'.length);
+                const namePart = body.split('_')[0];
+                if (namePart) roomTitle = namePart;
+            }
+        } catch (e) {}
+        try {
+            const created = await AppActions.AddContact(roomTitle, cleanKey);
+            searchQuery = '';
+            if (created && onSelectContact) onSelectContact(created);
+            else location.reload();
+        } catch (e) {
+            alert('Ошибка перехода в группу: ' + e);
+        }
+    }
+    if (typeof window !== 'undefined') {
+        window.__joinHydraGroupByKey = joinGroupByInviteKey;
+    }
+    
 
     async function toggleStoryCamera(switchCam = false) {
         if (isStoryCameraOpen && !switchCam) {
@@ -214,15 +240,28 @@
     function handleStoryFile(e) {
         const file = e.target.files?.[0];
         if (!file) return;
-        if (window.__addHydraLog) window.__addHydraLog('STORY-FILE', 'Выбран файл для Сторис: ' + file.name + ' (' + file.type + ')');
         const reader = new FileReader();
         reader.onload = () => {
             if (file.type && file.type.startsWith('video/')) {
                 newStoryVideo = reader.result;
                 newStoryImage = '';
             } else {
-                newStoryImage = reader.result;
-                newStoryVideo = '';
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const maxDim = 720;
+                    let w = img.width || 600, h = img.height || 800;
+                    if (w > maxDim || h > maxDim) {
+                        if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
+                        else { w = Math.round(w * maxDim / h); h = maxDim; }
+                    }
+                    canvas.width = w;
+                    canvas.height = h;
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                    newStoryImage = canvas.toDataURL('image/jpeg', 0.8);
+                    newStoryVideo = '';
+                };
+                img.src = reader.result;
             }
         };
         reader.readAsDataURL(file);
@@ -538,6 +577,19 @@
         </div>
 
         <!-- Mobile Folders Bar -->
+        
+        {#if searchQuery && searchQuery.trim().startsWith('SFlEUkFfUk9PTV')}
+            <div style="margin: 6px 16px; padding: 12px 14px; background: linear-gradient(135deg, #172554, #1E3A8A); border: 1px solid #3B82F6; border-radius: 16px; display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <div style="font-size: 13px; font-weight: 800; color: #fff;">🎟️ Найдена ссылка-ключ группы</div>
+                    <div style="font-size: 11px; color: #93C5FD;">Нажмите, чтобы открыть или вступить</div>
+                </div>
+                <button type="button" on:click={() => joinGroupByInviteKey(searchQuery)} style="background: #fff; color: #1E3A8A; border: none; border-radius: 100px; padding: 7px 14px; font-size: 12px; font-weight: 800; cursor: pointer;">
+                    ➡️ Перейти
+                </button>
+            </div>
+        {/if}
+    
         <div class="mobile-folders-bar">
             {#each uiFolders as folder}
                 <button 

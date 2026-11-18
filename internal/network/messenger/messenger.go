@@ -402,7 +402,7 @@ func (s *Service) handlePacket(packet *pb.Packet, remoteAddr string) {
 
 func (s *Service) handleTextMessage(packet *pb.Packet, senderPubKey, remoteAddr string) {
 	textMsg := &pb.TextMessage{}
-	if err := proto.Unmarshal(packet.Payload, textMsg); err != nil || len(textMsg.Content) > 4096 {
+	if err := proto.Unmarshal(packet.Payload, textMsg); err != nil || len(textMsg.Content) > 15*1024*1024 {
 		return
 	}
 

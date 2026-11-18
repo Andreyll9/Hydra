@@ -93,3 +93,44 @@ export function parseMarkdown(text) {
     });
     return html.replace(/\n/g, '<br>');
 }
+
+
+export function getUnifiedPresence(contact, msgs = []) {
+    if (!contact) return { text: 'Оффлайн', online: false };
+    if (contact.IsFavorites || contact.Nickname === 'Избранное') {
+        return { text: 'Локальное хранилище E2EE', online: true };
+    }
+    const sName = String(contact.Nickname || '');
+    if (sName.startsWith('👥 ')) return { text: 'Группа E2EE • Участники защищены', online: true };
+    if (sName.startsWith('📢 ')) return { text: 'Канал E2EE • Вещание', online: true };
+
+    try {
+        const blockUntil = Number(localStorage.getItem('hydra_block_until_' + contact.ID) || 0);
+        if (blockUntil > Date.now()) {
+            return { text: '🚫 Заблокирован до ' + new Date(blockUntil).toLocaleString().slice(0, 16), online: false };
+        } else if (blockUntil > 0) {
+            localStorage.removeItem('hydra_block_until_' + contact.ID);
+        }
+    } catch (e) {}
+
+    const hideExactTime = localStorage.getItem('hydra_hide_last_seen') === '1';
+    const incomingMsgs = (msgs || []).filter(m => !m.IsOutgoing && !String(m.Content || '').startsWith('[HYDRA_CALL_END]'));
+    const lastIncoming = incomingMsgs.length > 0 ? incomingMsgs[incomingMsgs.length - 1] : null;
+    const lastTs = lastIncoming?.Timestamp || (contact.LastMessageTime ? new Date(contact.LastMessageTime).getTime() : 0);
+    const diffMs = lastTs > 0 ? (Date.now() - lastTs) : 999999999;
+
+    const isOnlineNow = lastTs > 0 && diffMs < 65000;
+    if (isOnlineNow) {
+        return { text: 'В сети', online: true };
+    }
+    if (hideExactTime) {
+        return { text: 'Был(а) недавно (скрыто)', online: false };
+    }
+    if (lastTs > 0) {
+        const d = new Date(lastTs);
+        const hm = d.toTimeString().slice(0, 5);
+        if (diffMs < 86400000) return { text: 'Был(а) сегодня в ' + hm, online: false };
+        return { text: 'Был(а) ' + d.toLocaleDateString() + ' в ' + hm, online: false };
+    }
+    return { text: 'Был(а) недавно', online: false };
+}
