@@ -38,433 +38,243 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Clean Audit & Synchronization of Go Core and Svelte Components (v2.9.5-hydra)
+      - name: Apply Clean Android-Only Fixes (Call Notif, PIN Update, Video Picker, Disable Desktop Mode, Clean Duplicates)
         run: |
-          cat << 'PYEOF' > clean_audit_v295.py
-          import os, re, shutil
+          cat << 'PYEOF' > apply_android_cleanup.py
+          import os, re
 
-          # 0. Гарантируем фирменную иконку щита Гидры (logo.png)
-          real_hydra_logo = "frontend/src/assets/images/logo.png"
-          if os.path.exists(real_hydra_logo):
-              for mip in ["mipmap-mdpi", "mipmap-hdpi", "mipmap-xhdpi", "mipmap-xxhdpi", "mipmap-xxxhdpi"]:
-                  for fname in ["ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png"]:
-                      dst = f"android/app/src/main/res/{mip}/{fname}"
-                      os.makedirs(os.path.dirname(dst), exist_ok=True)
-                      shutil.copyfile(real_hydra_logo, dst)
+          # 1. MainActivity.kt: кнопки звонка (Принять/Отклонить без RemoteInput), папка Download/Hydra, выбор видео+фото
+          kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
+          if os.path.exists(kt_path):
+              with open(kt_path, "r", encoding="utf-8") as f:
+                  kt = f.read()
 
-          # 1. internal/network/messenger/messenger.go:
-          ms_path = "internal/network/messenger/messenger.go"
-          if os.path.exists(ms_path):
-              with open(ms_path, "r", encoding="utf-8") as f:
-                  ms = f.read()
-              ms = ms.replace("len(textMsg.Content) > 4096", "len(textMsg.Content) > 15*1024*1024")
-              with open(ms_path, "w", encoding="utf-8") as f:
-                  f.write(ms)
-              print("[OK] 1. messenger.go: лимит сообщения 15 МБ проверен")
+              new_show_notif = '''    override fun showNotification(title: String, message: String) {
+                  runOnUiThread {
+                      try {
+                          val notifId = (System.currentTimeMillis() and 0xFFFFFFF).toInt()
+                          val senderNick = title.removePrefix("Hydra - ").trim()
+                          val replyFlags = if (Build.VERSION.SDK_INT >= 31) {
+                              android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE
+                          } else {
+                              android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                          }
+                          val intent = Intent(this, MainActivity::class.java).apply {
+                              flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                          }
+                          val pendingIntent = android.app.PendingIntent.getActivity(
+                              this, 0, intent, android.app.PendingIntent.FLAG_IMMUTABLE
+                          )
 
-          # 2. internal/appcore/messages.go:
-          msg_path = "internal/appcore/messages.go"
-          if os.path.exists(msg_path):
-              with open(msg_path, "r", encoding="utf-8") as f:
-                  mc = f.read()
+                          val isCallNotif = message.contains("вызов", ignoreCase = true) ||
+                              message.contains("звонок", ignoreCase = true)
 
-              dup_block = """	// Технические пакеты WebRTC (CALL_ANSWER / CALL_ICE / GROUP_INVITE) не сохраняем как текстовые пузыри в истории чата
-          	if strings.HasPrefix(text, "[HYDRA_CALL_ANSWER]:") || strings.HasPrefix(text, "[HYDRA_CALL_ICE]:") || strings.HasPrefix(text, "[HYDRA_GROUP_INVITE]:") {
-          		return nil
-          	}
-          	if strings.HasPrefix(text, "[HYDRA_CALL_ANSWER]:") || strings.HasPrefix(text, "[HYDRA_CALL_ICE]:") || strings.HasPrefix(text, "[HYDRA_GROUP_INVITE]:") || strings.HasPrefix(text, "[HYDRA_DEL_MSG]:") || strings.HasPrefix(text, "[HYDRA_READ_ACK]:") || strings.HasPrefix(text, "[HYDRA_STORY_SYNC]:") || strings.HasPrefix(text, "[HYDRA_REACT]:") {
-          		return nil
-          	}"""
+                          val builder = androidx.core.app.NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                              .setSmallIcon(R.mipmap.ic_launcher)
+                              .setContentTitle(title)
+                              .setContentText(message)
+                              .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                              .setCategory(
+                                  if (isCallNotif) androidx.core.app.NotificationCompat.CATEGORY_CALL
+                                  else androidx.core.app.NotificationCompat.CATEGORY_MESSAGE
+                              )
+                              .setDefaults(androidx.core.app.NotificationCompat.DEFAULT_ALL)
+                              .setAutoCancel(true)
+                              .setContentIntent(pendingIntent)
 
-              clean_filter_block = """	// Технические пакеты (WebRTC, синхронизация историй, реакций, удалений и участников групп) не сохраняем как пузыри в чате
-          	for _, prefix := range []string{
-          		"[HYDRA_CALL_ANSWER]:",
-          		"[HYDRA_CALL_ICE]:",
-          		"[HYDRA_GROUP_INVITE]:",
-          		"[HYDRA_GROUP_MEMBERS]:",
-          		"[HYDRA_DEL_MSG]:",
-          		"[HYDRA_READ_ACK]:",
-          		"[HYDRA_STORY_SYNC]:",
-          		"[HYDRA_REACT]:",
-          	} {
-          		if strings.HasPrefix(text, prefix) {
-          			return nil
-          		}
-          	}"""
+                          if (isCallNotif) {
+                              val accIntent = Intent(this, DirectReplyReceiver::class.java).apply {
+                                  putExtra("sender_nick", senderNick)
+                                  putExtra("notif_id", notifId)
+                                  putExtra("call_action", "accept_call")
+                              }
+                              val decIntent = Intent(this, DirectReplyReceiver::class.java).apply {
+                                  putExtra("sender_nick", senderNick)
+                                  putExtra("notif_id", notifId)
+                                  putExtra("call_action", "decline_call")
+                              }
+                              val accPending = android.app.PendingIntent.getBroadcast(this, notifId + 1, accIntent, replyFlags)
+                              val decPending = android.app.PendingIntent.getBroadcast(this, notifId + 2, decIntent, replyFlags)
+                              builder.addAction(R.mipmap.ic_launcher, "🟢 Принять", accPending)
+                              builder.addAction(R.mipmap.ic_launcher, "🔴 Отклонить", decPending)
+                          } else {
+                              val remoteInput = androidx.core.app.RemoteInput.Builder("key_text_reply")
+                                  .setLabel("Быстрый ответ...")
+                                  .build()
+                              val replyIntent = Intent(this, DirectReplyReceiver::class.java).apply {
+                                  putExtra("sender_nick", senderNick)
+                                  putExtra("notif_id", notifId)
+                              }
+                              val replyPendingIntent = android.app.PendingIntent.getBroadcast(this, notifId, replyIntent, replyFlags)
+                              val replyAction = androidx.core.app.NotificationCompat.Action.Builder(
+                                  R.mipmap.ic_launcher,
+                                  "Ответить",
+                                  replyPendingIntent
+                              ).addRemoteInput(remoteInput).build()
+                              builder.addAction(replyAction)
+                          }
 
-              mc = mc.replace(dup_block, clean_filter_block)
-              with open(msg_path, "w", encoding="utf-8") as f:
-                  f.write(mc)
-              print("[OK] 2. messages.go: очищены дубли фильтрации технических пакетов!")
-
-          # 3. internal/appcore/appcore.go:
-          ac_path = "internal/appcore/appcore.go"
-          if os.path.exists(ac_path):
-              with open(ac_path, "r", encoding="utf-8") as f:
-                  ac = f.read()
-
-              old_group_invite_block = """	msg.ChatID = contact.ChatID
-
-          	if strings.HasPrefix(msg.Content, "[HYDRA_GROUP_INVITE]:") {
-          		parts := strings.SplitN(strings.TrimPrefix(msg.Content, "[HYDRA_GROUP_INVITE]:"), "|", 2)
-          		if len(parts) == 2 {
-          			_, _ = a.AddContact(parts[0], parts[1])
-          			msg.Content = "🎟️ Вас добавили в «" + parts[0] + "»"
-          		}
-          	}"""
-
-              new_all_signals_block = """	msg.ChatID = contact.ChatID
-
-          	if strings.HasPrefix(msg.Content, "[HYDRA_DEL_MSG]:") {
-          		targetMsgID := strings.TrimSpace(strings.TrimPrefix(msg.Content, "[HYDRA_DEL_MSG]:"))
-          		if targetMsgID != "" && a.Repo != nil {
-          			_ = a.Repo.DeleteMessage(a.Ctx, targetMsgID)
-          			a.Emitter.Emit("remote_message_deleted", targetMsgID)
-          		}
-          		return
-          	}
-          	if strings.HasPrefix(msg.Content, "[HYDRA_READ_ACK]:") {
-          		a.Emitter.Emit("remote_chat_read", contact.ChatID)
-          		return
-          	}
-          	if strings.HasPrefix(msg.Content, "[HYDRA_REACT]:") {
-          		a.Emitter.Emit("remote_reaction", strings.TrimPrefix(msg.Content, "[HYDRA_REACT]:"))
-          		return
-          	}
-          	if strings.HasPrefix(msg.Content, "[HYDRA_STORY_SYNC]:") {
-          		storyJson := strings.TrimPrefix(msg.Content, "[HYDRA_STORY_SYNC]:")
-          		a.Emitter.Emit("remote_story_received", map[string]interface{}{
-          			"author": contact.Nickname,
-          			"pub":    senderPubKey,
-          			"data":   storyJson,
-          		})
-          		return
-          	}
-          	if strings.HasPrefix(msg.Content, "[HYDRA_GROUP_MEMBERS]:") {
-          		a.Emitter.Emit("remote_group_members", strings.TrimPrefix(msg.Content, "[HYDRA_GROUP_MEMBERS]:"))
-          		return
-          	}
-          	if strings.HasPrefix(msg.Content, "[HYDRA_GROUP_INVITE]:") {
-          		parts := strings.SplitN(strings.TrimPrefix(msg.Content, "[HYDRA_GROUP_INVITE]:"), "|", 3)
-          		if len(parts) >= 2 {
-          			grpInfo, _ := a.AddContact(parts[0], parts[1])
-          			if len(parts) == 3 && grpInfo != nil {
-          				a.Emitter.Emit("remote_group_members", grpInfo.ID+"|"+parts[2])
-          			}
-          			msg.Content = "🎟️ Вас добавили в «" + parts[0] + "»"
-          		}
-          	}"""
-
-              ac = ac.replace(old_group_invite_block, new_all_signals_block)
-
-              ac = ac.replace(
-                  """							if len(seenIDs) > 1000 {
-          								seenIDs = make(map[string]bool)
-          							}
-          							if len(seenIDs) > 1000 {
-          								seenIDs = make(map[string]bool)
-          							}""",
-                  """							if len(seenIDs) > 1000 {
-          								seenIDs = make(map[string]bool)
-          							}"""
-              )
-
-              old_poll_end = """				resp.Body.Close()
-          			}
-          		}
-          		time.Sleep(2 * time.Second)"""
-
-              new_poll_end = """				resp.Body.Close()
-          			}
-          			if contactsList, errC := a.Repo.ListContacts(a.Ctx); errC == nil {
-          				for _, grp := range contactsList {
-          					if strings.HasPrefix(grp.I2PAddress, "SFlEUkFfUk9PTV") {
-          						gResp, gErr := client.Get("http://191.223.137.164:8085/relay/poll?pub=" + url.QueryEscape(grp.I2PAddress))
-          						if gErr == nil && gResp != nil {
-          							if gResp.StatusCode == http.StatusOK {
-          								var gItems []map[string]interface{}
-          								if json.NewDecoder(gResp.Body).Decode(&gItems) == nil {
-          									for _, item := range gItems {
-          										mID, _ := item["id"].(string)
-          										fromPub, _ := item["from"].(string)
-          										fromNick, _ := item["from_nick"].(string)
-          										content, _ := item["content"].(string)
-          										if mID == "" || fromPub == myPub || seenIDs[mID] {
-          											continue
-          										}
-          										seenIDs[mID] = true
-          										displayContent := content
-          										if fromNick != "" && !strings.HasPrefix(content, "[HYDRA_") {
-          											displayContent = "**" + fromNick + ":** " + content
-          										}
-          										gMsg := &core.Message{
-          											ID:          mID,
-          											ChatID:      grp.ChatID,
-          											SenderID:    grp.PublicKey,
-          											SenderAddr:  grp.I2PAddress,
-          											Content:     displayContent,
-          											ContentType: "text",
-          											Status:      core.MessageStatusDelivered,
-          											IsOutgoing:  false,
-          											Timestamp:   time.Now().UnixMilli(),
-          											CreatedAt:   time.Now(),
-          											UpdatedAt:   time.Now(),
-          										}
-          										a.OnMessageReceived(gMsg, grp.PublicKey, grp.I2PAddress)
-          									}
-          								}
-          							}
-          							gResp.Body.Close()
-          						}
-          					}
-          				}
-          			}
-          		}
-          		time.Sleep(2 * time.Second)"""
-
-              ac = ac.replace(old_poll_end, new_poll_end)
-
-              with open(ac_path, "w", encoding="utf-8") as f:
-                  f.write(ac)
-              print("[OK] 3. appcore.go: добавлена синхронизация Историй, реакций, удалений и опрос очередей Групп/Каналов!")
-
-          # 4. frontend/src/components/Sidebar.svelte:
-          sb_path = "frontend/src/components/Sidebar.svelte"
-          if os.path.exists(sb_path):
-              with open(sb_path, "r", encoding="utf-8") as f:
-                  sb = f.read()
-
-              old_pub_st = """        localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
-                  if (window.__addHydraLog) window.__addHydraLog('STORY-PUB', 'Опубликована новая история на 24 часа');"""
-
-              new_pub_st = """        localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
-                  const publishedStory = hydraStories[0];
-                  (contacts || []).forEach(c => {
-                      if (c && c.ID && !c.IsFavorites && !String(c.Nickname || '').startsWith('👥') && !String(c.Nickname || '').startsWith('📢')) {
-                          AppActions.SendText(c.ID, '[HYDRA_STORY_SYNC]:' + JSON.stringify(publishedStory), '').catch(() => {});
+                          with(androidx.core.app.NotificationManagerCompat.from(this)) {
+                              notify(notifId, builder.build())
+                          }
+                      } catch (e: Exception) {
+                          android.util.Log.e(TAG, "Notification failed", e)
                       }
-                  });
-                  if (window.__addHydraLog) window.__addHydraLog('STORY-PUB', 'Опубликована и разослана контактам новая История на 24ч');"""
-
-              sb = sb.replace(old_pub_st, new_pub_st)
-
-              remote_story_hook = """
-              EventsOn('remote_story_received', (payload) => {
-                  if (!payload || !payload.data) return;
-                  try {
-                      const stObj = JSON.parse(payload.data);
-                      stObj.author = payload.author || stObj.author || 'Контакт';
-                      loadHydraStories();
-                      if (!hydraStories.some(s => s.id === stObj.id)) {
-                          hydraStories = [stObj, ...hydraStories];
-                          localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
-                      }
-                  } catch (e) {}
-              });
-              """
-              if "remote_story_received" not in sb:
-                  sb = sb.replace("loadHydraStories();", "loadHydraStories();\n" + remote_story_hook, 1)
-
-              with open(sb_path, "w", encoding="utf-8") as f:
-                  f.write(sb)
-              print("[OK] 4. Sidebar.svelte: включена сетевая отправка и приём Историй между телефонами!")
-
-          # 5. frontend/src/components/Auth.svelte:
-          au_path = "frontend/src/components/Auth.svelte"
-          if os.path.exists(au_path):
-              with open(au_path, "r", encoding="utf-8") as f:
-                  au = f.read()
-
-              old_create_tile = """            <div 
-                          class="profile-item add-profile" 
-                          role="button"
-                          tabindex="0"
-                          on:click={startCreateProfile}
-                          on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && startCreateProfile()}
-                      >
-                        <div class="plus-icon">+</div>
-                        <div class="add-text">Создать</div>
-                      </div>"""
-
-              new_create_tile = """            {#if allProfiles.length === 0}
-                        <div 
-                            class="profile-item add-profile" 
-                            role="button"
-                            tabindex="0"
-                            on:click={startCreateProfile}
-                            on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && startCreateProfile()}
-                        >
-                          <div class="plus-icon">+</div>
-                          <div class="add-text">Создать</div>
-                        </div>
-                      {/if}"""
-
-              if "{#if allProfiles.length === 0}" not in au:
-                  au = au.replace(old_create_tile, new_create_tile)
-
-              with open(au_path, "w", encoding="utf-8") as f:
-                  f.write(au)
-              print("[OK] 5. Auth.svelte: кнопка '+ Создать' на главном экране скрыта, если профиль уже создан!")
-
-          # 6. frontend/src/components/Settings.svelte (БЕЗ лишнего закрывающего </div>!):
-          st_path = "frontend/src/components/Settings.svelte"
-          if os.path.exists(st_path):
-              with open(st_path, "r", encoding="utf-8") as f:
-                  st = f.read()
-
-              st = st.replace("AppActions.CopyToClipboard(", "AppActions.ClipboardSet(")
-
-              priv_vars_js = """
-              let groupInviteFriendsOnly = localStorage.getItem('hydra_group_friends_only') === '1';
-              let flagSecureEnabled = localStorage.getItem('hydra_flag_secure') === '1';
-              function toggleGroupInviteFriendsOnly() {
-                  groupInviteFriendsOnly = !groupInviteFriendsOnly;
-                  localStorage.setItem('hydra_group_friends_only', groupInviteFriendsOnly ? '1' : '0');
-              }
-              function toggleFlagSecureSetting() {
-                  flagSecureEnabled = !flagSecureEnabled;
-                  localStorage.setItem('hydra_flag_secure', flagSecureEnabled ? '1' : '0');
-                  if (window.HydraNative && typeof window.HydraNative.setScreenshotProtection === 'function') {
-                      window.HydraNative.setScreenshotProtection(flagSecureEnabled);
                   }
               }
-              """
-              if "let groupInviteFriendsOnly =" not in st:
-                  st = st.replace("let hideLastSeenEnabled =", priv_vars_js + "\n    let hideLastSeenEnabled =", 1)
 
-              target_card_anchor = """        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
-                          <div>
-                              <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🕒 Скрывать точное время входа</div>"""
+          '''
+              kt = re.sub(
+                  r'    override fun showNotification\(title: String, message: String\) \{[\s\S]*?(?=    override fun saveFile\()',
+                  new_show_notif,
+                  kt,
+                  count=1
+              )
 
-              balanced_priv_cards = """        <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
-                          <div>
-                              <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">👥 Кто может добавлять меня в группы</div>
-                              <div style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">{groupInviteFriendsOnly ? 'Только мои контакты (друзья)' : 'Все пользователи Hydra'}</div>
-                          </div>
-                          <input type="checkbox" checked={groupInviteFriendsOnly} on:change={toggleGroupInviteFriendsOnly} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
-                      </div>
-                  </div>
+              # Сохранение файлов из чатов в Download/Hydra (а не в /Logs)
+              kt = kt.replace(
+                  'put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/Hydra/Logs")\n                        put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)',
+                  'put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/Hydra")\n                        put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)'
+              )
 
-                  <div class="settings-card" style="margin-top: 14px; padding: 16px; background: #1A1C20; border-radius: 24px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
-                          <div>
-                              <div style="font-weight: 700; color: #E5E7EB; font-size: 15px;">🔒 Запрет скриншотов и записи экрана</div>
-                              <div style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">Аппаратная защита окна приложения (FLAG_SECURE)</div>
-                          </div>
-                          <input type="checkbox" checked={flagSecureEnabled} on:change={toggleFlagSecureSetting} style="width: 22px; height: 22px; accent-color: #1D4ED8; flex-shrink: 0;" />
-                      </div>
-                  </div>
+              # Выбор фото и видео в Галерее (для Сторис и QR)
+              kt = kt.replace(
+                  'type = "image/*"',
+                  'type = "*/*"\n                        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))'
+              )
 
-          """ + target_card_anchor
+              with open(kt_path, "w", encoding="utf-8") as f:
+                  f.write(kt)
+              print("[OK] 1. MainActivity.kt обновлён (звонки без RemoteInput, Download/Hydra, фото+видео)")
 
-              if "Кто может добавлять меня в группы" not in st:
-                  st = st.replace(target_card_anchor, balanced_priv_cards, 1)
+          # 2. mobile/mobile.go: добавляем UpdateProfile (для смены PIN) и алиас CopyToClipboard
+          mob_path = "mobile/mobile.go"
+          if os.path.exists(mob_path):
+              with open(mob_path, "r", encoding="utf-8") as f:
+                  mb = f.read()
 
-              with open(st_path, "w", encoding="utf-8") as f:
-                  f.write(st)
-              print("[OK] 6. Settings.svelte: все теги сбалансированы, ClipboardSet исправлен, тумблеры добавлены!")
+              if 'case "UpdateProfile":' not in mb:
+                  mb = mb.replace(
+                      'case "DeleteProfile":',
+                      '''case "UpdateProfile":
+          		var profileID, name, avatarPath, newPin, mnemonic string
+          		var deleteAvatar, usePin bool
+          		parseArgs(args, &profileID, &name, &avatarPath, &deleteAvatar, &usePin, &newPin, &mnemonic)
+          		return nil, app.UpdateProfile(profileID, name, avatarPath, deleteAvatar, usePin, newPin, mnemonic)
 
-          # 7. frontend/src/components/Chat.svelte:
+          	case "DeleteProfile":'''
+                  )
+
+              mb = mb.replace('case "ClipboardSet":', 'case "ClipboardSet", "CopyToClipboard":')
+
+              with open(mob_path, "w", encoding="utf-8") as f:
+                  f.write(mb)
+              print("[OK] 2. mobile.go: добавлен UpdateProfile и алиас CopyToClipboard")
+
+          # 3. frontend/src/lib/api_bridge.js: отключаем ПК-режим (Wails)
+          ab_path = "frontend/src/lib/api_bridge.js"
+          if os.path.exists(ab_path):
+              with open(ab_path, "r", encoding="utf-8") as f:
+                  ab = f.read()
+              ab = re.sub(
+                  r'function isDesktop\(\) \{[\s\S]*?\}',
+                  'function isDesktop() {\n    return false; // Android-only mode\n}',
+                  ab,
+                  count=1
+              )
+              with open(ab_path, "w", encoding="utf-8") as f:
+                  f.write(ab)
+              print("[OK] 3. api_bridge.js: ПК-режим отключён")
+
+          # 4. frontend/src/components/Chat.svelte: подключаем кнопки уведомления звонка
           ch_path = "frontend/src/components/Chat.svelte"
           if os.path.exists(ch_path):
               with open(ch_path, "r", encoding="utf-8") as f:
                   ch = f.read()
+              if "window.__onHydraCallNotifAction" not in ch:
+                  ch = ch.replace(
+                      "window.__triggerHydraCallFromProfile = () => startHydraCall();",
+                      """window.__triggerHydraCallFromProfile = () => startHydraCall();
+                  window.__onHydraCallNotifAction = (senderNick, action) => {
+                      if (action === 'accept_call') {
+                          acceptIncomingHydraCall();
+                      } else if (action === 'decline_call') {
+                          endHydraCall(true);
+                      }
+                  };"""
+                  )
+                  with open(ch_path, "w", encoding="utf-8") as f:
+                      f.write(ch)
+                  print("[OK] 4. Chat.svelte: подключён __onHydraCallNotifAction")
 
-              ch = ch.replace(
-                  """    function cycleDisappearingTimer() {
-                  toggleAndSaveDisappearingTimer();
-                  return;
-                  if (disappearingTimer === 0) disappearingTimer = 60;
-                  else if (disappearingTimer === 60) disappearingTimer = 3600;
-                  else disappearingTimer = 0;
-              }""",
-                  """    function cycleDisappearingTimer() {
-                  toggleAndSaveDisappearingTimer();
-              }"""
+          # 5. frontend/src/App.svelte: фиксируем мобильный режим и вычищаем дубли
+          app_path = "frontend/src/App.svelte"
+          if os.path.exists(app_path):
+              with open(app_path, "r", encoding="utf-8") as f:
+                  ap = f.read()
+
+              ap = ap.replace("let isMobile = false;", "let isMobile = true;")
+              ap = ap.replace("isMobile = window.innerWidth < 768;", "isMobile = true; // Android-only")
+
+              # Убираем тройные дубли __setHydraBlur(false)
+              ap = re.sub(
+                  r'(\s*if \(typeof window !== \'undefined\' && window\.__setHydraBlur\) window\.__setHydraBlur\(false\);){2,}',
+                  "\n            if (typeof window !== 'undefined' && window.__setHydraBlur) window.__setHydraBlur(false);",
+                  ap
               )
 
-              old_invite_fn = """    async function inviteContactToGroup(targetContact) {
-                  if (!selectedContact || !targetContact) return;
-                  const invitePayload = `[HYDRA_GROUP_INVITE]:${selectedContact.Nickname}|${selectedContact.I2PAddress}`;
-                  try {
-                      await AppActions.SendText(targetContact.ID, invitePayload, '');
-                      if (!currentGroupMembers.includes(targetContact.Nickname)) {
-                          currentGroupMembers = [...currentGroupMembers, targetContact.Nickname];
-                          localStorage.setItem('hydra_group_members_' + selectedContact.ID, JSON.stringify(currentGroupMembers));
-                      }
-                      alert(`✅ Пользователь ${targetContact.Nickname} добавлен в «${selectedContact.Nickname}»!`);
-                  } catch (e) {
-                      alert('Ошибка отправки приглашения: ' + e);
-                  }
+              # Убираем дублирующийся старый блок темы #121212 перед новой темой #121316
+              old_theme_dup = """    :global(:root) {
+                  --bg-primary: #121212 !important;
+                  --bg-secondary: #1E1F22 !important;
+                  --bg-tertiary: #28292D !important;
+                  --accent: #8AB4F8 !important;
+                  --text-primary: #E3E3E3 !important;
+                  --text-secondary: #9AA0A6 !important;
+              }
+              :global(body), :global(.app-container), :global(.login-screen), :global(.content-area) {
+                  background: #121212 !important;
+                  color: #E3E3E3 !important;
+              }
+              :global(.sidebar), :global(.glass-panel), :global(.settings-card), :global(.modal-content) {
+                  background: #1E1F22 !important;
+                  backdrop-filter: none !important;
+                  border: 1px solid rgba(255,255,255,0.05) !important;
+                  border-radius: 24px !important;
+                  box-shadow: none !important;
+              }
+              :global(.btn-primary), :global(.btn-primary-premium) {
+                  background: #8AB4F8 !important;
+                  color: #062E6F !important;
+                  border-radius: 100px !important;
+                  font-weight: 700 !important;
+                  box-shadow: none !important;
               }"""
+              ap = ap.replace(old_theme_dup, "")
 
-              new_invite_fn = """    async function inviteContactToGroup(targetContact) {
-                  if (!selectedContact || !targetContact) return;
-                  if (!currentGroupMembers.includes(targetContact.Nickname)) {
-                      currentGroupMembers = [...currentGroupMembers, targetContact.Nickname];
-                      localStorage.setItem('hydra_group_members_' + selectedContact.ID, JSON.stringify(currentGroupMembers));
-                  }
-                  const membersStr = currentGroupMembers.join(', ');
-                  const invitePayload = `[HYDRA_GROUP_INVITE]:${selectedContact.Nickname}|${selectedContact.I2PAddress}|${membersStr}`;
-                  try {
-                      await AppActions.SendText(targetContact.ID, invitePayload, '');
-                      alert(`✅ Пользователь ${targetContact.Nickname} добавлен в «${selectedContact.Nickname}»!`);
-                  } catch (e) {
-                      alert('Ошибка отправки приглашения: ' + e);
-                  }
-              }"""
-              ch = ch.replace(old_invite_fn, new_invite_fn)
+              with open(app_path, "w", encoding="utf-8") as f:
+                  f.write(ap)
+              print("[OK] 5. App.svelte: закреплён Android-режим и очищены дубли")
 
-              remote_grp_hook = """
-              EventsOn('remote_group_members', (raw) => {
-                  const [gId, membersCsv] = String(raw || '').split('|');
-                  if (gId && membersCsv) {
-                      const arr = membersCsv.split(',').map(s => s.trim()).filter(Boolean);
-                      localStorage.setItem('hydra_group_members_' + gId, JSON.stringify(arr));
-                      if (selectedContact && selectedContact.ID === gId) {
-                          currentGroupMembers = arr;
-                      }
-                  }
-              });
-              """
-              if "remote_group_members" not in ch:
-                  ch = ch.replace("EventsOn('remote_reaction',", remote_grp_hook + "\n    EventsOn('remote_reaction',", 1)
-
-              ch = ch.replace(
-                  "if (c.startsWith('[HYDRA_CALL_RING]:')) {",
-                  """if (c.startsWith('[HYDRA_CALL_RING]:')) {
-                      const bUntil = Number(localStorage.getItem('hydra_block_until_' + (sig.contact_id || selectedContact?.ID)) || 0);
-                      if (bUntil > Date.now()) return;"""
-              )
-
-              old_contact_row = """                    {#each allExistingContactsForGroup as c}
-                                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #121316; border-radius: 12px;">
-                                      <span style="font-size: 13px; color: #E5E7EB; font-weight: 600;">{c.Nickname}</span>
-                                      <button type="button" on:click={() => inviteContactToGroup(c)} style="background: #1E3A8A; color: #60A5FA; border: 1px solid rgba(59,130,246,0.3); border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700;">+ Добавить</button>
-                                  </div>
-                              {/each}"""
-
-              new_contact_row = """                    {#each allExistingContactsForGroup as c}
-                                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #121316; border-radius: 12px;">
-                                      <span style="font-size: 13px; color: #E5E7EB; font-weight: 600;">{c.Nickname}</span>
-                                      {#if currentGroupMembers.includes(c.Nickname)}
-                                          <span style="color: #10B981; font-size: 12px; font-weight: 800; padding: 4px 10px;">✅ Добавлен</span>
-                                      {:else}
-                                          <button type="button" on:click={() => inviteContactToGroup(c)} style="background: #1E3A8A; color: #60A5FA; border: 1px solid rgba(59,130,246,0.3); border-radius: 100px; padding: 5px 12px; font-size: 11px; font-weight: 700; cursor: pointer;">+ Добавить</button>
-                                      {/if}
-                                  </div>
-                              {/each}"""
-              ch = ch.replace(old_contact_row, new_contact_row)
-
-              with open(ch_path, "w", encoding="utf-8") as f:
-                  f.write(ch)
-              print("[OK] 7. Chat.svelte: очищен мёртвый код, синхронизированы участники групп и проверка блокировки при звонке!")
+          # 6. frontend/index.html: убираем дубль проверки 30-секундной блокировки
+          idx_path = "frontend/index.html"
+          if os.path.exists(idx_path):
+              with open(idx_path, "r", encoding="utf-8") as f:
+                  ix = f.read()
+              dup_lock = """            if (window.__hiddenSince && (Date.now() - window.__hiddenSince >= 30000) && window.__lockHydraNow) { window.__lockHydraNow(); }
+                      window.__hiddenSince = 0;
+                      if (window.__hiddenSince && (Date.now() - window.__hiddenSince >= 30000) && window.__lockHydraNow) { window.__lockHydraNow(); }
+                      window.__hiddenSince = 0;"""
+              one_lock = """            if (window.__hiddenSince && (Date.now() - window.__hiddenSince >= 30000) && window.__lockHydraNow) { window.__lockHydraNow(); }
+                      window.__hiddenSince = 0;"""
+              ix = ix.replace(dup_lock, one_lock)
+              with open(idx_path, "w", encoding="utf-8") as f:
+                  f.write(ix)
+              print("[OK] 6. index.html: убран дубль таймера блокировки")
           PYEOF
-          python3 clean_audit_v295.py
-          rm -f clean_audit_v295.py
-          gofmt -w internal/ mobile/
+          python3 apply_android_cleanup.py
+          rm -f apply_android_cleanup.py
+          gofmt -w mobile/
 
       - name: Install jsQR & Build Frontend (Svelte)
         working-directory: ./frontend
@@ -473,13 +283,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Audited Hydra v2.9.5 Build
+      - name: Commit Android-Only Cleanup & Call Notification Fix
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Release Hydra v2.9.5: Clean audited Go core & Svelte components, Group relay polling, Story sync & 2-profile limit [skip ci]"
+            git commit -m "Android cleanup: fix call notification buttons, PIN UpdateProfile in mobile.go, video picker & disable desktop mode [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
