@@ -38,481 +38,130 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply Hydra v3.0.0 Mega Update & Auto-Slice logotip.png
+      - name: Add Telegram Sticker Pack Import by Link in Chat.svelte
         run: |
-          pip install --quiet pillow
-          cat << 'PYEOF' > hydra_v300_update.py
-          import os, re, shutil
-          from PIL import Image
+          cat << 'PYEOF' > add_tg_stickers_ui.py
+          import os, re
 
-          # 0. Нарезка новой иконки logotip.png под все размеры Android + лого внутри приложения
-          logo_src = "frontend/src/assets/images/logotip.png"
-          if not os.path.exists(logo_src):
-              logo_src = "frontend/src/assets/images/logo.png"
-          if os.path.exists(logo_src):
-              img = Image.open(logo_src).convert("RGBA")
-              sizes = {
-                  "mipmap-mdpi": 48,
-                  "mipmap-hdpi": 72,
-                  "mipmap-xhdpi": 96,
-                  "mipmap-xxhdpi": 144,
-                  "mipmap-xxxhdpi": 192,
-              }
-              for mip, sz in sizes.items():
-                  resized = img.resize((sz, sz), Image.Resampling.LANCZOS)
-                  for fname in ["ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png"]:
-                      dst = f"android/app/src/main/res/{mip}/{fname}"
-                      os.makedirs(os.path.dirname(dst), exist_ok=True)
-                      resized.save(dst, "PNG")
-              img.resize((512, 512), Image.Resampling.LANCZOS).save("frontend/src/assets/images/logo.png", "PNG")
-              os.makedirs("frontend/public", exist_ok=True)
-              img.resize((512, 512), Image.Resampling.LANCZOS).save("frontend/public/icon.png", "PNG")
-              print(f"[OK] 0. Иконка {logo_src} нарезана под все mipmap-размеры Android и скопирована в UI")
-
-          # 1. Единая версия 3.0.0-hydra + чистка Play Protect (HTTP только для 127.0.0.1)
-          gradle_path = "android/app/build.gradle"
-          if os.path.exists(gradle_path):
-              with open(gradle_path, "r", encoding="utf-8") as f:
-                  gr = f.read()
-              gr = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.0.0-hydra"', gr)
-              with open(gradle_path, "w", encoding="utf-8") as f:
-                  f.write(gr)
-
-          manifest_path = "android/app/src/main/AndroidManifest.xml"
-          if os.path.exists(manifest_path):
-              with open(manifest_path, "r", encoding="utf-8") as f:
-                  mf = f.read()
-              mf = mf.replace('android:usesCleartextTraffic="true"', 'android:usesCleartextTraffic="false"')
-              with open(manifest_path, "w", encoding="utf-8") as f:
-                  f.write(mf)
-
-          nsc_path = "android/app/src/main/res/xml/network_security_config.xml"
-          if os.path.exists(nsc_path):
-              with open(nsc_path, "w", encoding="utf-8") as f:
-                  f.write('''<?xml version="1.0" encoding="utf-8"?>
-          <network-security-config>
-              <base-config cleartextTrafficPermitted="false" />
-              <domain-config cleartextTrafficPermitted="true">
-                  <domain includeSubdomains="false">127.0.0.1</domain>
-                  <domain includeSubdomains="false">localhost</domain>
-              </domain-config>
-          </network-security-config>
-          ''')
-
-          idx_path = "frontend/index.html"
-          if os.path.exists(idx_path):
-              with open(idx_path, "r", encoding="utf-8") as f:
-                  ix = f.read()
-              ix = ix.replace("<title>teleghost</title>", "<title>Hydra</title>")
-              with open(idx_path, "w", encoding="utf-8") as f:
-                  f.write(ix)
-
-          # 2. internal/appcore/appcore.go & messages.go: [HYDRA_STORY_DEL], hydra_backup_, единая версия
-          ac_path = "internal/appcore/appcore.go"
-          if os.path.exists(ac_path):
-              with open(ac_path, "r", encoding="utf-8") as f:
-                  ac = f.read()
-              ac = ac.replace("teleghost_export_", "hydra_backup_")
-              if "[HYDRA_STORY_DEL]:" not in ac:
-                  ac = ac.replace(
-                      'if strings.HasPrefix(msg.Content, "[HYDRA_STORY_SYNC]:") {',
-                      '''if strings.HasPrefix(msg.Content, "[HYDRA_STORY_DEL]:") {
-          		storyID := strings.TrimSpace(strings.TrimPrefix(msg.Content, "[HYDRA_STORY_DEL]:"))
-          		if storyID != "" {
-          			a.Emitter.Emit("remote_story_deleted", storyID)
-          		}
-          		return
-          	}
-          	if strings.HasPrefix(msg.Content, "[HYDRA_STORY_SYNC]:") {'''
-                  )
-              with open(ac_path, "w", encoding="utf-8") as f:
-                  f.write(ac)
-
-          msg_path = "internal/appcore/messages.go"
-          if os.path.exists(msg_path):
-              with open(msg_path, "r", encoding="utf-8") as f:
-                  mc = f.read()
-              if '"[HYDRA_STORY_DEL]:"' not in mc:
-                  mc = mc.replace('"[HYDRA_STORY_SYNC]:",', '"[HYDRA_STORY_SYNC]:",\n\t\t"[HYDRA_STORY_DEL]:",')
-              with open(msg_path, "w", encoding="utf-8") as f:
-                  f.write(mc)
-
-          # Синхронизируем версию в GetAppAboutInfo (ищем по internal/appcore/)
-          for root, _, files in os.walk("internal/appcore"):
-              for fn in files:
-                  if fn.endswith(".go"):
-                      fp = os.path.join(root, fn)
-                      with open(fp, "r", encoding="utf-8") as f:
-                          txt = f.read()
-                      if "AppVersion:" in txt:
-                          txt = re.sub(r'AppVersion:\s*"[^"]+"', 'AppVersion: "3.0.0-hydra"', txt)
-                          with open(fp, "w", encoding="utf-8") as f:
-                              f.write(txt)
-          print("[OK] 1-2. Версия 3.0.0-hydra, Play Protect и [HYDRA_STORY_DEL] настроены")
-
-          # 3. frontend/src/App.svelte: переименовываем "Сеть и Сервер" -> "Сеть"
-          app_path = "frontend/src/App.svelte"
-          if os.path.exists(app_path):
-              with open(app_path, "r", encoding="utf-8") as f:
-                  ap = f.read()
-              ap = ap.replace("name: 'Сеть и Сервер'", "name: 'Сеть'")
-              with open(app_path, "w", encoding="utf-8") as f:
-                  f.write(ap)
-
-          # 4. frontend/src/components/Sidebar.svelte:
-          # - синхронизация удаления Историй ([HYDRA_STORY_DEL])
-          # - починка поиска по Wi-Fi (from: 'WIFI_SUBNET_' + myPub)
-          sb_path = "frontend/src/components/Sidebar.svelte"
-          if os.path.exists(sb_path):
-              with open(sb_path, "r", encoding="utf-8") as f:
-                  sb = f.read()
-
-              if "remote_story_deleted" not in sb:
-                  sb = sb.replace(
-                      "EventsOn('remote_story_received',",
-                      """EventsOn('remote_story_deleted', (stId) => {
-                  if (!stId) return;
-                  hydraStories = hydraStories.filter(s => s.id !== stId);
-                  localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
-                  if (activeStoryModal && activeStoryModal.id === stId) activeStoryModal = null;
-              });
-
-              EventsOn('remote_story_received',"""
-                  )
-
-              old_del_st = """    function deleteCurrentStory(stId) {
-                  hydraStories = hydraStories.filter(s => s.id !== stId);
-                  localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
-                  activeStoryModal = null;
-              }"""
-              new_del_st = """    function deleteCurrentStory(stId) {
-                  hydraStories = hydraStories.filter(s => s.id !== stId);
-                  localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
-                  activeStoryModal = null;
-                  (contacts || []).forEach(c => {
-                      if (c && c.ID && !c.IsFavorites && !String(c.Nickname || '').startsWith('👥') && !String(c.Nickname || '').startsWith('📢')) {
-                          AppActions.SendText(c.ID, '[HYDRA_STORY_DEL]:' + stId, '').catch(() => {});
-                      }
-                  });
-              }"""
-              sb = sb.replace(old_del_st, new_del_st)
-
-              # Чиним Wi-Fi радар (чтобы проходил Ed25519 фильтр на VPS)
-              sb = sb.replace("from: myPub,\n                        from_nick:", "from: 'WIFI_SUBNET_' + myPub,\n                        from_nick:")
-              sb = sb.replace("if (it.from && it.from !== myPub && it.from_nick) {", "const cleanPub = String(it.from || '').replace(/^WIFI_SUBNET_/, '');\n                    if (cleanPub && cleanPub !== myPub && it.from_nick) {")
-              sb = sb.replace("mapByPub[it.from] = { nick: it.from_nick, pub: it.from, ts: it.timestamp || Date.now() };", "mapByPub[cleanPub] = { nick: it.from_nick, pub: cleanPub, ts: it.timestamp || Date.now() };")
-
-              with open(sb_path, "w", encoding="utf-8") as f:
-                  f.write(sb)
-              print("[OK] 4. Sidebar.svelte: удаление историй и Wi-Fi радар обновлены")
-
-          # 5. frontend/src/components/Settings.svelte:
-          # - убираем выбор протокола и кнопку "Сохранить и применить"
-          # - чиним Wi-Fi радар
-          # - добавляем 2-этапное предупреждение с таймером 10 сек при отключении ПИН-кода
-          # - единая версия 3.0.0-hydra
-          st_path = "frontend/src/components/Settings.svelte"
-          if os.path.exists(st_path):
-              with open(st_path, "r", encoding="utf-8") as f:
-                  st = f.read()
-
-              st = st.replace("aboutInfo.app_version || '2.5.0-hydra'", "aboutInfo.app_version || '3.0.0-hydra'")
-              st = st.replace("from: myPub,\n                        from_nick:", "from: 'WIFI_SUBNET_' + myPub,\n                        from_nick:")
-              st = st.replace("if (it.from && it.from !== myPub && it.from_nick) {", "const cleanPub = String(it.from || '').replace(/^WIFI_SUBNET_/, '');\n                    if (cleanPub && cleanPub !== myPub && it.from_nick) {")
-              st = st.replace("byPub[it.from] = { nick: it.from_nick, pub: it.from };", "byPub[cleanPub] = { nick: it.from_nick, pub: cleanPub };")
-
-              # Убираем селект протокола и кнопку "Сохранить и применить"
-              st = re.sub(
-                  r'<div class="setting-item" style="max-width: 100%; box-sizing: border-box;">\s*<label class="form-label">Протокол сквозного шифрования[\s\S]*?</select>\s*</label>\s*</div>',
-                  '',
-                  st,
-                  count=1
-              )
-              st = re.sub(
-                  r'<button type="button" class="btn-primary" on:click=\{onSaveRouterSettings\}[\s\S]*?</button>',
-                  '',
-                  st,
-                  count=1
-              )
-
-              # 2-этапное предупреждение с 10с таймером при отключении ПИН-кода
-              pin_warn_js = """
-              let pinDisableStep = 0;
-              let pinDisableCountdown = 10;
-              let pinDisableTimer = null;
-
-              function handlePinSwitchClick(e) {
-                  if (selectedProfile?.use_pin) {
-                      e.preventDefault();
-                      e.target.checked = true;
-                      startPinDisableWarning(1);
-                  } else {
-                      if (onTogglePinUsage) onTogglePinUsage();
-                  }
-              }
-
-              function startPinDisableWarning(step) {
-                  pinDisableStep = step;
-                  pinDisableCountdown = 10;
-                  clearInterval(pinDisableTimer);
-                  pinDisableTimer = setInterval(() => {
-                      if (pinDisableCountdown > 0) pinDisableCountdown--;
-                      else clearInterval(pinDisableTimer);
-                  }, 1000);
-              }
-
-              function confirmPinDisableStep() {
-                  if (pinDisableCountdown > 0) return;
-                  if (pinDisableStep === 1) {
-                      startPinDisableWarning(2);
-                  } else {
-                      pinDisableStep = 0;
-                      clearInterval(pinDisableTimer);
-                      if (onTogglePinUsage) onTogglePinUsage();
-                  }
-              }
-              """
-              if "let pinDisableStep =" not in st:
-                  st = st.replace("let biometricEnabled =", pin_warn_js + "\n    let biometricEnabled =", 1)
-                  st = st.replace('on:change={onTogglePinUsage}', 'on:change={handlePinSwitchClick}')
-
-              pin_warn_modal = """
-          {#if pinDisableStep > 0}
-              <div style="position: fixed; inset: 0; background: rgba(8,9,14,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
-                  <div style="background: #1A1C20; border: 1px solid rgba(239,68,68,0.5); border-radius: 24px; padding: 20px; width: 100%; max-width: 360px;">
-                      <h3 style="margin: 0 0 10px; color: #FCA5A5;">⚠️ Предупреждение ({pinDisableStep} из 2)</h3>
-                      <p style="font-size: 13px; color: #E5E7EB; line-height: 1.5; margin: 0 0 18px;">
-                          {pinDisableStep === 1
-                              ? 'Вы собираетесь отключить защиту ПИН-кодом. Любой, кто возьмёт ваш разблокированный телефон, сможет сразу открыть все ваши чаты Hydra.'
-                              : 'Вы точно уверены? После отключения ПИН-кода вход будет выполняться без пароля. Подтвердите действие после окончания таймера.'}
-                      </p>
-                      <div style="display: flex; gap: 8px;">
-                          <button type="button" on:click={() => { pinDisableStep = 0; clearInterval(pinDisableTimer); }} style="flex: 1; padding: 11px; border-radius: 100px; background: #28292D; color: #fff; border: none; font-weight: 700;">Отмена</button>
-                          <button type="button" disabled={pinDisableCountdown > 0} on:click={confirmPinDisableStep} style="flex: 1; padding: 11px; border-radius: 100px; background: {pinDisableCountdown > 0 ? '#374151' : '#EF4444'}; color: #fff; border: none; font-weight: 800; cursor: {pinDisableCountdown > 0 ? 'not-allowed' : 'pointer'};">
-                              {pinDisableCountdown > 0 ? `Ждите (${pinDisableCountdown}с)` : (pinDisableStep === 1 ? 'Далее' : 'Отключить ПИН')}
-                          </button>
-                      </div>
-                  </div>
-              </div>
-          {/if}
-          """
-              if "pinDisableStep > 0" not in st:
-                  st = st.replace("<style>", pin_warn_modal + "\n<style>", 1)
-
-              with open(st_path, "w", encoding="utf-8") as f:
-                  f.write(st)
-              print("[OK] 5. Settings.svelte: убран лишний выбор протокола, добавлен 2x10с таймер для входа без ПИН")
-
-          # 6. frontend/src/components/Modals.svelte:
-          # - убираем "Синхронизировать профиль"
-          # - убираем смайлик между @ и именем группы/канала
-          # - скрываем звонок/звук в Избранном
-          # - показываем участников группы + права и админов в профиле группы
-          md_path = "frontend/src/components/Modals.svelte"
-          if os.path.exists(md_path):
-              with open(md_path, "r", encoding="utf-8") as f:
-                  md = f.read()
-
-              # Убираем кнопку Синхронизировать профиль
-              md = re.sub(
-                  r'\{#if onUpdateProfile\}[\s\S]*?Синхронизировать профиль[\s\S]*?\{/if\}',
-                  '',
-                  md,
-                  count=1
-              )
-
-              # Убираем смайлик группы/канала между @ и названием
-              md = md.replace(
-                  "{contact.Nickname?.startsWith('@') ? contact.Nickname : ('@' + (contact.Nickname || 'user').toLowerCase().replace(/\\s+/g, ''))}",
-                  "{contact.Nickname?.startsWith('@') ? contact.Nickname : ('@' + (contact.Nickname || 'user').replace(/^[👥📢]\\s*/, '').toLowerCase().replace(/\\s+/g, ''))}"
-              )
-
-              # Скрываем кнопки Звонок и Звук для Избранного
-              md = md.replace(
-                  "{#if !String(contact.Nickname || '').startsWith('👥') && !String(contact.Nickname || '').startsWith('📢')}",
-                  "{#if !contact.IsFavorites && contact.Nickname !== 'Избранное' && !String(contact.Nickname || '').startsWith('👥') && !String(contact.Nickname || '').startsWith('📢')}"
-              )
-
-              # Добавляем блок участников и прав группы прямо в профиль группы
-              group_profile_card = """
-              {#if String(contact.Nickname || '').startsWith('👥') || String(contact.Nickname || '').startsWith('📢')}
-                  <div style="margin: 0 16px 16px; background: #1A1C20; border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 10px;">
-                      <div style="display: flex; justify-content: space-between; align-items: center;">
-                          <span style="font-size: 14px; font-weight: 800; color: #60A5FA;">👥 Участники ({groupMembersInProfile.length})</span>
-                          <button type="button" on:click={toggleGroupMembersVisibility} style="background: rgba(59,130,246,0.18); color: #93C5FD; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 700;">
-                              {groupHideMembers ? '🙈 Скрыты (видны вам)' : '👁️ Видны всем'}
-                          </button>
-                      </div>
-                      <div style="display: flex; flex-direction: column; gap: 6px;">
-                          {#each groupMembersInProfile as mem}
-                              <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #121316; border-radius: 12px; font-size: 13px; color: #E5E7EB;">
-                                  <span>{mem}</span>
-                                  {#if !String(mem).includes('Создатель')}
-                                      <button type="button" on:click={() => {
-                                          const adminsKey = 'hydra_group_admins_' + contact.ID;
-                                          let admins = JSON.parse(localStorage.getItem(adminsKey) || '[]');
-                                          if (admins.includes(mem)) admins = admins.filter(x => x !== mem);
-                                          else admins.push(mem);
-                                          localStorage.setItem(adminsKey, JSON.stringify(admins));
-                                          alert('✅ Права администратора обновлены для ' + mem);
-                                      }} style="background: #1E3A8A; color: #93C5FD; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 700;">⭐ Админ</button>
-                                  {/if}
-                              </div>
-                          {/each}
-                      </div>
-                      <button type="button" on:click={() => {
-                          const k = 'hydra_group_admins_only_' + contact.ID;
-                          const next = localStorage.getItem(k) === '1' ? '0' : '1';
-                          localStorage.setItem(k, next);
-                          alert(next === '1' ? '🔒 Писать могут только создатель и админы' : '💬 Писать могут все участники');
-                      }} style="background: #22252A; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.3); border-radius: 12px; padding: 10px; font-size: 12px; font-weight: 700; cursor: pointer;">
-                          ⚙️ Переключить право отправки сообщений (Все / Только админы)
-                      </button>
-                  </div>
-              {/if}
-              """
-              if "Переключить право отправки сообщений" not in md:
-                  md = md.replace("<!-- Вкладки Медиа / Файлы / Голосовые", group_profile_card + "\n    <!-- Вкладки Медиа / Файлы / Голосовые", 1)
-
-              with open(md_path, "w", encoding="utf-8") as f:
-                  f.write(md)
-              print("[OK] 6. Modals.svelte: профиль групп, @имя без смайлика и чистка синхронизации")
-
-          # 7. frontend/src/components/Chat.svelte:
-          # - сворачиваемая верхняя полоска активного звонка
-          # - индикатор прочтения (отправка [HYDRA_READ_ACK] + слияние в синий круг)
-          # - импорт стикеров Telegram (.webp/.png)
           ch_path = "frontend/src/components/Chat.svelte"
-          if os.path.exists(ch_path):
-              with open(ch_path, "r", encoding="utf-8") as f:
-                  ch = f.read()
+          if not os.path.exists(ch_path):
+              raise SystemExit("Chat.svelte not found")
 
-              # Переменные для сворачивания звонка и стикеров
-              extra_chat_vars = """
-              let callMinimized = false;
-              let emojiTab = 'emoji'; // 'emoji' | 'stickers'
-              let customStickers = [];
-              try { customStickers = JSON.parse(localStorage.getItem('hydra_stickers_v1') || '[]'); } catch (e) { customStickers = []; }
+          with open(ch_path, "r", encoding="utf-8") as f:
+              ch = f.read()
 
-              function handleImportStickers(e) {
-                  const files = Array.from(e.target.files || []);
-                  files.slice(0, 20).forEach(file => {
-                      const reader = new FileReader();
-                      reader.onload = () => {
-                          if (!customStickers.includes(reader.result)) {
-                              customStickers = [reader.result, ...customStickers].slice(0, 60);
-                              localStorage.setItem('hydra_stickers_v1', JSON.stringify(customStickers));
-                          }
-                      };
-                      reader.readAsDataURL(file);
-                  });
-              }
+          # 1. Добавляем логику загрузки стикерпака по ссылке с VPS
+          tg_sticker_js = """
+              let tgStickerUrl = '';
+              let isImportingTgStickers = false;
+              let tgStickerStatus = '';
 
-              async function sendHydraSticker(dataUrl) {
-                  if (!selectedContact) return;
-                  showEmojiPanel = false;
-                  await AppActions.SendText(selectedContact.ID, '[HYDRA_STICKER]:' + dataUrl, '').catch(() => {});
-                  dispatch('refresh');
-              }
-
-              EventsOn('remote_chat_read', (chatId) => {
-                  if (selectedContact && (selectedContact.ChatID === chatId || selectedContact.ID === chatId)) {
-                      messages = (messages || []).map(m => m.IsOutgoing ? { ...m, Status: 'read' } : m);
+              async function importTgStickerPack() {
+                  const u = (tgStickerUrl || '').trim();
+                  if (!u) return;
+                  isImportingTgStickers = true;
+                  tgStickerStatus = '⏳ Загрузка пака из Telegram...';
+                  try {
+                      const resp = await fetch('https://rtbeta.duckdns.org/stickers/tg?url=' + encodeURIComponent(u));
+                      const data = await resp.json().catch(() => ({}));
+                      if (!resp.ok || !data.stickers || data.stickers.length === 0) {
+                          tgStickerStatus = '❌ ' + (data.error || 'Стикерпак не найден');
+                          return;
+                      }
+                      const merged = [...data.stickers, ...customStickers.filter(s => !data.stickers.includes(s))].slice(0, 80);
+                      customStickers = merged;
+                      try {
+                          localStorage.setItem('hydra_stickers_v1', JSON.stringify(customStickers));
+                      } catch (storageErr) {
+                          customStickers = data.stickers.slice(0, 30);
+                          localStorage.setItem('hydra_stickers_v1', JSON.stringify(customStickers));
+                      }
+                      tgStickerUrl = '';
+                      tgStickerStatus = `✅ Загружен «${data.title || 'Пак'}» (+${data.stickers.length} шт.)`;
+                  } catch (e) {
+                      tgStickerStatus = '❌ Ошибка сети: ' + e;
+                  } finally {
+                      isImportingTgStickers = false;
                   }
-              });
-
-              $: if (selectedContact && !selectedContact.IsFavorites && !String(selectedContact.Nickname || '').startsWith('👥') && !String(selectedContact.Nickname || '').startsWith('📢')) {
-                  AppActions.SendText(selectedContact.ID, '[HYDRA_READ_ACK]:1', '').catch(() => {});
               }
-              """
-              if "let callMinimized =" not in ch:
-                  ch = ch.replace("let activeCallModal = false;", "let activeCallModal = false;\n" + extra_chat_vars, 1)
+          """
 
-              # Добавляем кнопку "Свернуть" в окне звонка и верхнюю полоску поверх интерфейса
+          if "async function importTgStickerPack()" not in ch:
               ch = ch.replace(
-                  "{#if activeCallModal}",
-                  """{#if activeCallModal && callMinimized}
-              <div on:click={() => callMinimized = false} style="position: fixed; top: env(safe-area-inset-top, 0px); left: 0; right: 0; z-index: 99998; background: linear-gradient(90deg, #059669, #1D4ED8); color: #fff; padding: 8px 16px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 800; box-shadow: 0 4px 16px rgba(0,0,0,0.5); cursor: pointer;">
-                  <span>📞 Активный звонок: {selectedContact?.Nickname || 'Hydra'} (нажмите, чтобы развернуть)</span>
-                  <button type="button" on:click|stopPropagation={() => endHydraCall(true)} style="background: #EF4444; color: #fff; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 800;">📴</button>
-              </div>
-          {/if}
-          {#if activeCallModal && !callMinimized}"""
-              )
-              ch = ch.replace(
-                  '<button type="button" on:click={() => endHydraCall(true)}',
-                  '<button type="button" on:click={() => callMinimized = true} style="background: #22252A; color: #93C5FD; border: 1px solid rgba(59,130,246,0.35); border-radius: 100px; padding: 14px 20px; font-size: 14px; font-weight: 700; cursor: pointer;">🔽 Свернуть</button>\n            <button type="button" on:click={() => endHydraCall(true)}'
+                  "async function sendHydraSticker(dataUrl) {",
+                  tg_sticker_js + "\n    async function sendHydraSticker(dataUrl) {",
+                  1
               )
 
-              # Рендер стикеров в чате
-              ch = ch.replace(
-                  "{:else if msg.Content && msg.Content.startsWith('[HYDRA_VIDEO]:')}",
-                  """{:else if msg.Content && msg.Content.startsWith('[HYDRA_STICKER]:')}
+          # 2. Делаем пузырь стикера прозрачным (как у видео-кружков)
+          ch = ch.replace(
+              'class:circle-only-bubble={msg.Content && msg.Content.startsWith("[HYDRA_CIRCLE]:")}',
+              'class:circle-only-bubble={msg.Content && (msg.Content.startsWith("[HYDRA_CIRCLE]:") || msg.Content.startsWith("[HYDRA_STICKER]:"))}'
+          )
+
+          # 3. Рендер стикеров в чате (поддержка и картинок .webp/.png, и видео-стикеров .webm)
+          old_render = """{:else if msg.Content && msg.Content.startsWith('[HYDRA_STICKER]:')}
                               <div style="padding: 4px;">
                                   <img src={msg.Content.slice('[HYDRA_STICKER]:'.length)} alt="sticker" style="width: 150px; height: 150px; object-fit: contain; background: transparent;" />
-                              </div>
-                          {:else if msg.Content && msg.Content.startsWith('[HYDRA_VIDEO]:')}"""
+                              </div>"""
+          new_render = """{:else if msg.Content && msg.Content.startsWith('[HYDRA_STICKER]:')}
+                              <div style="padding: 4px;">
+                                  {#if msg.Content.slice('[HYDRA_STICKER]:'.length).startsWith('data:video/')}
+                                      <video autoplay loop muted playsinline src={msg.Content.slice('[HYDRA_STICKER]:'.length)} style="width: 150px; height: 150px; object-fit: contain; background: transparent; border-radius: 12px;"></video>
+                                  {:else}
+                                      <img src={msg.Content.slice('[HYDRA_STICKER]:'.length)} alt="sticker" style="width: 150px; height: 150px; object-fit: contain; background: transparent;" />
+                                  {/if}
+                              </div>"""
+          ch = ch.replace(old_render, new_render)
+
+          # 4. Обновляем вкладку стикеров: поле ввода ссылки t.me/addstickers/... + кнопка + поддержка видео в сетке
+          old_grid_block = """                    {:else}
+                                  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 180px; overflow-y: auto;">
+                                      {#each customStickers as stUrl}
+                                          <button type="button" on:click={() => sendHydraSticker(stUrl)} style="background: rgba(255,255,255,0.04); border: none; border-radius: 12px; padding: 4px; cursor: pointer;">
+                                              <img src={stUrl} alt="st" style="width: 100%; height: 64px; object-fit: contain;" />
+                                          </button>
+                                      {/each}
+                                  </div>
+                              {/if}"""
+
+          new_grid_block = """                    {:else}
+                                  <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+                                      <input type="text" placeholder="Ссылка t.me/addstickers/..." bind:value={tgStickerUrl} on:keydown={(e) => e.key === 'Enter' && importTgStickerPack()} style="flex: 1; padding: 8px 12px; border-radius: 100px; background: #121316; color: #fff; border: 1px solid rgba(59,130,246,0.35); font-size: 12px; outline: none;" />
+                                      <button type="button" disabled={isImportingTgStickers} on:click={importTgStickerPack} style="padding: 8px 14px; border-radius: 100px; background: #1D4ED8; color: #fff; border: none; font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap;">
+                                          {isImportingTgStickers ? '⏳' : '⬇️ Загрузить'}
+                                      </button>
+                                  </div>
+                                  {#if tgStickerStatus}
+                                      <div style="font-size: 11px; color: #93C5FD; margin-bottom: 8px;">{tgStickerStatus}</div>
+                                  {/if}
+                                  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 180px; overflow-y: auto;">
+                                      {#each customStickers as stUrl}
+                                          <button type="button" on:click={() => sendHydraSticker(stUrl)} style="background: rgba(255,255,255,0.04); border: none; border-radius: 12px; padding: 4px; cursor: pointer;">
+                                              {#if stUrl.startsWith('data:video/')}
+                                                  <video autoplay loop muted playsinline src={stUrl} style="width: 100%; height: 64px; object-fit: contain;"></video>
+                                              {:else}
+                                                  <img src={stUrl} alt="st" style="width: 100%; height: 64px; object-fit: contain;" />
+                                              {/if}
+                                          </button>
+                                      {/each}
+                                  </div>
+                              {/if}"""
+
+          if "importTgStickerPack" in ch and "t.me/addstickers/..." not in ch:
+              ch = re.sub(
+                  r'\{:else\}\s*<div style="display: grid; grid-template-columns: repeat\(4, 1fr\);[\s\S]*?\{/each\}\s*</div>\s*\{/if\}',
+                  new_grid_block.strip(),
+                  ch,
+                  count=1
               )
 
-              # Панель эмодзи + вкладка Стикеры Telegram
-              old_emoji_panel = """    {#if showEmojiPanel}
-                  <div style="display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 14px; background: #1E1F22; border-top: 1px solid rgba(255,255,255,0.06);">
-                      {#each hydraEmojis as em}
-                          <button type="button" on:click={() => insertHydraEmoji(em)} style="font-size: 22px; background: transparent; border: none; cursor: pointer; padding: 4px;">{em}</button>
-                      {/each}
-                  </div>
-              {/if}"""
-              new_emoji_panel = """    {#if showEmojiPanel}
-                  <div style="padding: 10px 14px; background: #1E1F22; border-top: 1px solid rgba(255,255,255,0.06);">
-                      <div style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;">
-                          <button type="button" on:click={() => emojiTab = 'emoji'} style="padding: 5px 12px; border-radius: 100px; border: none; font-size: 12px; font-weight: 700; background: {emojiTab === 'emoji' ? '#1D4ED8' : '#28292D'}; color: #fff;">😊 Эмодзи</button>
-                          <button type="button" on:click={() => emojiTab = 'stickers'} style="padding: 5px 12px; border-radius: 100px; border: none; font-size: 12px; font-weight: 700; background: {emojiTab === 'stickers' ? '#1D4ED8' : '#28292D'}; color: #fff;">🎨 Стикеры ({customStickers.length})</button>
-                          {#if emojiTab === 'stickers'}
-                              <label style="margin-left: auto; padding: 5px 12px; border-radius: 100px; background: #10B981; color: #fff; font-size: 11px; font-weight: 800; cursor: pointer;">
-                                  + Импорт (.webp/.png)
-                                  <input type="file" accept="image/webp,image/png" multiple style="display: none;" on:change={handleImportStickers} />
-                              </label>
-                          {/if}
-                      </div>
-                      {#if emojiTab === 'emoji'}
-                          <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                              {#each hydraEmojis as em}
-                                  <button type="button" on:click={() => insertHydraEmoji(em)} style="font-size: 22px; background: transparent; border: none; cursor: pointer; padding: 4px;">{em}</button>
-                              {/each}
-                          </div>
-                      {:else}
-                          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 180px; overflow-y: auto;">
-                              {#each customStickers as stUrl}
-                                  <button type="button" on:click={() => sendHydraSticker(stUrl)} style="background: rgba(255,255,255,0.04); border: none; border-radius: 12px; padding: 4px; cursor: pointer;">
-                                      <img src={stUrl} alt="st" style="width: 100%; height: 64px; object-fit: contain;" />
-                                  </button>
-                              {/each}
-                          </div>
-                      {/if}
-                  </div>
-              {/if}"""
-              ch = ch.replace(old_emoji_panel, new_emoji_panel)
-
-              # Обновляем индикатор статуса: 1 круг (отправка), 2 круга (доставлено), сплошной горящий синий круг (прочитано)
-              old_status_span = '<span class="message-status"><div class="icon-svg-sm" style="display:inline-block; width:14px; height:14px;">{@html msg.Status === \'sending\' ? Icons.StatusSent : (msg.Status === \'read\' ? Icons.StatusRead : Icons.StatusDelivered)}</div></span>'
-              new_status_span = '''<span class="message-status" style="display:inline-flex; align-items:center;">
-                                          {#if msg.Status === 'read'}
-                                              <span style="width: 10px; height: 10px; border-radius: 50%; background: #60A5FA; box-shadow: 0 0 8px #3B82F6; display: inline-block;" title="Прочитано"></span>
-                                          {:else if msg.Status === 'sending'}
-                                              <span style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.6); display: inline-block;" title="Отправка"></span>
-                                          {:else}
-                                              <span style="width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid #93C5FD; display: inline-flex; align-items: center; justify-content: center;" title="Доставлено"><span style="width: 4px; height: 4px; border-radius: 50%; background: #93C5FD;"></span></span>
-                                          {/if}
-                                      </span>'''
-              ch = ch.replace(old_status_span, new_status_span)
-
-              with open(ch_path, "w", encoding="utf-8") as f:
-                  f.write(ch)
-              print("[OK] 7. Chat.svelte: верхняя полоска звонка, стикеры Telegram и синий круг прочтения готовы!")
+          with open(ch_path, "w", encoding="utf-8") as f:
+              f.write(ch)
+          print("[OK] Chat.svelte: добавлен импорт стикерпаков Telegram по ссылке и поддержка видео-стикеров!")
           PYEOF
-          python3 hydra_v300_update.py
-          rm -f hydra_v300_update.py
-          gofmt -w internal/
+          python3 add_tg_stickers_ui.py
+          rm -f add_tg_stickers_ui.py
 
       - name: Install jsQR & Build Frontend (Svelte)
         working-directory: ./frontend
@@ -521,13 +170,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Hydra v3.0.0 Update
+      - name: Commit Telegram Sticker Pack Import UI
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Release Hydra v3.0.0: new logotip icon, Telegram stickers, minimized call bar, read circle, Wi-Fi radar fix & Play Protect hardening [skip ci]"
+            git commit -m "Add Telegram sticker pack import by t.me/addstickers/ link & video sticker support [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
@@ -564,5 +213,5 @@ jobs:
       - name: Upload Signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: Hydra-v3.0.0-Signed-APK
+          name: Hydra-v3.0.1-Stickers-APK
           path: android/app/build/outputs/apk/release/*.apk
