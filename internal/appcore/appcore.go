@@ -387,7 +387,7 @@ func (a *AppCore) ExportAccount() (string, error) {
 	if errMkdir := os.MkdirAll(tempDir, 0700); errMkdir != nil {
 		return "", fmt.Errorf("failed to create temp dir: %w", errMkdir)
 	}
-	zipName := fmt.Sprintf("teleghost_export_%s_%d.zip", profileMeta.DisplayName, time.Now().Unix())
+	zipName := fmt.Sprintf("hydra_backup_%s_%d.zip", profileMeta.DisplayName, time.Now().Unix())
 	zipPath := filepath.Join(tempDir, zipName)
 
 	outFile, err := os.Create(zipPath)
@@ -913,6 +913,13 @@ func (a *AppCore) OnMessageReceived(msg *core.Message, senderPubKey, senderAddr 
 	}
 	if strings.HasPrefix(msg.Content, "[HYDRA_REACT]:") {
 		a.Emitter.Emit("remote_reaction", strings.TrimPrefix(msg.Content, "[HYDRA_REACT]:"))
+		return
+	}
+	if strings.HasPrefix(msg.Content, "[HYDRA_STORY_DEL]:") {
+		storyID := strings.TrimSpace(strings.TrimPrefix(msg.Content, "[HYDRA_STORY_DEL]:"))
+		if storyID != "" {
+			a.Emitter.Emit("remote_story_deleted", storyID)
+		}
 		return
 	}
 	if strings.HasPrefix(msg.Content, "[HYDRA_STORY_SYNC]:") {

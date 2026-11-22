@@ -415,11 +415,7 @@
                     <button type="button" on:click={toggleNoCopyProtection} style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 11px 12px; background: transparent; border: none; color: #E5E7EB; font-size: 14px; border-radius: 12px; cursor: pointer; text-align: left;">
                         <span>🔒</span> <span>{noCopyProtected ? 'Разрешить скриншоты' : 'Запретить копирование'}</span>
                     </button>
-                    {#if onUpdateProfile}
-                        <button type="button" on:click={() => { showProfileDotsMenu = false; onUpdateProfile(contact.I2PAddress); }} style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 11px 12px; background: transparent; border: none; color: #60A5FA; font-size: 14px; border-radius: 12px; cursor: pointer; text-align: left;">
-                            <span>🔄</span> <span>Синхронизировать профиль</span>
-                        </button>
-                    {/if}
+                    
                     <button type="button" on:click={async () => { showProfileDotsMenu = false; await AppActions.DeleteContact(contact.ID); onCloseContactProfile(); location.reload(); }} style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 11px 12px; background: transparent; border: none; color: #EF4444; font-size: 14px; font-weight: 600; border-radius: 12px; cursor: pointer; text-align: left;">
                         <span>🗑️</span> <span>Удалить контакт</span>
                     </button>
@@ -448,7 +444,7 @@
                 <span style="font-size: 18px;">{contactMuted ? '🔕' : '🔔'}</span>
                 <span style="font-size: 12px; font-weight: 600;">{contactMuted ? 'Выключен' : 'Звук'}</span>
             </button>
-            {#if !String(contact.Nickname || '').startsWith('👥') && !String(contact.Nickname || '').startsWith('📢')}
+            {#if !contact.IsFavorites && contact.Nickname !== 'Избранное' && !String(contact.Nickname || '').startsWith('👥') && !String(contact.Nickname || '').startsWith('📢')}
                 <button type="button" on:click={() => { onCloseContactProfile(); if (window.__triggerHydraCallFromProfile) window.__triggerHydraCallFromProfile(); }} style="background: #1A1C20; border: none; border-radius: 16px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: #fff; cursor: pointer;">
                     <span style="font-size: 18px;">📞</span>
                     <span style="font-size: 12px; font-weight: 600;">Звонок</span>
@@ -489,7 +485,7 @@
     <div style="margin: 0 16px 16px; background: #1A1C20; border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
             <div>
-                <div style="font-size: 15px; font-weight: 600; color: #fff;">{contact.Nickname?.startsWith('@') ? contact.Nickname : ('@' + (contact.Nickname || 'user').toLowerCase().replace(/\s+/g, ''))}</div>
+                <div style="font-size: 15px; font-weight: 600; color: #fff;">{contact.Nickname?.startsWith('@') ? contact.Nickname : ('@' + (contact.Nickname || 'user').replace(/^[👥📢]\s*/, '').toLowerCase().replace(/\s+/g, ''))}</div>
                 <div style="font-size: 12px; color: #9CA3AF; margin-top: 2px;">Имя пользователя Hydra</div>
             </div>
             <button type="button" on:click={() => { AppActions.ClipboardSet(contact.I2PAddress); alert('✅ Крипто-ID скопирован'); }} style="background: rgba(59,130,246,0.15); color: #60A5FA; border: none; border-radius: 12px; width: 38px; height: 38px; font-size: 18px; cursor: pointer;" title="Скопировать ключ">⚃</button>
@@ -508,6 +504,43 @@
         </div>
     </div>
 
+    
+    {#if String(contact.Nickname || '').startsWith('👥') || String(contact.Nickname || '').startsWith('📢')}
+        <div style="margin: 0 16px 16px; background: #1A1C20; border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-size: 14px; font-weight: 800; color: #60A5FA;">👥 Участники ({groupMembersInProfile.length})</span>
+                <button type="button" on:click={toggleGroupMembersVisibility} style="background: rgba(59,130,246,0.18); color: #93C5FD; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 700;">
+                    {groupHideMembers ? '🙈 Скрыты (видны вам)' : '👁️ Видны всем'}
+                </button>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+                {#each groupMembersInProfile as mem}
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #121316; border-radius: 12px; font-size: 13px; color: #E5E7EB;">
+                        <span>{mem}</span>
+                        {#if !String(mem).includes('Создатель')}
+                            <button type="button" on:click={() => {
+                                const adminsKey = 'hydra_group_admins_' + contact.ID;
+                                let admins = JSON.parse(localStorage.getItem(adminsKey) || '[]');
+                                if (admins.includes(mem)) admins = admins.filter(x => x !== mem);
+                                else admins.push(mem);
+                                localStorage.setItem(adminsKey, JSON.stringify(admins));
+                                alert('✅ Права администратора обновлены для ' + mem);
+                            }} style="background: #1E3A8A; color: #93C5FD; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 700;">⭐ Админ</button>
+                        {/if}
+                    </div>
+                {/each}
+            </div>
+            <button type="button" on:click={() => {
+                const k = 'hydra_group_admins_only_' + contact.ID;
+                const next = localStorage.getItem(k) === '1' ? '0' : '1';
+                localStorage.setItem(k, next);
+                alert(next === '1' ? '🔒 Писать могут только создатель и админы' : '💬 Писать могут все участники');
+            }} style="background: #22252A; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.3); border-radius: 12px; padding: 10px; font-size: 12px; font-weight: 700; cursor: pointer;">
+                ⚙️ Переключить право отправки сообщений (Все / Только админы)
+            </button>
+        </div>
+    {/if}
+    
     <!-- Вкладки Медиа / Файлы / Голосовые как на Скриншотах 1 и 2 -->
     <div style="display: flex; gap: 8px; padding: 6px 16px; margin-bottom: 10px; overflow-x: auto;">
         <button type="button" on:click={() => profileActiveTab = 'media'} style="padding: 8px 18px; border-radius: 100px; border: none; font-size: 13px; font-weight: 700; background: {profileActiveTab === 'media' ? '#1E3A8A' : '#1A1C20'}; color: {profileActiveTab === 'media' ? '#fff' : '#9CA3AF'}; cursor: pointer;">Медиа</button>

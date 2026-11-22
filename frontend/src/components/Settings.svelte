@@ -188,6 +188,42 @@
         }
     }
 
+    
+    let pinDisableStep = 0;
+    let pinDisableCountdown = 10;
+    let pinDisableTimer = null;
+
+    function handlePinSwitchClick(e) {
+        if (selectedProfile?.use_pin) {
+            e.preventDefault();
+            e.target.checked = true;
+            startPinDisableWarning(1);
+        } else {
+            if (onTogglePinUsage) onTogglePinUsage();
+        }
+    }
+
+    function startPinDisableWarning(step) {
+        pinDisableStep = step;
+        pinDisableCountdown = 10;
+        clearInterval(pinDisableTimer);
+        pinDisableTimer = setInterval(() => {
+            if (pinDisableCountdown > 0) pinDisableCountdown--;
+            else clearInterval(pinDisableTimer);
+        }, 1000);
+    }
+
+    function confirmPinDisableStep() {
+        if (pinDisableCountdown > 0) return;
+        if (pinDisableStep === 1) {
+            startPinDisableWarning(2);
+        } else {
+            pinDisableStep = 0;
+            clearInterval(pinDisableTimer);
+            if (onTogglePinUsage) onTogglePinUsage();
+        }
+    }
+    
     let biometricEnabled = localStorage.getItem('hydra_biometric') !== '0';
     
     
@@ -299,7 +335,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         id: 'wifi_beacon_' + myPub.slice(0, 10),
-                        from: myPub,
+                        from: 'WIFI_SUBNET_' + myPub,
                         from_nick: myNick.startsWith('@') ? myNick : ('@' + myNick),
                         to: 'WIFI_SUBNET_' + subnet,
                         chat_id: 'WIFI_NEARBY',
@@ -313,8 +349,9 @@
                 const items = await r.json();
                 const byPub = {};
                 for (const it of (items || [])) {
-                    if (it.from && it.from !== myPub && it.from_nick) {
-                        byPub[it.from] = { nick: it.from_nick, pub: it.from };
+                    const cleanPub = String(it.from || '').replace(/^WIFI_SUBNET_/, '');
+                    if (cleanPub && cleanPub !== myPub && it.from_nick) {
+                        byPub[cleanPub] = { nick: it.from_nick, pub: cleanPub };
                     }
                 }
                 settingsNearbyList = Object.values(byPub);
@@ -551,7 +588,7 @@
                                         <p>{selectedProfile?.use_pin ? 'Включено. Ключ зашифрован локально.' : 'Выключено. Требуется ввод seed-фразы.'}</p>
                                     </div>
                                     <label class="switch">
-                                        <input type="checkbox" checked={selectedProfile?.use_pin} on:change={onTogglePinUsage}>
+                                        <input type="checkbox" checked={selectedProfile?.use_pin} on:change={handlePinSwitchClick}>
                                         <span class="slider round"></span>
                                     </label>
                                 </div>
@@ -682,15 +719,7 @@
 
                 <h3 class="subsection-title">Защита соединения (True E2EE)</h3>
                 <div class="settings-item-group" style="max-width: 100%; box-sizing: border-box;">
-                    <div class="setting-item" style="max-width: 100%; box-sizing: border-box;">
-                        <label class="form-label">Протокол сквозного шифрования
-                            <select bind:value={routerSettings.tunnelLength} class="input-field" style="max-width: 100%; box-sizing: border-box;">
-                                <option value={1}>ECDH X25519 + XChaCha20-Poly1305</option>
-                                <option value={2}>Direct WebSocket Relay (191.223.137.164)</option>
-                                <option value={3}>Multi-Hop Encrypted Relay</option>
-                            </select>
-                        </label>
-                    </div>
+                    
 
                     <div class="setting-item flex-row bg-box" style="box-sizing: border-box; max-width: 100%;">
                         <div style="min-width: 0; flex: 1; padding-right: 10px;">
@@ -702,9 +731,7 @@
                         <input type="checkbox" checked={lanDirectEnabled} on:change={toggleLanDirect} style="width: 20px; height: 20px; accent-color: #8AB4F8; flex-shrink: 0;" />
                     </div>
 
-                    <button type="button" class="btn-primary" on:click={onSaveRouterSettings} style="margin-top: 12px; width: 100%; box-sizing: border-box;">
-                        💾 Сохранить и применить
-                    </button>
+                    
 
                     <div class="setting-item bg-box" style="margin-top: 14px; display: flex; flex-direction: column; gap: 10px; max-width: 100%; box-sizing: border-box;">
                         <button type="button" class="btn-primary" on:click={verifyHydraConnection} disabled={isPingingServer} style="width: 100%; background: #8AB4F8; color: #062E6F; font-weight: 700; border-radius: 100px; padding: 12px; border: none; cursor: pointer; box-sizing: border-box;">
@@ -723,7 +750,7 @@
                                 <img src="/icon.png" alt="Hydra" style="width: 100%; height: 100%; object-fit: contain; border-radius: 50%;" />
                             </div>
                             <h2 class="about-title">Hydra</h2>
-                            <p class="about-version">Version {aboutInfo.app_version || '2.5.0-hydra'}</p>
+                            <p class="about-version">Version {aboutInfo.app_version || '3.0.0-hydra'}</p>
                         </div>
 
                         <div class="info-list">
@@ -840,6 +867,26 @@
                         {line}
                     </div>
                 {/each}
+            </div>
+        </div>
+    </div>
+{/if}
+
+
+{#if pinDisableStep > 0}
+    <div style="position: fixed; inset: 0; background: rgba(8,9,14,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+        <div style="background: #1A1C20; border: 1px solid rgba(239,68,68,0.5); border-radius: 24px; padding: 20px; width: 100%; max-width: 360px;">
+            <h3 style="margin: 0 0 10px; color: #FCA5A5;">⚠️ Предупреждение ({pinDisableStep} из 2)</h3>
+            <p style="font-size: 13px; color: #E5E7EB; line-height: 1.5; margin: 0 0 18px;">
+                {pinDisableStep === 1
+                    ? 'Вы собираетесь отключить защиту ПИН-кодом. Любой, кто возьмёт ваш разблокированный телефон, сможет сразу открыть все ваши чаты Hydra.'
+                    : 'Вы точно уверены? После отключения ПИН-кода вход будет выполняться без пароля. Подтвердите действие после окончания таймера.'}
+            </p>
+            <div style="display: flex; gap: 8px;">
+                <button type="button" on:click={() => { pinDisableStep = 0; clearInterval(pinDisableTimer); }} style="flex: 1; padding: 11px; border-radius: 100px; background: #28292D; color: #fff; border: none; font-weight: 700;">Отмена</button>
+                <button type="button" disabled={pinDisableCountdown > 0} on:click={confirmPinDisableStep} style="flex: 1; padding: 11px; border-radius: 100px; background: {pinDisableCountdown > 0 ? '#374151' : '#EF4444'}; color: #fff; border: none; font-weight: 800; cursor: {pinDisableCountdown > 0 ? 'not-allowed' : 'pointer'};">
+                    {pinDisableCountdown > 0 ? `Ждите (${pinDisableCountdown}с)` : (pinDisableStep === 1 ? 'Далее' : 'Отключить ПИН')}
+                </button>
             </div>
         </div>
     </div>

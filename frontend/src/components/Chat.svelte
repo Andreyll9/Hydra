@@ -568,6 +568,43 @@
     let recordingInterval = null;
     let activeCallModal = false;
 
+    let callMinimized = false;
+    let emojiTab = 'emoji'; // 'emoji' | 'stickers'
+    let customStickers = [];
+    try { customStickers = JSON.parse(localStorage.getItem('hydra_stickers_v1') || '[]'); } catch (e) { customStickers = []; }
+
+    function handleImportStickers(e) {
+        const files = Array.from(e.target.files || []);
+        files.slice(0, 20).forEach(file => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                if (!customStickers.includes(reader.result)) {
+                    customStickers = [reader.result, ...customStickers].slice(0, 60);
+                    localStorage.setItem('hydra_stickers_v1', JSON.stringify(customStickers));
+                }
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    async function sendHydraSticker(dataUrl) {
+        if (!selectedContact) return;
+        showEmojiPanel = false;
+        await AppActions.SendText(selectedContact.ID, '[HYDRA_STICKER]:' + dataUrl, '').catch(() => {});
+        dispatch('refresh');
+    }
+
+    EventsOn('remote_chat_read', (chatId) => {
+        if (selectedContact && (selectedContact.ChatID === chatId || selectedContact.ID === chatId)) {
+            messages = (messages || []).map(m => m.IsOutgoing ? { ...m, Status: 'read' } : m);
+        }
+    });
+
+    $: if (selectedContact && !selectedContact.IsFavorites && !String(selectedContact.Nickname || '').startsWith('👥') && !String(selectedContact.Nickname || '').startsWith('📢')) {
+        AppActions.SendText(selectedContact.ID, '[HYDRA_READ_ACK]:1', '').catch(() => {});
+    }
+    
+
     let isCallMuted = false;
     let isRecordingCall = false;
     let callRecorder = null;
@@ -1032,7 +1069,13 @@
     {/if}
 </div>
 
-{#if activeCallModal}
+{#if activeCallModal && callMinimized}
+    <div on:click={() => callMinimized = false} style="position: fixed; top: env(safe-area-inset-top, 0px); left: 0; right: 0; z-index: 99998; background: linear-gradient(90deg, #059669, #1D4ED8); color: #fff; padding: 8px 16px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 800; box-shadow: 0 4px 16px rgba(0,0,0,0.5); cursor: pointer;">
+        <span>📞 Активный звонок: {selectedContact?.Nickname || 'Hydra'} (нажмите, чтобы развернуть)</span>
+        <button type="button" on:click|stopPropagation={() => endHydraCall(true)} style="background: #EF4444; color: #fff; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 800;">📴</button>
+    </div>
+{/if}
+{#if activeCallModal && !callMinimized}
     <div style="position: fixed; inset: 0; background: rgba(12,14,20,0.96); backdrop-filter: blur(16px); z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 24px;">
         <audio bind:this={remoteAudioEl} autoplay></audio>
         <div style="width: 96px; height: 96px; border-radius: 50%; background: #1A1C20; border: 3px solid #3B82F6; display: flex; align-items: center; justify-content: center; font-size: 36px; color: #60A5FA; font-weight: 700; box-shadow: 0 0 32px rgba(29,78,216,0.4);">
@@ -1056,6 +1099,7 @@
                     🟢 Принять
                 </button>
             {/if}
+            <button type="button" on:click={() => callMinimized = true} style="background: #22252A; color: #93C5FD; border: 1px solid rgba(59,130,246,0.35); border-radius: 100px; padding: 14px 20px; font-size: 14px; font-weight: 700; cursor: pointer;">🔽 Свернуть</button>
             <button type="button" on:click={() => endHydraCall(true)} style="background: #ff4757; color: #fff; border: none; border-radius: 100px; padding: 14px 28px; font-size: 15px; font-weight: 800; cursor: pointer;">
                 📴 {incomingCallOffer && !callConnected ? 'Отклонить' : 'Завершить'}
             </button>
@@ -1233,6 +1277,10 @@
                             <div style="position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: rgba(12,14,20,0.75); color: #60A5FA; border-radius: 100px; padding: 3px 10px; font-size: 10px; font-weight: 700; white-space: nowrap; pointer-events: none;">🔊 Звук • 2x тап меню</div>
                         </div>
                     </div>
+                {:else if msg.Content && msg.Content.startsWith('[HYDRA_STICKER]:')}
+                    <div style="padding: 4px;">
+                        <img src={msg.Content.slice('[HYDRA_STICKER]:'.length)} alt="sticker" style="width: 150px; height: 150px; object-fit: contain; background: transparent;" />
+                    </div>
                 {:else if msg.Content && msg.Content.startsWith('[HYDRA_VIDEO]:')}
                     <div style="padding: 4px; max-width: 260px;">
                         <video controls playsinline src={msg.Content.slice('[HYDRA_VIDEO]:'.length)} style="width: 100%; max-height: 320px; border-radius: 14px; background: #000;"></video>
@@ -1270,7 +1318,15 @@
                             {/if}
                             <span class="message-time">{formatTime(msg.Timestamp)}</span>
                             {#if msg.IsOutgoing}
-                                <span class="message-status"><div class="icon-svg-sm" style="display:inline-block; width:14px; height:14px;">{@html msg.Status === 'sending' ? Icons.StatusSent : (msg.Status === 'read' ? Icons.StatusRead : Icons.StatusDelivered)}</div></span>
+                                <span class="message-status" style="display:inline-flex; align-items:center;">
+                                {#if msg.Status === 'read'}
+                                    <span style="width: 10px; height: 10px; border-radius: 50%; background: #60A5FA; box-shadow: 0 0 8px #3B82F6; display: inline-block;" title="Прочитано"></span>
+                                {:else if msg.Status === 'sending'}
+                                    <span style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.6); display: inline-block;" title="Отправка"></span>
+                                {:else}
+                                    <span style="width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid #93C5FD; display: inline-flex; align-items: center; justify-content: center;" title="Доставлено"><span style="width: 4px; height: 4px; border-radius: 50%; background: #93C5FD;"></span></span>
+                                {/if}
+                            </span>
                             {/if}
                         </div>
                     </div>
@@ -1335,10 +1391,32 @@
         
         
     {#if showEmojiPanel}
-        <div style="display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 14px; background: #1E1F22; border-top: 1px solid rgba(255,255,255,0.06);">
-            {#each hydraEmojis as em}
-                <button type="button" on:click={() => insertHydraEmoji(em)} style="font-size: 22px; background: transparent; border: none; cursor: pointer; padding: 4px;">{em}</button>
-            {/each}
+        <div style="padding: 10px 14px; background: #1E1F22; border-top: 1px solid rgba(255,255,255,0.06);">
+            <div style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;">
+                <button type="button" on:click={() => emojiTab = 'emoji'} style="padding: 5px 12px; border-radius: 100px; border: none; font-size: 12px; font-weight: 700; background: {emojiTab === 'emoji' ? '#1D4ED8' : '#28292D'}; color: #fff;">😊 Эмодзи</button>
+                <button type="button" on:click={() => emojiTab = 'stickers'} style="padding: 5px 12px; border-radius: 100px; border: none; font-size: 12px; font-weight: 700; background: {emojiTab === 'stickers' ? '#1D4ED8' : '#28292D'}; color: #fff;">🎨 Стикеры ({customStickers.length})</button>
+                {#if emojiTab === 'stickers'}
+                    <label style="margin-left: auto; padding: 5px 12px; border-radius: 100px; background: #10B981; color: #fff; font-size: 11px; font-weight: 800; cursor: pointer;">
+                        + Импорт (.webp/.png)
+                        <input type="file" accept="image/webp,image/png" multiple style="display: none;" on:change={handleImportStickers} />
+                    </label>
+                {/if}
+            </div>
+            {#if emojiTab === 'emoji'}
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                    {#each hydraEmojis as em}
+                        <button type="button" on:click={() => insertHydraEmoji(em)} style="font-size: 22px; background: transparent; border: none; cursor: pointer; padding: 4px;">{em}</button>
+                    {/each}
+                </div>
+            {:else}
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 180px; overflow-y: auto;">
+                    {#each customStickers as stUrl}
+                        <button type="button" on:click={() => sendHydraSticker(stUrl)} style="background: rgba(255,255,255,0.04); border: none; border-radius: 12px; padding: 4px; cursor: pointer;">
+                            <img src={stUrl} alt="st" style="width: 100%; height: 64px; object-fit: contain;" />
+                        </button>
+                    {/each}
+                </div>
+            {/if}
         </div>
     {/if}
     {#if showCircleStudio}

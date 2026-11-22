@@ -1117,7 +1117,7 @@
                             settingsCategories={[
                                 {id: 'profile', name: 'Профиль', icon: Icons.User},
                                 {id: 'privacy', name: 'Приватность', icon: Icons.Lock},
-                                {id: 'network', name: 'Сеть и Сервер', icon: Icons.Globe},
+                                {id: 'network', name: 'Сеть', icon: Icons.Globe},
                                 {id: 'about', name: 'О программе', icon: Icons.Info}
                             ]}
                             {activeSettingsTab} {settingsView} {selectedProfile} {networkStatus} {myDestination}
@@ -1154,7 +1154,7 @@
                             settingsCategories={[
                                 {id: 'profile', name: 'Профиль', icon: Icons.User},
                                 {id: 'privacy', name: 'Приватность', icon: Icons.Lock},
-                                {id: 'network', name: 'Сеть и Сервер', icon: Icons.Globe},
+                                {id: 'network', name: 'Сеть', icon: Icons.Globe},
                                 {id: 'about', name: 'О программе', icon: Icons.Info}
                             ]}
                             {activeSettingsTab} {settingsView} {selectedProfile} {networkStatus} {myDestination}

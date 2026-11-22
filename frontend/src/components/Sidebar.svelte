@@ -128,6 +128,13 @@
     }
     loadHydraStories();
 
+    EventsOn('remote_story_deleted', (stId) => {
+        if (!stId) return;
+        hydraStories = hydraStories.filter(s => s.id !== stId);
+        localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
+        if (activeStoryModal && activeStoryModal.id === stId) activeStoryModal = null;
+    });
+
     EventsOn('remote_story_received', (payload) => {
         if (!payload || !payload.data) return;
         try {
@@ -317,6 +324,11 @@
         hydraStories = hydraStories.filter(s => s.id !== stId);
         localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
         activeStoryModal = null;
+        (contacts || []).forEach(c => {
+            if (c && c.ID && !c.IsFavorites && !String(c.Nickname || '').startsWith('👥') && !String(c.Nickname || '').startsWith('📢')) {
+                AppActions.SendText(c.ID, '[HYDRA_STORY_DEL]:' + stId, '').catch(() => {});
+            }
+        });
     }
     
     function openHydraStory(st) {
@@ -375,7 +387,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         id: 'wifi_beacon_' + myPub.slice(0, 10),
-                        from: myPub,
+                        from: 'WIFI_SUBNET_' + myPub,
                         from_nick: myNick.startsWith('@') ? myNick : ('@' + myNick),
                         to: 'WIFI_SUBNET_' + subnet,
                         chat_id: 'WIFI_NEARBY',
@@ -390,8 +402,9 @@
                 const items = await r.json();
                 const mapByPub = {};
                 for (const it of (items || [])) {
-                    if (it.from && it.from !== myPub && it.from_nick) {
-                        mapByPub[it.from] = { nick: it.from_nick, pub: it.from, ts: it.timestamp || Date.now() };
+                    const cleanPub = String(it.from || '').replace(/^WIFI_SUBNET_/, '');
+                    if (cleanPub && cleanPub !== myPub && it.from_nick) {
+                        mapByPub[cleanPub] = { nick: it.from_nick, pub: cleanPub, ts: it.timestamp || Date.now() };
                     }
                 }
                 nearbyWifiUsers = Object.values(mapByPub);

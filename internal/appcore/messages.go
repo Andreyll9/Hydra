@@ -136,6 +136,7 @@ func (a *AppCore) SendText(contactID, text, replyToID string) error {
 		"[HYDRA_DEL_MSG]:",
 		"[HYDRA_READ_ACK]:",
 		"[HYDRA_STORY_SYNC]:",
+		"[HYDRA_STORY_DEL]:",
 		"[HYDRA_REACT]:",
 	} {
 		if strings.HasPrefix(text, prefix) {
