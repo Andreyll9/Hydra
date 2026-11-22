@@ -485,7 +485,7 @@
     <div style="margin: 0 16px 16px; background: #1A1C20; border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
             <div>
-                <div style="font-size: 15px; font-weight: 600; color: #fff;">{contact.Nickname?.startsWith('@') ? contact.Nickname : ('@' + (contact.Nickname || 'user').replace(/^[👥📢]\s*/, '').toLowerCase().replace(/\s+/g, ''))}</div>
+                <div style="font-size: 15px; font-weight: 600; color: #fff;">{contact.Nickname?.startsWith('@') ? contact.Nickname : ('@' + (contact.Nickname || 'user').replace(/^(?:👥|📢)\s*/, '').toLowerCase().replace(/\s+/g, ''))}</div>
                 <div style="font-size: 12px; color: #9CA3AF; margin-top: 2px;">Имя пользователя Hydra</div>
             </div>
             <button type="button" on:click={() => { AppActions.ClipboardSet(contact.I2PAddress); alert('✅ Крипто-ID скопирован'); }} style="background: rgba(59,130,246,0.15); color: #60A5FA; border: none; border-radius: 12px; width: 38px; height: 38px; font-size: 18px; cursor: pointer;" title="Скопировать ключ">⚃</button>
@@ -542,8 +542,8 @@
     {/if}
     
     <!-- Вкладки Медиа / Файлы / Голосовые как на Скриншотах 1 и 2 -->
-    <div style="display: flex; gap: 8px; padding: 6px 16px; margin-bottom: 10px; overflow-x: auto;">
-        <button type="button" on:click={() => profileActiveTab = 'media'} style="padding: 8px 18px; border-radius: 100px; border: none; font-size: 13px; font-weight: 700; background: {profileActiveTab === 'media' ? '#1E3A8A' : '#1A1C20'}; color: {profileActiveTab === 'media' ? '#fff' : '#9CA3AF'}; cursor: pointer;">Медиа</button>
+    <div style="display: flex; gap: 8px; padding: 8px 16px; margin-bottom: 10px; overflow-x: auto; flex-shrink: 0; align-items: center;">
+        <button type="button" on:click={() => profileActiveTab = 'media'} style="padding: 8px 18px; border-radius: 100px; border: none; font-size: 13px; font-weight: 700; background: {profileActiveTab === 'media' ? '#1E3A8A' : '#1A1C20'}; color: {profileActiveTab === 'media' ? '#fff' : '#9CA3AF'}; cursor: pointer;">Фото и медиа</button>
         <button type="button" on:click={() => profileActiveTab = 'files'} style="padding: 8px 18px; border-radius: 100px; border: none; font-size: 13px; font-weight: 700; background: {profileActiveTab === 'files' ? '#1E3A8A' : '#1A1C20'}; color: {profileActiveTab === 'files' ? '#fff' : '#9CA3AF'}; cursor: pointer;">Файлы</button>
         <button type="button" on:click={() => profileActiveTab = 'voice'} style="padding: 8px 18px; border-radius: 100px; border: none; font-size: 13px; font-weight: 700; background: {profileActiveTab === 'voice' ? '#1E3A8A' : '#1A1C20'}; color: {profileActiveTab === 'voice' ? '#fff' : '#9CA3AF'}; cursor: pointer;">Голосовые</button>
     </div>

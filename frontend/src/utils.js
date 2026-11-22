@@ -17,6 +17,7 @@ export function formatPreviewText(raw) {
     const s = String(raw).replace(/^\[HYDRA_TTL:\d+\]/, '').trim();
     if (s.startsWith('[HYDRA_VOICE]:')) return '🎤 Голосовое сообщение';
     if (s.startsWith('[HYDRA_CIRCLE]:')) return '📹 Видео-кружок';
+    if (s.startsWith('[HYDRA_STICKER]:')) return '🎨 Стикер';
     if (s.startsWith('[HYDRA_VIDEO]:')) return '🎬 Видеоролик';
     if (s.startsWith('[HYDRA_GROUP_INVITE]:') || s.startsWith('SFlEUkFfUk9PTV')) return '🎟️ Приглашение в группу/канал';
     if (s.startsWith('[HYDRA_CALL_RING]:')) return '📞 Входящий вызов...';

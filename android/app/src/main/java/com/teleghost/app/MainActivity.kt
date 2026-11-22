@@ -26,6 +26,7 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
     private var webViewFileCallback: ValueCallback<Array<Uri>>? = null
     private var isOpeningSystemPicker = false
     private var pausedAtMs: Long = 0L
+    private var isCallActive = false
 
     companion object {
         private const val TAG = "Hydra"
@@ -71,7 +72,13 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
 
     inner class HydraNativeBridge {
             @JavascriptInterface
-            fun setScreenshotProtection(enabled: Boolean) {
+            @JavascriptInterface
+        fun setCallActive(active: Boolean) {
+            isCallActive = active
+        }
+
+        @JavascriptInterface
+        fun setScreenshotProtection(enabled: Boolean) {
                 runOnUiThread {
                     if (enabled) {
                         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
@@ -769,17 +776,21 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
     }
 
     override fun onPause() {
-        try {
-            val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-            if (am.mode != android.media.AudioManager.MODE_NORMAL) {
-                am.mode = android.media.AudioManager.MODE_NORMAL
-            }
-        } catch (_: Exception) {}
-        if (!isOpeningSystemPicker) {
+        if (!isCallActive) {
+            try {
+                val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+                if (am.mode != android.media.AudioManager.MODE_NORMAL) {
+                    am.mode = android.media.AudioManager.MODE_NORMAL
+                }
+            } catch (_: Exception) {}
+        }
+        if (!isOpeningSystemPicker && !isCallActive) {
             pausedAtMs = System.currentTimeMillis()
             webView.evaluateJavascript("if(window.__setHydraBlur) window.__setHydraBlur(true);", null)
         }
-        webView.onPause()
+        if (!isCallActive) {
+            webView.onPause()
+        }
         super.onPause()
     }
 }

@@ -567,6 +567,10 @@
     let recordingSeconds = 0;
     let recordingInterval = null;
     let activeCallModal = false;
+        callMinimized = false;
+        if (window.HydraNative?.setCallActive) window.HydraNative.setCallActive(false);
+        window.__hydraActiveCall = null;
+        window.dispatchEvent(new Event('hydra-call-banner'));
 
     let callMinimized = false;
     let emojiTab = 'emoji'; // 'emoji' | 'stickers'
@@ -588,6 +592,17 @@
     }
 
     
+    
+    let stickerPacks = [];
+    let activeStickerPackIdx = 0;
+    try {
+        stickerPacks = JSON.parse(localStorage.getItem('hydra_sticker_packs_v1') || '[]');
+        if (stickerPacks.length === 0 && customStickers.length > 0) {
+            stickerPacks = [{ title: 'Мои стикеры', stickers: customStickers }];
+        }
+    } catch (e) { stickerPacks = []; }
+    $: visibleStickers = stickerPacks[activeStickerPackIdx]?.stickers || customStickers;
+    
     let tgStickerUrl = '';
     let isImportingTgStickers = false;
     let tgStickerStatus = '';
@@ -604,6 +619,16 @@
                 tgStickerStatus = '❌ ' + (data.error || 'Стикерпак не найден');
                 return;
             }
+            const packTitle = data.title || 'Пак Telegram';
+            const existingIdx = stickerPacks.findIndex(p => p.title === packTitle);
+            if (existingIdx !== -1) {
+                stickerPacks[existingIdx] = { title: packTitle, stickers: data.stickers };
+                activeStickerPackIdx = existingIdx;
+            } else {
+                stickerPacks = [{ title: packTitle, stickers: data.stickers }, ...stickerPacks].slice(0, 8);
+                activeStickerPackIdx = 0;
+            }
+            try { localStorage.setItem('hydra_sticker_packs_v1', JSON.stringify(stickerPacks)); } catch (e) {}
             const merged = [...data.stickers, ...customStickers.filter(s => !data.stickers.includes(s))].slice(0, 80);
             customStickers = merged;
             try {
@@ -772,7 +797,11 @@
     async function startHydraCall() {
         if (!selectedContact) return;
         activeCallModal = true;
+        callMinimized = false;
         callConnected = false;
+        if (window.HydraNative?.setCallActive) window.HydraNative.setCallActive(true);
+        window.__hydraActiveCall = { nick: selectedContact?.Nickname, contact: selectedContact };
+        window.dispatchEvent(new Event('hydra-call-banner'));
         callStatusText = '🔔 Вызов ' + (selectedContact.Nickname || '') + '... Ожидание ответа';
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -852,6 +881,10 @@
         incomingCallOffer = null;
         callConnected = false;
         activeCallModal = false;
+        callMinimized = false;
+        if (window.HydraNative?.setCallActive) window.HydraNative.setCallActive(false);
+        window.__hydraActiveCall = null;
+        window.dispatchEvent(new Event('hydra-call-banner'));
     }
 
     EventsOn('hydra_call_signal', async (sig) => {
@@ -1051,7 +1084,7 @@
                     <div class="avatar-placeholder">{getInitials(selectedContact?.Nickname)}</div>
                 {/if}
             </div>
-            <div>
+            <div style="min-width: 0; flex: 1; overflow: hidden;">
                 <div class="chat-name">{selectedContact?.Nickname || 'Unknown'}</div>
                 <div class="chat-status">
                     <span class="status-dot" style="background: {getUnifiedPresence(selectedContact, messages).online ? '#4CAF50' : '#9E9E9E'};"></span>
@@ -1104,9 +1137,12 @@
 </div>
 
 {#if activeCallModal && callMinimized}
-    <div on:click={() => callMinimized = false} style="position: fixed; top: env(safe-area-inset-top, 0px); left: 0; right: 0; z-index: 99998; background: linear-gradient(90deg, #059669, #1D4ED8); color: #fff; padding: 8px 16px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 800; box-shadow: 0 4px 16px rgba(0,0,0,0.5); cursor: pointer;">
-        <span>📞 Активный звонок: {selectedContact?.Nickname || 'Hydra'} (нажмите, чтобы развернуть)</span>
-        <button type="button" on:click|stopPropagation={() => endHydraCall(true)} style="background: #EF4444; color: #fff; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 800;">📴</button>
+    <div on:click={() => callMinimized = false} style="background: linear-gradient(90deg, #1D4ED8, #2563EB); color: #fff; padding: 9px 16px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 800; cursor: pointer; flex-shrink: 0; border-bottom: 1px solid rgba(255,255,255,0.12);">
+        <span>📞 Активный вызов: {selectedContact?.Nickname || 'Hydra'}</span>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 11px; opacity: 0.9;">Развернуть</span>
+            <button type="button" on:click|stopPropagation={() => endHydraCall(true)} style="background: #EF4444; color: #fff; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 800;">📴</button>
+        </div>
     </div>
 {/if}
 {#if activeCallModal && !callMinimized}
@@ -1695,7 +1731,7 @@
     .chat-avatar img { width: 100%; height: 100%; object-fit: cover; }
     .avatar-placeholder { font-size: 14px; }
     .chat-name { font-weight: 600; font-size: 16px; color: white; }
-    .chat-status { display: flex; align-items: center; gap: 6px; }
+    .chat-status { display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .status-dot { width: 8px; height: 8px; border-radius: 50%; }
     .status-text { font-size: 12px; color: var(--text-secondary); }
 
@@ -1937,7 +1973,7 @@
         white-space: nowrap !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important;
-        max-width: 145px !important;
+        max-width: 100% !important;
     }
     .chat-area.mobile .chat-status {
         flex-direction: row !important;

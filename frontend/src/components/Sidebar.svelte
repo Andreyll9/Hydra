@@ -33,6 +33,12 @@
     export let onFolderContextMenu;
 
     let longPressTimer;
+    let sidebarActiveCall = typeof window !== 'undefined' ? (window.__hydraActiveCall || null) : null;
+    if (typeof window !== 'undefined') {
+        window.addEventListener('hydra-call-banner', () => {
+            sidebarActiveCall = window.__hydraActiveCall || null;
+        });
+    }
 
     $: filteredContacts = (contacts || []).filter(c => {
         if (!c || !c.Nickname) return false;
@@ -601,6 +607,12 @@
             <div class="mobile-network-dot" style="background: {getStatusColor(networkStatus)}" title={getStatusText(networkStatus)}></div>
         </div>
         
+                {#if sidebarActiveCall}
+            <div on:click={() => { if (sidebarActiveCall?.contact && onSelectContact) onSelectContact(sidebarActiveCall.contact); }} style="background: linear-gradient(90deg, #1D4ED8, #2563EB); color: #fff; padding: 9px 16px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 800; cursor: pointer; flex-shrink: 0;">
+                <span>📞 Активный вызов: {sidebarActiveCall.nick || 'Hydra'}</span>
+                <span style="font-size: 11px; opacity: 0.9;">Вернуться ›</span>
+            </div>
+        {/if}
         <!-- Mobile Search -->
         <div class="mobile-search">
             <div class="search-input-wrapper">

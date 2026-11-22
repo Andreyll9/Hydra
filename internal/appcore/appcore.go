@@ -1149,6 +1149,8 @@ func (a *AppCore) SendNotification(senderName, content, contentType string) {
 			message = "🎤 Голосовое сообщение"
 		} else if strings.HasPrefix(message, "[HYDRA_CIRCLE]:") {
 			message = "📹 Видео-кружок"
+		} else if strings.HasPrefix(message, "[HYDRA_STICKER]:") {
+			message = "🎨 Стикер"
 		} else if strings.HasPrefix(message, "[HYDRA_VIDEO]:") {
 			message = "🎬 Видеозапись"
 		} else if strings.HasPrefix(message, "[HYDRA_CALL_RING]:") {
