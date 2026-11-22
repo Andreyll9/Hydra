@@ -38,17 +38,33 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Fix Duplicate @JavascriptInterface in MainActivity.kt
+      - name: Fix Chat.svelte TDZ Crash (Black Screen on Open Chat)
         run: |
           python3 - << 'PYEOF'
           import re
-          kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
-          with open(kt_path, "r", encoding="utf-8") as f:
-              kt = f.read()
-          kt = re.sub(r'(@JavascriptInterface\s*){2,}', '@JavascriptInterface\n        ', kt)
-          with open(kt_path, "w", encoding="utf-8") as f:
-              f.write(kt)
-          print("[OK] MainActivity.kt: дубль @JavascriptInterface удалён")
+          ch_path = "frontend/src/components/Chat.svelte"
+          with open(ch_path, "r", encoding="utf-8") as f:
+              ch = f.read()
+
+          broken_decl = """let activeCallModal = false;
+                  callMinimized = false;
+                  if (window.HydraNative?.setCallActive) window.HydraNative.setCallActive(false);
+                  window.__hydraActiveCall = null;
+                  window.dispatchEvent(new Event('hydra-call-banner'));"""
+
+          if broken_decl in ch:
+              ch = ch.replace(broken_decl, "let activeCallModal = false;", 1)
+          else:
+              ch = re.sub(
+                  r"let activeCallModal = false;\s*callMinimized = false;\s*if \(window\.HydraNative\?\.setCallActive\) window\.HydraNative\.setCallActive\(false\);\s*window\.__hydraActiveCall = null;\s*window\.dispatchEvent\(new Event\('hydra-call-banner'\)\);",
+                  "let activeCallModal = false;",
+                  ch,
+                  count=1
+              )
+
+          with open(ch_path, "w", encoding="utf-8") as f:
+              f.write(ch)
+          print("[OK] Chat.svelte: исправлена ошибка инициализации callMinimized (чёрный экран убран)")
           PYEOF
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -58,13 +74,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit MainActivity.kt Annotation Fix
+      - name: Commit Chat.svelte Black Screen Fix
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Fix duplicate @JavascriptInterface annotation in MainActivity.kt [skip ci]"
+            git commit -m "Fix black screen when opening chats (callMinimized TDZ in Chat.svelte) [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
@@ -101,5 +117,5 @@ jobs:
       - name: Upload Signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: Hydra-v3.0.2-Signed-APK
+          name: Hydra-v3.0.3-Signed-APK
           path: android/app/build/outputs/apk/release/*.apk
