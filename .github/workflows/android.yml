@@ -38,130 +38,255 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Add Telegram Sticker Pack Import by Link in Chat.svelte
+      - name: Apply UI, Background Call Audio, Sticker Packs & Group Profile Fixes (v3.0.2)
         run: |
-          cat << 'PYEOF' > add_tg_stickers_ui.py
+          cat << 'PYEOF' > fix_v302.py
           import os, re
 
-          ch_path = "frontend/src/components/Chat.svelte"
-          if not os.path.exists(ch_path):
-              raise SystemExit("Chat.svelte not found")
+          # 1. MainActivity.kt: не глушим WebView и звук в onPause(), пока активен звонок
+          kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
+          if os.path.exists(kt_path):
+              with open(kt_path, "r", encoding="utf-8") as f:
+                  kt = f.read()
 
-          with open(ch_path, "r", encoding="utf-8") as f:
-              ch = f.read()
+              if "private var isCallActive = false" not in kt:
+                  kt = kt.replace(
+                      "private var pausedAtMs: Long = 0L",
+                      "private var pausedAtMs: Long = 0L\n    private var isCallActive = false"
+                  )
 
-          # 1. Добавляем логику загрузки стикерпака по ссылке с VPS
-          tg_sticker_js = """
-              let tgStickerUrl = '';
-              let isImportingTgStickers = false;
-              let tgStickerStatus = '';
-
-              async function importTgStickerPack() {
-                  const u = (tgStickerUrl || '').trim();
-                  if (!u) return;
-                  isImportingTgStickers = true;
-                  tgStickerStatus = '⏳ Загрузка пака из Telegram...';
-                  try {
-                      const resp = await fetch('https://rtbeta.duckdns.org/stickers/tg?url=' + encodeURIComponent(u));
-                      const data = await resp.json().catch(() => ({}));
-                      if (!resp.ok || !data.stickers || data.stickers.length === 0) {
-                          tgStickerStatus = '❌ ' + (data.error || 'Стикерпак не найден');
-                          return;
-                      }
-                      const merged = [...data.stickers, ...customStickers.filter(s => !data.stickers.includes(s))].slice(0, 80);
-                      customStickers = merged;
-                      try {
-                          localStorage.setItem('hydra_stickers_v1', JSON.stringify(customStickers));
-                      } catch (storageErr) {
-                          customStickers = data.stickers.slice(0, 30);
-                          localStorage.setItem('hydra_stickers_v1', JSON.stringify(customStickers));
-                      }
-                      tgStickerUrl = '';
-                      tgStickerStatus = `✅ Загружен «${data.title || 'Пак'}» (+${data.stickers.length} шт.)`;
-                  } catch (e) {
-                      tgStickerStatus = '❌ Ошибка сети: ' + e;
-                  } finally {
-                      isImportingTgStickers = false;
+              if "fun setCallActive(" not in kt:
+                  kt = kt.replace(
+                      "fun setScreenshotProtection(enabled: Boolean) {",
+                      """@JavascriptInterface
+                  fun setCallActive(active: Boolean) {
+                      isCallActive = active
                   }
-              }
-          """
 
-          if "async function importTgStickerPack()" not in ch:
+                  @JavascriptInterface
+                  fun setScreenshotProtection(enabled: Boolean) {"""
+                  )
+
+              old_on_pause = """    override fun onPause() {
+                  try {
+                      val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+                      if (am.mode != android.media.AudioManager.MODE_NORMAL) {
+                          am.mode = android.media.AudioManager.MODE_NORMAL
+                      }
+                  } catch (_: Exception) {}
+                  if (!isOpeningSystemPicker) {
+                      pausedAtMs = System.currentTimeMillis()
+                      webView.evaluateJavascript("if(window.__setHydraBlur) window.__setHydraBlur(true);", null)
+                  }
+                  webView.onPause()
+                  super.onPause()
+              }"""
+
+              new_on_pause = """    override fun onPause() {
+                  if (!isCallActive) {
+                      try {
+                          val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+                          if (am.mode != android.media.AudioManager.MODE_NORMAL) {
+                              am.mode = android.media.AudioManager.MODE_NORMAL
+                          }
+                      } catch (_: Exception) {}
+                  }
+                  if (!isOpeningSystemPicker && !isCallActive) {
+                      pausedAtMs = System.currentTimeMillis()
+                      webView.evaluateJavascript("if(window.__setHydraBlur) window.__setHydraBlur(true);", null)
+                  }
+                  if (!isCallActive) {
+                      webView.onPause()
+                  }
+                  super.onPause()
+              }"""
+              kt = kt.replace(old_on_pause, new_on_pause)
+              with open(kt_path, "w", encoding="utf-8") as f:
+                  f.write(kt)
+              print("[OK] 1. MainActivity.kt: фоновый звук во время звонка защищён от паузы WebView")
+
+          # 2. internal/appcore/appcore.go & frontend/src/utils.js: превью "🎨 Стикер" вместо base64
+          ac_path = "internal/appcore/appcore.go"
+          if os.path.exists(ac_path):
+              with open(ac_path, "r", encoding="utf-8") as f:
+                  ac = f.read()
+              if '[HYDRA_STICKER]:' not in ac:
+                  ac = ac.replace(
+                      '} else if strings.HasPrefix(message, "[HYDRA_VIDEO]:") {',
+                      '} else if strings.HasPrefix(message, "[HYDRA_STICKER]:") {\n\t\t\tmessage = "🎨 Стикер"\n\t\t} else if strings.HasPrefix(message, "[HYDRA_VIDEO]:") {'
+                  )
+              with open(ac_path, "w", encoding="utf-8") as f:
+                  f.write(ac)
+
+          ut_path = "frontend/src/utils.js"
+          if os.path.exists(ut_path):
+              with open(ut_path, "r", encoding="utf-8") as f:
+                  ut = f.read()
+              if "[HYDRA_STICKER]:" not in ut:
+                  ut = ut.replace(
+                      "if (s.startsWith('[HYDRA_VIDEO]:'))",
+                      "if (s.startsWith('[HYDRA_STICKER]:')) return '🎨 Стикер';\n    if (s.startsWith('[HYDRA_VIDEO]:'))"
+                  )
+                  ut = ut.replace(
+                      "if (text.startsWith('[HYDRA_VIDEO]:'))",
+                      "if (text.startsWith('[HYDRA_STICKER]:')) return '🎨 Стикер';\n    if (text.startsWith('[HYDRA_VIDEO]:'))"
+                  )
+              with open(ut_path, "w", encoding="utf-8") as f:
+                  f.write(ut)
+              print("[OK] 2. Превью стикера в чатах и уведомлениях заменено на '🎨 Стикер'")
+
+          # 3. Modals.svelte: чиним @горемне (surrogate pair) и сплющенные вкладки Фото и медиа / Файлы / Голосовые
+          md_path = "frontend/src/components/Modals.svelte"
+          if os.path.exists(md_path):
+              with open(md_path, "r", encoding="utf-8") as f:
+                  md = f.read()
+
+              md = md.replace(".replace(/^[👥📢]\\s*/, '')", ".replace(/^(?:👥|📢)\\s*/, '')")
+              md = md.replace(
+                  '<div style="display: flex; gap: 8px; padding: 6px 16px; margin-bottom: 10px; overflow-x: auto;">',
+                  '<div style="display: flex; gap: 8px; padding: 8px 16px; margin-bottom: 10px; overflow-x: auto; flex-shrink: 0; align-items: center;">'
+              )
+              md = md.replace('>Медиа</button>', '>Фото и медиа</button>')
+
+              with open(md_path, "w", encoding="utf-8") as f:
+                  f.write(md)
+              print("[OK] 3. Modals.svelte: исправлен @ник группы и высота вкладок медиа")
+
+          # 4. Sidebar.svelte: синяя полоска "Активный вызов" между шапкой Hydra и Поиском
+          sb_path = "frontend/src/components/Sidebar.svelte"
+          if os.path.exists(sb_path):
+              with open(sb_path, "r", encoding="utf-8") as f:
+                  sb = f.read()
+
+              if "let sidebarActiveCall =" not in sb:
+                  sb = sb.replace(
+                      "let longPressTimer;",
+                      """let longPressTimer;
+              let sidebarActiveCall = typeof window !== 'undefined' ? (window.__hydraActiveCall || null) : null;
+              if (typeof window !== 'undefined') {
+                  window.addEventListener('hydra-call-banner', () => {
+                      sidebarActiveCall = window.__hydraActiveCall || null;
+                  });
+              }"""
+                  )
+
+              banner_html = """        {#if sidebarActiveCall}
+                      <div on:click={() => { if (sidebarActiveCall?.contact && onSelectContact) onSelectContact(sidebarActiveCall.contact); }} style="background: linear-gradient(90deg, #1D4ED8, #2563EB); color: #fff; padding: 9px 16px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 800; cursor: pointer; flex-shrink: 0;">
+                          <span>📞 Активный вызов: {sidebarActiveCall.nick || 'Hydra'}</span>
+                          <span style="font-size: 11px; opacity: 0.9;">Вернуться ›</span>
+                      </div>
+                  {/if}
+                  <!-- Mobile Search -->"""
+
+              if "sidebarActiveCall" in sb and "📞 Активный вызов:" not in sb:
+                  sb = sb.replace("<!-- Mobile Search -->", banner_html, 1)
+
+              with open(sb_path, "w", encoding="utf-8") as f:
+                  f.write(sb)
+              print("[OK] 4. Sidebar.svelte: добавлена полоска активного вызова между Hydra и Поиском")
+
+          # 5. Chat.svelte:
+          # - фикс длинного ника и статуса в шапке
+          # - синяя полоска "Активный вызов" строго ПОД шапкой профиля
+          # - вызов HydraNative.setCallActive(true/false)
+          # - разделение стикеров на паки с вкладками
+          ch_path = "frontend/src/components/Chat.svelte"
+          if os.path.exists(ch_path):
+              with open(ch_path, "r", encoding="utf-8") as f:
+                  ch = f.read()
+
+              # Фикс переполнения ника и переноса статуса "В сети"
               ch = ch.replace(
-                  "async function sendHydraSticker(dataUrl) {",
-                  tg_sticker_js + "\n    async function sendHydraSticker(dataUrl) {",
-                  1
+                  '<div>\n                <div class="chat-name">{selectedContact?.Nickname || \'Unknown\'}</div>',
+                  '<div style="min-width: 0; flex: 1; overflow: hidden;">\n                <div class="chat-name">{selectedContact?.Nickname || \'Unknown\'}</div>'
+              )
+              ch = ch.replace(
+                  '.chat-status { display: flex; align-items: center; gap: 6px; }',
+                  '.chat-status { display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }'
+              )
+              ch = ch.replace('max-width: 145px !important;', 'max-width: 100% !important;')
+
+              # Уведомляем Android Native и Sidebar о статусе звонка
+              ch = ch.replace(
+                  "activeCallModal = true;\n        callConnected = false;",
+                  "activeCallModal = true;\n        callMinimized = false;\n        callConnected = false;\n        if (window.HydraNative?.setCallActive) window.HydraNative.setCallActive(true);\n        window.__hydraActiveCall = { nick: selectedContact?.Nickname, contact: selectedContact };\n        window.dispatchEvent(new Event('hydra-call-banner'));"
+              )
+              ch = ch.replace(
+                  "activeCallModal = false;",
+                  "activeCallModal = false;\n        callMinimized = false;\n        if (window.HydraNative?.setCallActive) window.HydraNative.setCallActive(false);\n        window.__hydraActiveCall = null;\n        window.dispatchEvent(new Event('hydra-call-banner'));"
               )
 
-          # 2. Делаем пузырь стикера прозрачным (как у видео-кружков)
-          ch = ch.replace(
-              'class:circle-only-bubble={msg.Content && msg.Content.startsWith("[HYDRA_CIRCLE]:")}',
-              'class:circle-only-bubble={msg.Content && (msg.Content.startsWith("[HYDRA_CIRCLE]:") || msg.Content.startsWith("[HYDRA_STICKER]:"))}'
-          )
-
-          # 3. Рендер стикеров в чате (поддержка и картинок .webp/.png, и видео-стикеров .webm)
-          old_render = """{:else if msg.Content && msg.Content.startsWith('[HYDRA_STICKER]:')}
-                              <div style="padding: 4px;">
-                                  <img src={msg.Content.slice('[HYDRA_STICKER]:'.length)} alt="sticker" style="width: 150px; height: 150px; object-fit: contain; background: transparent;" />
-                              </div>"""
-          new_render = """{:else if msg.Content && msg.Content.startsWith('[HYDRA_STICKER]:')}
-                              <div style="padding: 4px;">
-                                  {#if msg.Content.slice('[HYDRA_STICKER]:'.length).startsWith('data:video/')}
-                                      <video autoplay loop muted playsinline src={msg.Content.slice('[HYDRA_STICKER]:'.length)} style="width: 150px; height: 150px; object-fit: contain; background: transparent; border-radius: 12px;"></video>
-                                  {:else}
-                                      <img src={msg.Content.slice('[HYDRA_STICKER]:'.length)} alt="sticker" style="width: 150px; height: 150px; object-fit: contain; background: transparent;" />
-                                  {/if}
-                              </div>"""
-          ch = ch.replace(old_render, new_render)
-
-          # 4. Обновляем вкладку стикеров: поле ввода ссылки t.me/addstickers/... + кнопка + поддержка видео в сетке
-          old_grid_block = """                    {:else}
-                                  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 180px; overflow-y: auto;">
-                                      {#each customStickers as stUrl}
-                                          <button type="button" on:click={() => sendHydraSticker(stUrl)} style="background: rgba(255,255,255,0.04); border: none; border-radius: 12px; padding: 4px; cursor: pointer;">
-                                              <img src={stUrl} alt="st" style="width: 100%; height: 64px; object-fit: contain;" />
-                                          </button>
-                                      {/each}
-                                  </div>
-                              {/if}"""
-
-          new_grid_block = """                    {:else}
-                                  <div style="display: flex; gap: 6px; margin-bottom: 8px;">
-                                      <input type="text" placeholder="Ссылка t.me/addstickers/..." bind:value={tgStickerUrl} on:keydown={(e) => e.key === 'Enter' && importTgStickerPack()} style="flex: 1; padding: 8px 12px; border-radius: 100px; background: #121316; color: #fff; border: 1px solid rgba(59,130,246,0.35); font-size: 12px; outline: none;" />
-                                      <button type="button" disabled={isImportingTgStickers} on:click={importTgStickerPack} style="padding: 8px 14px; border-radius: 100px; background: #1D4ED8; color: #fff; border: none; font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap;">
-                                          {isImportingTgStickers ? '⏳' : '⬇️ Загрузить'}
-                                      </button>
-                                  </div>
-                                  {#if tgStickerStatus}
-                                      <div style="font-size: 11px; color: #93C5FD; margin-bottom: 8px;">{tgStickerStatus}</div>
-                                  {/if}
-                                  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 180px; overflow-y: auto;">
-                                      {#each customStickers as stUrl}
-                                          <button type="button" on:click={() => sendHydraSticker(stUrl)} style="background: rgba(255,255,255,0.04); border: none; border-radius: 12px; padding: 4px; cursor: pointer;">
-                                              {#if stUrl.startsWith('data:video/')}
-                                                  <video autoplay loop muted playsinline src={stUrl} style="width: 100%; height: 64px; object-fit: contain;"></video>
-                                              {:else}
-                                                  <img src={stUrl} alt="st" style="width: 100%; height: 64px; object-fit: contain;" />
-                                              {/if}
-                                          </button>
-                                      {/each}
-                                  </div>
-                              {/if}"""
-
-          if "importTgStickerPack" in ch and "t.me/addstickers/..." not in ch:
+              # Полоска "Активный вызов" строго ПОД шапкой профиля (не position: fixed!)
               ch = re.sub(
-                  r'\{:else\}\s*<div style="display: grid; grid-template-columns: repeat\(4, 1fr\);[\s\S]*?\{/each\}\s*</div>\s*\{/if\}',
-                  new_grid_block.strip(),
+                  r'\{#if activeCallModal && callMinimized\}[\s\S]*?\{/if\}',
+                  '''{#if activeCallModal && callMinimized}
+              <div on:click={() => callMinimized = false} style="background: linear-gradient(90deg, #1D4ED8, #2563EB); color: #fff; padding: 9px 16px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 800; cursor: pointer; flex-shrink: 0; border-bottom: 1px solid rgba(255,255,255,0.12);">
+                  <span>📞 Активный вызов: {selectedContact?.Nickname || 'Hydra'}</span>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                      <span style="font-size: 11px; opacity: 0.9;">Развернуть</span>
+                      <button type="button" on:click|stopPropagation={() => endHydraCall(true)} style="background: #EF4444; color: #fff; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 800;">📴</button>
+                  </div>
+              </div>
+          {/if}''',
                   ch,
                   count=1
               )
 
-          with open(ch_path, "w", encoding="utf-8") as f:
-              f.write(ch)
-          print("[OK] Chat.svelte: добавлен импорт стикерпаков Telegram по ссылке и поддержка видео-стикеров!")
+              # Разделение стикеров на паки с вкладками
+              pack_vars = """
+              let stickerPacks = [];
+              let activeStickerPackIdx = 0;
+              try {
+                  stickerPacks = JSON.parse(localStorage.getItem('hydra_sticker_packs_v1') || '[]');
+                  if (stickerPacks.length === 0 && customStickers.length > 0) {
+                      stickerPacks = [{ title: 'Мои стикеры', stickers: customStickers }];
+                  }
+              } catch (e) { stickerPacks = []; }
+              $: visibleStickers = stickerPacks[activeStickerPackIdx]?.stickers || customStickers;
+              """
+              if "let stickerPacks =" not in ch:
+                  ch = ch.replace("let tgStickerUrl = '';", pack_vars + "\n    let tgStickerUrl = '';", 1)
+
+              # Сохраняем загруженный пак как отдельную вкладку
+              old_merge = "const merged = [...data.stickers, ...customStickers.filter(s => !data.stickers.includes(s))].slice(0, 80);"
+              new_merge = """const packTitle = data.title || 'Пак Telegram';
+                      const existingIdx = stickerPacks.findIndex(p => p.title === packTitle);
+                      if (existingIdx !== -1) {
+                          stickerPacks[existingIdx] = { title: packTitle, stickers: data.stickers };
+                          activeStickerPackIdx = existingIdx;
+                      } else {
+                          stickerPacks = [{ title: packTitle, stickers: data.stickers }, ...stickerPacks].slice(0, 8);
+                          activeStickerPackIdx = 0;
+                      }
+                      try { localStorage.setItem('hydra_sticker_packs_v1', JSON.stringify(stickerPacks)); } catch (e) {}
+                      const merged = [...data.stickers, ...customStickers.filter(s => !data.stickers.includes(s))].slice(0, 80);"""
+              ch = ch.replace(old_merge, new_merge)
+
+              # Добавляем полоску вкладок паков над сеткой и используем visibleStickers
+              pack_tabs_ui = """{#if stickerPacks.length > 0}
+                                      <div style="display: flex; gap: 6px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 6px;">
+                                          {#each stickerPacks as pack, pIdx}
+                                              <button type="button" on:click={() => activeStickerPackIdx = pIdx} style="padding: 4px 10px; border-radius: 100px; border: none; font-size: 11px; font-weight: 700; white-space: nowrap; cursor: pointer; background: {activeStickerPackIdx === pIdx ? '#2563EB' : '#28292D'}; color: #fff;">
+                                                  {pack.title} ({pack.stickers.length})
+                                              </button>
+                                          {/each}
+                                      </div>
+                                  {/if}
+                                  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 180px; overflow-y: auto;">
+                                      {#each visibleStickers as stUrl}"""
+
+              ch = ch.replace(
+                  '<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 180px; overflow-y: auto;">\n                                      {#each customStickers as stUrl}',
+                  pack_tabs_ui
+              )
+
+              with open(ch_path, "w", encoding="utf-8") as f:
+                  f.write(ch)
+              print("[OK] 5. Chat.svelte: фикс шапки, полоска звонка под профилем и вкладки стикерпаков готовы")
           PYEOF
-          python3 add_tg_stickers_ui.py
-          rm -f add_tg_stickers_ui.py
+          python3 fix_v302.py
+          rm -f fix_v302.py
+          gofmt -w internal/
 
       - name: Install jsQR & Build Frontend (Svelte)
         working-directory: ./frontend
@@ -170,13 +295,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Telegram Sticker Pack Import UI
+      - name: Commit Hydra v3.0.2 Fixes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Add Telegram sticker pack import by t.me/addstickers/ link & video sticker support [skip ci]"
+            git commit -m "Hydra v3.0.2: background call audio, sticker pack tabs, sticker preview text, call bar placement & group profile fixes [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
@@ -213,5 +338,5 @@ jobs:
       - name: Upload Signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: Hydra-v3.0.1-Stickers-APK
+          name: Hydra-v3.0.2-Signed-APK
           path: android/app/build/outputs/apk/release/*.apk
