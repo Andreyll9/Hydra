@@ -587,6 +587,40 @@
         });
     }
 
+    
+    let tgStickerUrl = '';
+    let isImportingTgStickers = false;
+    let tgStickerStatus = '';
+
+    async function importTgStickerPack() {
+        const u = (tgStickerUrl || '').trim();
+        if (!u) return;
+        isImportingTgStickers = true;
+        tgStickerStatus = '⏳ Загрузка пака из Telegram...';
+        try {
+            const resp = await fetch('https://rtbeta.duckdns.org/stickers/tg?url=' + encodeURIComponent(u));
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok || !data.stickers || data.stickers.length === 0) {
+                tgStickerStatus = '❌ ' + (data.error || 'Стикерпак не найден');
+                return;
+            }
+            const merged = [...data.stickers, ...customStickers.filter(s => !data.stickers.includes(s))].slice(0, 80);
+            customStickers = merged;
+            try {
+                localStorage.setItem('hydra_stickers_v1', JSON.stringify(customStickers));
+            } catch (storageErr) {
+                customStickers = data.stickers.slice(0, 30);
+                localStorage.setItem('hydra_stickers_v1', JSON.stringify(customStickers));
+            }
+            tgStickerUrl = '';
+            tgStickerStatus = `✅ Загружен «${data.title || 'Пак'}» (+${data.stickers.length} шт.)`;
+        } catch (e) {
+            tgStickerStatus = '❌ Ошибка сети: ' + e;
+        } finally {
+            isImportingTgStickers = false;
+        }
+    }
+
     async function sendHydraSticker(dataUrl) {
         if (!selectedContact) return;
         showEmojiPanel = false;
@@ -1136,7 +1170,7 @@
                     class="message-bubble-wrapper" 
                     style="transform: translateX(-{swipedMsgId === msg.ID ? touchMoveX : 0}px); transition: {swipedMsgId === msg.ID ? 'none' : 'transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28)'};"
                 >
-                    <div class="message-bubble" class:outgoing={msg.IsOutgoing} class:circle-only-bubble={msg.Content && msg.Content.startsWith("[HYDRA_CIRCLE]:")} 
+                    <div class="message-bubble" class:outgoing={msg.IsOutgoing} class:circle-only-bubble={msg.Content && (msg.Content.startsWith("[HYDRA_CIRCLE]:") || msg.Content.startsWith("[HYDRA_STICKER]:"))} 
                          on:contextmenu|preventDefault={(e) => onShowMessageMenu(e, msg)}
                     >
                         {#if msg.ReplyPreview}
@@ -1279,7 +1313,11 @@
                     </div>
                 {:else if msg.Content && msg.Content.startsWith('[HYDRA_STICKER]:')}
                     <div style="padding: 4px;">
-                        <img src={msg.Content.slice('[HYDRA_STICKER]:'.length)} alt="sticker" style="width: 150px; height: 150px; object-fit: contain; background: transparent;" />
+                        {#if msg.Content.slice('[HYDRA_STICKER]:'.length).startsWith('data:video/')}
+                            <video autoplay loop muted playsinline src={msg.Content.slice('[HYDRA_STICKER]:'.length)} style="width: 150px; height: 150px; object-fit: contain; background: transparent; border-radius: 12px;"></video>
+                        {:else}
+                            <img src={msg.Content.slice('[HYDRA_STICKER]:'.length)} alt="sticker" style="width: 150px; height: 150px; object-fit: contain; background: transparent;" />
+                        {/if}
                     </div>
                 {:else if msg.Content && msg.Content.startsWith('[HYDRA_VIDEO]:')}
                     <div style="padding: 4px; max-width: 260px;">
@@ -1409,14 +1447,27 @@
                     {/each}
                 </div>
             {:else}
-                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 180px; overflow-y: auto;">
-                    {#each customStickers as stUrl}
-                        <button type="button" on:click={() => sendHydraSticker(stUrl)} style="background: rgba(255,255,255,0.04); border: none; border-radius: 12px; padding: 4px; cursor: pointer;">
-                            <img src={stUrl} alt="st" style="width: 100%; height: 64px; object-fit: contain;" />
-                        </button>
-                    {/each}
-                </div>
-            {/if}
+                        <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+                            <input type="text" placeholder="Ссылка t.me/addstickers/..." bind:value={tgStickerUrl} on:keydown={(e) => e.key === 'Enter' && importTgStickerPack()} style="flex: 1; padding: 8px 12px; border-radius: 100px; background: #121316; color: #fff; border: 1px solid rgba(59,130,246,0.35); font-size: 12px; outline: none;" />
+                            <button type="button" disabled={isImportingTgStickers} on:click={importTgStickerPack} style="padding: 8px 14px; border-radius: 100px; background: #1D4ED8; color: #fff; border: none; font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap;">
+                                {isImportingTgStickers ? '⏳' : '⬇️ Загрузить'}
+                            </button>
+                        </div>
+                        {#if tgStickerStatus}
+                            <div style="font-size: 11px; color: #93C5FD; margin-bottom: 8px;">{tgStickerStatus}</div>
+                        {/if}
+                        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 180px; overflow-y: auto;">
+                            {#each customStickers as stUrl}
+                                <button type="button" on:click={() => sendHydraSticker(stUrl)} style="background: rgba(255,255,255,0.04); border: none; border-radius: 12px; padding: 4px; cursor: pointer;">
+                                    {#if stUrl.startsWith('data:video/')}
+                                        <video autoplay loop muted playsinline src={stUrl} style="width: 100%; height: 64px; object-fit: contain;"></video>
+                                    {:else}
+                                        <img src={stUrl} alt="st" style="width: 100%; height: 64px; object-fit: contain;" />
+                                    {/if}
+                                </button>
+                            {/each}
+                        </div>
+                    {/if}
         </div>
     {/if}
     {#if showCircleStudio}
