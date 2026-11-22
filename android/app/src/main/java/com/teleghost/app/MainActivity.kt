@@ -27,6 +27,7 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
     private var isOpeningSystemPicker = false
     private var pausedAtMs: Long = 0L
     private var isCallActive = false
+    private var isBiometricPromptOpen = false
 
     companion object {
         private const val TAG = "Hydra"
@@ -276,6 +277,7 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
                     pushNativeLog("BIO-ERR", "Android SDK < 28")
                     return@runOnUiThread
                 }
+                isBiometricPromptOpen = true
                 pushNativeLog("BIO-HW", "Запрос аппаратного сканера отпечатка для ВХОДА в профиль $profileId...")
                 try {
                     val cancelSignal = CancellationSignal()
@@ -291,6 +293,7 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
                     prompt.authenticate(cancelSignal, mainExecutor, object : BiometricPrompt.AuthenticationCallback() {
                         override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) {
                             super.onAuthenticationSucceeded(result)
+                            isBiometricPromptOpen = false
                             pushNativeLog("BIO-OK", "Отпечаток пальца подтверждён аппаратно! Вход разрешён.")
                             val safePin = JSONObject.quote(savedPin)
                             webView.evaluateJavascript("if(window.__onBiometricAuthResult) window.__onBiometricAuthResult(true, $safePin, 'OK');", null)
@@ -298,6 +301,7 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
 
                         override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
                             super.onAuthenticationError(errorCode, errString)
+                            isBiometricPromptOpen = false
                             pushNativeLog("BIO-ERR", "Отмена/ошибка биометрии при входе (код $errorCode): $errString")
                             val safeErr = JSONObject.quote(errString?.toString() ?: "Отменено")
                             webView.evaluateJavascript("if(window.__onBiometricAuthResult) window.__onBiometricAuthResult(false, '', $safeErr);", null)
@@ -783,7 +787,7 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
                 }
             } catch (_: Exception) {}
         }
-        if (!isOpeningSystemPicker && !isCallActive) {
+        if (!isOpeningSystemPicker && !isCallActive && !isBiometricPromptOpen) {
             pausedAtMs = System.currentTimeMillis()
             webView.evaluateJavascript("if(window.__setHydraBlur) window.__setHydraBlur(true);", null)
         }

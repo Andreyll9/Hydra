@@ -422,6 +422,7 @@
       }
       selectedContact = contact;
       showSettings = false;
+      showContactProfile = false;
       loadMessages(contact.ID);
       
       AppActions.SetActiveChat(contact.ChatID || "");
@@ -1319,6 +1320,16 @@
                     messageContextMenu.show = false;
                 }}>Копировать текст</div>
             {/if}
+            {#if messageContextMenu.message?.Content && !messageContextMenu.message.Content.startsWith('[HYDRA_')}
+                <div class="context-item" on:click={() => {
+                    if (window.__openHydraQuoteModal) window.__openHydraQuoteModal(messageContextMenu.message);
+                    messageContextMenu.show = false;
+                }}>✂️ Выделить / цитировать отрывок</div>
+            {/if}
+            <div class="context-item" on:click={() => {
+                if (window.__toggleHydraSelectMode) window.__toggleHydraSelectMode(messageContextMenu.message);
+                messageContextMenu.show = false;
+            }}>☑️ Выбрать несколько</div>
             {#if messageContextMenu.message?.IsOutgoing}
                 <div class="context-item" on:click={() => {
                     editingMessageId = messageContextMenu.message.ID;

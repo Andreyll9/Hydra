@@ -569,6 +569,67 @@
     let activeCallModal = false;
 
     let callMinimized = false;
+
+    let peerReadTimestamps = {};
+    try { peerReadTimestamps = JSON.parse(localStorage.getItem('hydra_peer_read_ts') || '{}'); } catch (e) { peerReadTimestamps = {}; }
+    $: currentPeerReadTs = selectedContact ? (peerReadTimestamps[selectedContact.ChatID] || peerReadTimestamps[selectedContact.ID] || 0) : 0;
+
+    let isSelectMode = false;
+    let selectedMsgIds = [];
+    let quoteModalMsg = null;
+
+    function toggleMsgSelect(msgId) {
+        if (selectedMsgIds.includes(msgId)) {
+            selectedMsgIds = selectedMsgIds.filter(id => id !== msgId);
+        } else {
+            selectedMsgIds = [...selectedMsgIds, msgId];
+        }
+        if (selectedMsgIds.length === 0) isSelectMode = false;
+    }
+
+    function copySelectedMessages() {
+        const texts = (messages || [])
+            .filter(m => selectedMsgIds.includes(m.ID) && m.Content && !m.Content.startsWith('[HYDRA_'))
+            .map(m => m.Content);
+        if (texts.length > 0) {
+            AppActions.ClipboardSet(texts.join('\n\n'));
+            alert('✅ Скопировано сообщений: ' + texts.length);
+        }
+        isSelectMode = false;
+        selectedMsgIds = [];
+    }
+
+    function handleQuickCameraPhoto(e) {
+        const file = e.target.files?.[0];
+        if (!file || !selectedContact) return;
+        const reader = new FileReader();
+        reader.onload = async () => {
+            try {
+                const tmpPath = await AppActions.SaveTempImage(reader.result, 'camera_' + Date.now() + '.jpg');
+                if (tmpPath) {
+                    await AppActions.SendFileMessage(selectedContact.ID, '', '', [tmpPath], false);
+                    dispatch('refresh');
+                }
+            } catch (err) {
+                alert('Ошибка отправки фото: ' + err);
+            }
+        };
+        reader.readAsDataURL(file);
+        e.target.value = '';
+    }
+
+    if (typeof window !== 'undefined') {
+        window.__toggleHydraSelectMode = (msg) => {
+            isSelectMode = true;
+            if (msg && msg.ID && !selectedMsgIds.includes(msg.ID)) {
+                selectedMsgIds = [...selectedMsgIds, msg.ID];
+            }
+        };
+        window.__openHydraQuoteModal = (msg) => {
+            quoteModalMsg = msg;
+        };
+    }
+    
     let emojiTab = 'emoji'; // 'emoji' | 'stickers'
     let customStickers = [];
     try { customStickers = JSON.parse(localStorage.getItem('hydra_stickers_v1') || '[]'); } catch (e) { customStickers = []; }
@@ -650,6 +711,9 @@
     }
 
     EventsOn('remote_chat_read', (chatId) => {
+        peerReadTimestamps[chatId] = Date.now();
+        peerReadTimestamps = { ...peerReadTimestamps };
+        localStorage.setItem('hydra_peer_read_ts', JSON.stringify(peerReadTimestamps));
         if (selectedContact && (selectedContact.ChatID === chatId || selectedContact.ID === chatId)) {
             messages = (messages || []).map(m => m.IsOutgoing ? { ...m, Status: 'read' } : m);
         }
@@ -1039,6 +1103,7 @@
 </script>
 
 <div class="chat-area animate-fade-in" class:mobile={isMobile}>
+    <audio bind:this={remoteAudioEl} autoplay playsinline style="display:none;"></audio>
     <div class="chat-header">
         {#if isMobile && onBack}
             <button class="btn-back" on:click={onBack} style="margin-right: 8px;">
@@ -1143,7 +1208,7 @@
 {/if}
 {#if activeCallModal && !callMinimized}
     <div style="position: fixed; inset: 0; background: rgba(12,14,20,0.96); backdrop-filter: blur(16px); z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 24px;">
-        <audio bind:this={remoteAudioEl} autoplay></audio>
+        
         <div style="width: 96px; height: 96px; border-radius: 50%; background: #1A1C20; border: 3px solid #3B82F6; display: flex; align-items: center; justify-content: center; font-size: 36px; color: #60A5FA; font-weight: 700; box-shadow: 0 0 32px rgba(29,78,216,0.4);">
             {getInitials(selectedContact?.Nickname)}
         </div>
@@ -1173,6 +1238,15 @@
     </div>
 {/if}
     
+    {#if isSelectMode}
+    <div style="background: #1E3A8A; color: #fff; padding: 8px 14px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 700; flex-shrink: 0;">
+        <span>☑️ Выбрано: {selectedMsgIds.length}</span>
+        <div style="display: flex; gap: 8px;">
+            <button type="button" on:click={copySelectedMessages} style="background: #10B981; color: #fff; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; font-weight: 800;">📋 Копировать</button>
+            <button type="button" on:click={() => { isSelectMode = false; selectedMsgIds = []; }} style="background: rgba(255,255,255,0.18); color: #fff; border: none; border-radius: 100px; padding: 5px 10px; font-size: 12px;">✕</button>
+        </div>
+    </div>
+{/if}
     {#if pinnedChatMsg}
             <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; background: rgba(26,28,32,0.95); border-bottom: 1px solid rgba(59,130,246,0.2); z-index: 9;">
                 <div style="border-left: 3px solid #3B82F6; padding-left: 10px; font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
@@ -1188,11 +1262,16 @@
                 class="message animate-message" 
                 id="msg-{msg.ID}" 
                 class:outgoing={msg.IsOutgoing}
+                style={selectedMsgIds.includes(msg.ID) ? "background: rgba(59,130,246,0.18); border-radius: 14px;" : ""}
                 on:touchstart={(e) => isMobile && handleTouchStart(e, msg.ID)}
                 on:touchmove={(e) => isMobile && handleTouchMove(e)}
                 on:touchend={() => isMobile && handleTouchEnd(msg)}
                 on:dblclick={() => handleDoubleClick(msg)}
                 on:click={(e) => {
+                    if (isSelectMode) {
+                        toggleMsgSelect(msg.ID);
+                        return;
+                    }
                     if (isMobile) {
                         onShowMessageMenu(e, msg);
                     }
@@ -1389,7 +1468,7 @@
                             <span class="message-time">{formatTime(msg.Timestamp)}</span>
                             {#if msg.IsOutgoing}
                                 <span class="message-status" style="display:inline-flex; align-items:center;">
-                                {#if msg.Status === 'read'}
+                                {#if msg.Status === 'read' || (currentPeerReadTs > 0 && msg.Timestamp <= currentPeerReadTs)}
                                     <span style="width: 10px; height: 10px; border-radius: 50%; background: #60A5FA; box-shadow: 0 0 8px #3B82F6; display: inline-block;" title="Прочитано"></span>
                                 {:else if msg.Status === 'sending'}
                                     <span style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.6); display: inline-block;" title="Отправка"></span>
@@ -1410,7 +1489,7 @@
         {/each}
         
         {#if showScrollButton}
-            <button class="btn-scroll-bottom" transition:fly={{ y: 20, duration: 200 }} on:click={() => scrollToBottom(true)}>
+            <button class="btn-scroll-bottom" style="bottom: {replyingTo ? '145px' : '92px'}; z-index: 35;" transition:fly={{ y: 20, duration: 200 }} on:click={() => scrollToBottom(true)}>
                 <div class="icon-svg">{@html Icons.ArrowDown}</div>
             </button> 
         {/if}
@@ -1600,6 +1679,10 @@
                 style="width: 100%; font-size: 16px;"
             ></textarea>
         </div>
+                <label class="btn-icon" title="Сделать фото с камеры" style="padding: 6px; color: #9CA3AF; cursor: pointer;">
+            <span style="font-size: 19px;">📸</span>
+            <input type="file" accept="image/*" capture="environment" style="display: none;" on:change={handleQuickCameraPhoto} />
+        </label>
         <button type="button" class="btn-icon" on:click={onSelectFiles} title="Прикрепить фото или файл" style="padding: 6px; color: #9CA3AF;">
             <div class="icon-svg">{@html Icons.Paperclip}</div>
         </button>
@@ -1702,6 +1785,28 @@
                     {/each}
                 </div>
             {/if}
+        </div>
+    </div>
+{/if}
+
+
+{#if quoteModalMsg}
+    <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+        <div style="background: #1A1C20; border: 1px solid rgba(59,130,246,0.35); border-radius: 24px; padding: 20px; width: 100%; max-width: 380px;">
+            <h3 style="margin: 0 0 8px; color: #60A5FA; font-size: 16px;">✂️ Выделите нужный отрывок</h3>
+            <p style="font-size: 12px; color: #9CA3AF; margin: 0 0 10px;">Выделите часть текста пальцем, чтобы скопировать или вставить цитатой:</p>
+            <textarea id="hydra-quote-ta" readonly rows="5" style="width: 100%; padding: 12px; border-radius: 14px; background: #121316; color: #E5E7EB; border: 1px solid rgba(255,255,255,0.1); font-size: 14px; box-sizing: border-box; user-select: text; -webkit-user-select: text;">{quoteModalMsg.Content}</textarea>
+            <div style="display: flex; gap: 8px; margin-top: 12px;">
+                <button type="button" on:click={() => quoteModalMsg = null} style="flex: 1; padding: 10px; border-radius: 100px; background: #28292D; color: #fff; border: none;">Закрыть</button>
+                <button type="button" on:click={() => {
+                    const ta = document.getElementById('hydra-quote-ta');
+                    const sel = ta ? ta.value.substring(ta.selectionStart, ta.selectionEnd).trim() : '';
+                    const textToUse = sel || quoteModalMsg.Content;
+                    newMessage = (newMessage ? newMessage + '\n' : '') + '> ' + textToUse + '\n';
+                    quoteModalMsg = null;
+                    if (textarea) textarea.focus();
+                }} style="flex: 1; padding: 10px; border-radius: 100px; background: #1D4ED8; color: #fff; border: none; font-weight: 800;">💬 Вставить цитатой</button>
+            </div>
         </div>
     </div>
 {/if}
