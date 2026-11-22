@@ -72,7 +72,6 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
 
     inner class HydraNativeBridge {
             @JavascriptInterface
-            @JavascriptInterface
         fun setCallActive(active: Boolean) {
             isCallActive = active
         }
