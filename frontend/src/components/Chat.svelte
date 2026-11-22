@@ -479,7 +479,27 @@
             localStorage.setItem('hydra_pinned_msg_' + selectedContact.ID, JSON.stringify(pinnedChatMsg));
         };
         window.__triggerHydraCallFromProfile = () => startHydraCall();
-        window.__onHydraCallNotifAction = (senderNick, action) => {
+        
+    $: if (selectedContact && typeof window !== 'undefined' && window.__pendingHydraCallAction) {
+        const pAct = window.__pendingHydraCallAction;
+        if (Date.now() - pAct.ts < 15000) {
+            window.__pendingHydraCallAction = null;
+            const lastSig = window.__lastIncomingCallOffer;
+            if (lastSig && lastSig.content && Date.now() - lastSig.ts < 45000 && !incomingCallOffer) {
+                incomingCallOffer = String(lastSig.content).slice('[HYDRA_CALL_RING]:'.length);
+                activeCallModal = true;
+                callConnected = false;
+            }
+            setTimeout(() => {
+                if (pAct.action === 'accept_call') acceptIncomingHydraCall();
+                else if (pAct.action === 'decline_call') endHydraCall(true);
+            }, 150);
+        } else {
+            window.__pendingHydraCallAction = null;
+        }
+    }
+    
+        window.__onHydraChatCallAction = (senderNick, action) => {
             if (action === 'accept_call') {
                 acceptIncomingHydraCall();
             } else if (action === 'decline_call') {

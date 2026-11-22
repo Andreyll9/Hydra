@@ -83,8 +83,8 @@
 
 
     function selectProfileForLogin(p) {
-        setTimeout(() => { if (typeof triggerBiometricUnlock === 'function') triggerBiometricUnlock(); }, 300);
         selectedProfile = p;
+        if (p.use_pin) setTimeout(() => { if (typeof triggerBiometricUnlock === 'function') triggerBiometricUnlock(); }, 100);
         if (p.use_pin) {
             authScreen = 'pin';
             pinInput = '';
@@ -333,10 +333,15 @@
         }
     }
 
-    async function triggerBiometricUnlock() {
+    function triggerBiometricUnlock() {
         const profId = selectedProfile?.id || (allProfiles[0]?.id) || 'default';
-        await runStartupDiagnostics(profId);
         if (localStorage.getItem('hydra_biometric') === '0') return;
+        if (window.HydraNative && typeof window.HydraNative.checkSystemStatus === 'function') {
+            try {
+                const parsed = JSON.parse(window.HydraNative.checkSystemStatus(profId));
+                systemPermStatus = { ...systemPermStatus, ...parsed };
+            } catch (e) {}
+        }
         if (window.HydraNative && typeof window.HydraNative.authenticateBiometric === 'function') {
             if (!systemPermStatus.biometricBound) {
                 bioPromptStatus = 'ℹ️ Отпечаток ещё не привязан (введите ПИН и привяжите его в Настройки → Приватность)';
@@ -345,6 +350,7 @@
             bioPromptStatus = '👆 Приложите палец к сканеру...';
             window.HydraNative.authenticateBiometric(profId);
         }
+        runStartupDiagnostics(profId);
     }
 
     setTimeout(() => runStartupDiagnostics('default'), 150);

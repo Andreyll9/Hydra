@@ -291,7 +291,7 @@ func (s *Service) SendAttachmentMessage(destination, chatID, content string, att
 func (s *Service) SendAttachmentMessageWithID(destination, chatID, messageID, content, replyToID string, attachments []*pb.Attachment) error {
 	payload, err := proto.Marshal(&pb.TextMessage{
 		ChatId:      chatID,
-		Content:     content,
+		Content:     s.identity.EncryptForPeer(destination, content),
 		Timestamp:   time.Now().UnixMilli(),
 		MessageId:   messageID,
 		Attachments: attachments,
@@ -360,7 +360,10 @@ func (s *Service) SendProfileUpdate(destination, nickname, bio string, avatar []
 
 func (s *Service) handlePacket(packet *pb.Packet, remoteAddr string) {
 	senderPubKey := string(packet.SenderPubKey)
-	if len(packet.Payload) > 0 && len(packet.Signature) > 0 {
+	if len(packet.Payload) > 0 {
+		if len(packet.Signature) == 0 {
+			return
+		}
 		if valid, err := identity.VerifySignatureBase64(senderPubKey, packet.Payload, packet.Signature); err != nil || !valid {
 			return
 		}

@@ -94,6 +94,19 @@
     let showFolderRemList = false;
 
     if (typeof window !== 'undefined') {
+                window.__onHydraCallNotifAction = async (senderNick, action) => {
+            if (typeof window.__onHydraChatCallAction === 'function') {
+                window.__onHydraChatCallAction(senderNick, action);
+                return;
+            }
+            const list = (contacts && contacts.length > 0) ? contacts : (await AppActions.GetContacts().catch(() => []));
+            const target = (list || []).find(c => (c.Nickname || '').toLowerCase().includes((senderNick || '').toLowerCase()));
+            if (target) {
+                window.__pendingHydraCallAction = { senderNick, action, ts: Date.now() };
+                selectContact(target);
+            }
+        };
+
         window.__onHydraDirectReply = async (senderNick, replyText) => {
             // Фиксируем ответ из уведомления: на 1 час показываем точное время онлайна, затем снова 24ч
             localStorage.setItem('hydra_direct_reply_ts', String(Date.now()));
@@ -283,6 +296,14 @@
                     // Data is same, DO NOT touch selectedContact to avoid re-render
                 }
             }
+        }
+    });
+
+        EventsOn("hydra_call_signal", (sig) => {
+        if (sig && sig.content && String(sig.content).startsWith('[HYDRA_CALL_RING]:')) {
+            window.__lastIncomingCallOffer = { ...sig, ts: Date.now() };
+        } else if (sig && sig.content && (String(sig.content).startsWith('[HYDRA_CALL_END]:') || String(sig.content).startsWith('[HYDRA_CALL_MISSED]:'))) {
+            window.__lastIncomingCallOffer = null;
         }
     });
 

@@ -57,10 +57,16 @@ func (a *AppCore) GetContacts() ([]*ContactInfo, error) {
 			updated = true
 		}
 		if (len(c.Nickname) > 28 && !strings.Contains(c.Nickname, " ")) || strings.HasPrefix(c.Nickname, "Unknown") || strings.HasPrefix(c.Nickname, "Контакт ") {
-			if resolved := resolveNickByPubFromVPS(c.I2PAddress); resolved != "" {
-				c.Nickname = resolved
-				updated = true
-			}
+			cCopy := *c
+			go func(cc core.Contact) {
+				if resolved := resolveNickByPubFromVPS(cc.I2PAddress); resolved != "" {
+					cc.Nickname = resolved
+					if a.Repo != nil {
+						_ = a.Repo.SaveContact(a.Ctx, &cc)
+						a.Emitter.Emit("contact_updated")
+					}
+				}
+			}(cCopy)
 		}
 		if updated {
 			_ = a.Repo.SaveContact(a.Ctx, c)
