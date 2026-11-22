@@ -567,10 +567,6 @@
     let recordingSeconds = 0;
     let recordingInterval = null;
     let activeCallModal = false;
-        callMinimized = false;
-        if (window.HydraNative?.setCallActive) window.HydraNative.setCallActive(false);
-        window.__hydraActiveCall = null;
-        window.dispatchEvent(new Event('hydra-call-banner'));
 
     let callMinimized = false;
     let emojiTab = 'emoji'; // 'emoji' | 'stickers'
