@@ -38,278 +38,216 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply Full Audit Fixes (v3.1.0)
+      - name: Apply Security, Instant Biometric, Global Call Notif & Async Contacts Fixes (v3.1.1)
         run: |
-          cat << 'PYEOF' > audit_v310.py
+          cat << 'PYEOF' > fix_v311.py
           import os, re
 
-          # 1. mobile/mobile.go: закрываем CORS строго на localhost
-          mob_path = "mobile/mobile.go"
-          if os.path.exists(mob_path):
-              with open(mob_path, "r", encoding="utf-8") as f:
-                  mb = f.read()
-              mb = mb.replace('w.Header().Set("Access-Control-Allow-Origin", "*")', 'w.Header().Set("Access-Control-Allow-Origin", "http://127.0.0.1:8080")')
-              with open(mob_path, "w", encoding="utf-8") as f:
-                  f.write(mb)
-              print("[OK] 1. mobile.go: CORS ограничен до 127.0.0.1:8080")
+          # 1. Auth.svelte: мгновенный запуск биометрии без ожидания пинга сервера
+          auth_path = "frontend/src/components/Auth.svelte"
+          if os.path.exists(auth_path):
+              with open(auth_path, "r", encoding="utf-8") as f:
+                  au = f.read()
 
-          # 2. MainActivity.kt: защита от сбоя таймера при BiometricPrompt + выбор фото с камеры
-          kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
-          if os.path.exists(kt_path):
-              with open(kt_path, "r", encoding="utf-8") as f:
-                  kt = f.read()
-              if "private var isBiometricPromptOpen = false" not in kt:
-                  kt = kt.replace(
-                      "private var isCallActive = false",
-                      "private var isCallActive = false\n    private var isBiometricPromptOpen = false"
-                  )
-                  kt = kt.replace(
-                      'pushNativeLog("BIO-HW", "Запрос аппаратного сканера отпечатка для ВХОДА',
-                      'isBiometricPromptOpen = true\n                pushNativeLog("BIO-HW", "Запрос аппаратного сканера отпечатка для ВХОДА'
-                  )
-                  kt = kt.replace(
-                      'pushNativeLog("BIO-OK", "Отпечаток пальца подтверждён аппаратно!',
-                      'isBiometricPromptOpen = false\n                            pushNativeLog("BIO-OK", "Отпечаток пальца подтверждён аппаратно!'
-                  )
-                  kt = kt.replace(
-                      'pushNativeLog("BIO-ERR", "Отмена/ошибка биометрии при входе',
-                      'isBiometricPromptOpen = false\n                            pushNativeLog("BIO-ERR", "Отмена/ошибка биометрии при входе'
-                  )
-                  kt = kt.replace(
-                      "if (!isOpeningSystemPicker && !isCallActive) {",
-                      "if (!isOpeningSystemPicker && !isCallActive && !isBiometricPromptOpen) {"
-                  )
-              with open(kt_path, "w", encoding="utf-8") as f:
-                  f.write(kt)
-              print("[OK] 2. MainActivity.kt: защищён таймер 30с при вызове BiometricPrompt")
+              old_bio = """    async function triggerBiometricUnlock() {
+                  const profId = selectedProfile?.id || (allProfiles[0]?.id) || 'default';
+                  await runStartupDiagnostics(profId);
+                  if (localStorage.getItem('hydra_biometric') === '0') return;
+                  if (window.HydraNative && typeof window.HydraNative.authenticateBiometric === 'function') {
+                      if (!systemPermStatus.biometricBound) {
+                          bioPromptStatus = 'ℹ️ Отпечаток ещё не привязан (введите ПИН и привяжите его в Настройки → Приватность)';
+                          return;
+                      }
+                      bioPromptStatus = '👆 Приложите палец к сканеру...';
+                      window.HydraNative.authenticateBiometric(profId);
+                  }
+              }"""
 
-          # 3. App.svelte:
-          # - сбрасываем showContactProfile = false при выборе любого чата
-          # - добавляем пункты "Выбрать несколько" и "Выделить отрывок" в messageContextMenu
-          # - чистим версию до 3.1.0-hydra
+              new_bio = """    function triggerBiometricUnlock() {
+                  const profId = selectedProfile?.id || (allProfiles[0]?.id) || 'default';
+                  if (localStorage.getItem('hydra_biometric') === '0') return;
+                  if (window.HydraNative && typeof window.HydraNative.checkSystemStatus === 'function') {
+                      try {
+                          const parsed = JSON.parse(window.HydraNative.checkSystemStatus(profId));
+                          systemPermStatus = { ...systemPermStatus, ...parsed };
+                      } catch (e) {}
+                  }
+                  if (window.HydraNative && typeof window.HydraNative.authenticateBiometric === 'function') {
+                      if (!systemPermStatus.biometricBound) {
+                          bioPromptStatus = 'ℹ️ Отпечаток ещё не привязан (введите ПИН и привяжите его в Настройки → Приватность)';
+                          return;
+                      }
+                      bioPromptStatus = '👆 Приложите палец к сканеру...';
+                      window.HydraNative.authenticateBiometric(profId);
+                  }
+                  runStartupDiagnostics(profId);
+              }"""
+
+              if old_bio in au:
+                  au = au.replace(old_bio, new_bio, 1)
+              else:
+                  au = re.sub(
+                      r"async function triggerBiometricUnlock\(\)\s*\{[\s\S]*?authenticateBiometric\(profId\);\s*\}\s*\}",
+                      new_bio.strip(),
+                      au,
+                      count=1
+                  )
+
+              # Запускаем биометрию сразу после выбора PIN-профиля (100 мс вместо 300 мс)
+              au = au.replace(
+                  "setTimeout(() => { if (typeof triggerBiometricUnlock === 'function') triggerBiometricUnlock(); }, 300);\n        selectedProfile = p;",
+                  "selectedProfile = p;\n        if (p.use_pin) setTimeout(() => { if (typeof triggerBiometricUnlock === 'function') triggerBiometricUnlock(); }, 100);"
+              )
+
+              with open(auth_path, "w", encoding="utf-8") as f:
+                  f.write(au)
+              print("[OK] 1. Auth.svelte: биометрия запускается мгновенно без ожидания сети")
+
+          # 2. internal/network/messenger/messenger.go: обязательная подпись Ed25519 + E2EE подписей вложений
+          ms_path = "internal/network/messenger/messenger.go"
+          if os.path.exists(ms_path):
+              with open(ms_path, "r", encoding="utf-8") as f:
+                  ms = f.read()
+
+              old_sig = """	if len(packet.Payload) > 0 && len(packet.Signature) > 0 {
+          		if valid, err := identity.VerifySignatureBase64(senderPubKey, packet.Payload, packet.Signature); err != nil || !valid {
+          			return
+          		}
+          	}"""
+
+              new_sig = """	if len(packet.Payload) > 0 {
+          		if len(packet.Signature) == 0 {
+          			return
+          		}
+          		if valid, err := identity.VerifySignatureBase64(senderPubKey, packet.Payload, packet.Signature); err != nil || !valid {
+          			return
+          		}
+          	}"""
+
+              ms = ms.replace(old_sig, new_sig, 1)
+              ms = ms.replace(
+                  "Content:     content,\n\t\tTimestamp:   time.Now().UnixMilli(),\n\t\tMessageId:   messageID,\n\t\tAttachments: attachments,",
+                  "Content:     s.identity.EncryptForPeer(destination, content),\n\t\tTimestamp:   time.Now().UnixMilli(),\n\t\tMessageId:   messageID,\n\t\tAttachments: attachments,"
+              )
+
+              with open(ms_path, "w", encoding="utf-8") as f:
+                  f.write(ms)
+              print("[OK] 2. messenger.go: проверка подписи Ed25519 стала обязательной, подписи вложений зашифрованы")
+
+          # 3. internal/appcore/contacts.go: асинхронный резолв Unknown-ников без блокировки GetContacts
+          ct_path = "internal/appcore/contacts.go"
+          if os.path.exists(ct_path):
+              with open(ct_path, "r", encoding="utf-8") as f:
+                  ct = f.read()
+
+              old_res = """		if (len(c.Nickname) > 28 && !strings.Contains(c.Nickname, " ")) || strings.HasPrefix(c.Nickname, "Unknown") || strings.HasPrefix(c.Nickname, "Контакт ") {
+          			if resolved := resolveNickByPubFromVPS(c.I2PAddress); resolved != "" {
+          				c.Nickname = resolved
+          				updated = true
+          			}
+          		}"""
+
+              new_res = """		if (len(c.Nickname) > 28 && !strings.Contains(c.Nickname, " ")) || strings.HasPrefix(c.Nickname, "Unknown") || strings.HasPrefix(c.Nickname, "Контакт ") {
+          			cCopy := *c
+          			go func(cc core.Contact) {
+          				if resolved := resolveNickByPubFromVPS(cc.I2PAddress); resolved != "" {
+          					cc.Nickname = resolved
+          					if a.Repo != nil {
+          						_ = a.Repo.SaveContact(a.Ctx, &cc)
+          						a.Emitter.Emit("contact_updated")
+          					}
+          				}
+          			}(cCopy)
+          		}"""
+
+              ct = ct.replace(old_res, new_res, 1)
+              with open(ct_path, "w", encoding="utf-8") as f:
+                  f.write(ct)
+              print("[OK] 3. contacts.go: резолв ников переведён в фоновую горутину")
+
+          # 4. App.svelte + Chat.svelte: глобальный приём/отклонение звонка из уведомления с любого экрана
           app_path = "frontend/src/App.svelte"
           if os.path.exists(app_path):
               with open(app_path, "r", encoding="utf-8") as f:
                   ap = f.read()
 
-              ap = ap.replace(
-                  "selectedContact = contact;\n      showSettings = false;",
-                  "selectedContact = contact;\n      showSettings = false;\n      showContactProfile = false;"
-              )
-
-              extra_menu_items = """            {#if messageContextMenu.message?.Content && !messageContextMenu.message.Content.startsWith('[HYDRA_')}
-                          <div class="context-item" on:click={() => {
-                              if (window.__openHydraQuoteModal) window.__openHydraQuoteModal(messageContextMenu.message);
-                              messageContextMenu.show = false;
-                          }}>✂️ Выделить / цитировать отрывок</div>
-                      {/if}
-                      <div class="context-item" on:click={() => {
-                          if (window.__toggleHydraSelectMode) window.__toggleHydraSelectMode(messageContextMenu.message);
-                          messageContextMenu.show = false;
-                      }}>☑️ Выбрать несколько</div>"""
-
-              if "__openHydraQuoteModal" not in ap:
+              global_call_handler = """        window.__onHydraCallNotifAction = async (senderNick, action) => {
+                      if (typeof window.__onHydraChatCallAction === 'function') {
+                          window.__onHydraChatCallAction(senderNick, action);
+                          return;
+                      }
+                      const list = (contacts && contacts.length > 0) ? contacts : (await AppActions.GetContacts().catch(() => []));
+                      const target = (list || []).find(c => (c.Nickname || '').toLowerCase().includes((senderNick || '').toLowerCase()));
+                      if (target) {
+                          window.__pendingHydraCallAction = { senderNick, action, ts: Date.now() };
+                          selectContact(target);
+                      }
+                  };
+          """
+              if "__onHydraCallNotifAction" not in ap:
                   ap = ap.replace(
-                      ">Копировать текст</div>\n            {/if}",
-                      ">Копировать текст</div>\n            {/if}\n" + extra_menu_items,
+                      "window.__onHydraDirectReply = async",
+                      global_call_handler + "\n        window.__onHydraDirectReply = async",
                       1
                   )
 
+              global_sig_listener = """    EventsOn("hydra_call_signal", (sig) => {
+                  if (sig && sig.content && String(sig.content).startsWith('[HYDRA_CALL_RING]:')) {
+                      window.__lastIncomingCallOffer = { ...sig, ts: Date.now() };
+                  } else if (sig && sig.content && (String(sig.content).startsWith('[HYDRA_CALL_END]:') || String(sig.content).startsWith('[HYDRA_CALL_MISSED]:'))) {
+                      window.__lastIncomingCallOffer = null;
+                  }
+              });
+
+              EventsOn("unread_count","""
+              if "__lastIncomingCallOffer" not in ap:
+                  ap = ap.replace('EventsOn("unread_count",', global_sig_listener, 1)
+
               with open(app_path, "w", encoding="utf-8") as f:
                   f.write(ap)
-              print("[OK] 3. App.svelte: сброс профиля группы и пункты выделения/цитирования добавлены")
+              print("[OK] 4a. App.svelte: добавлен глобальный перехват звонков и кнопок уведомлений")
 
-          # 4. Chat.svelte:
-          # - выносим <audio bind:this={remoteAudioEl}> НАРУЖУ из {#if activeCallModal && !callMinimized}
-          # - чиним вкладки стикерпаков (visibleStickers + кнопки паков)
-          # - сохраняем статус прочтения (синий круг) в localStorage
-          # - чиним наезд кнопки ↓ на крестик ✕
-          # - добавляем камеру (фото), мультивыбор сообщений и окно выделения отрывка
           ch_path = "frontend/src/components/Chat.svelte"
           if os.path.exists(ch_path):
               with open(ch_path, "r", encoding="utf-8") as f:
                   ch = f.read()
 
-              # A. Выносим <audio> наружу, чтобы звук не умирал при сворачивании звонка
-              ch = ch.replace('<audio bind:this={remoteAudioEl} autoplay></audio>', '')
-              if 'bind:this={remoteAudioEl}' not in ch:
+              ch = ch.replace("window.__onHydraCallNotifAction =", "window.__onHydraChatCallAction =")
+
+              pending_call_check = """
+              $: if (selectedContact && typeof window !== 'undefined' && window.__pendingHydraCallAction) {
+                  const pAct = window.__pendingHydraCallAction;
+                  if (Date.now() - pAct.ts < 15000) {
+                      window.__pendingHydraCallAction = null;
+                      const lastSig = window.__lastIncomingCallOffer;
+                      if (lastSig && lastSig.content && Date.now() - lastSig.ts < 45000 && !incomingCallOffer) {
+                          incomingCallOffer = String(lastSig.content).slice('[HYDRA_CALL_RING]:'.length);
+                          activeCallModal = true;
+                          callConnected = false;
+                      }
+                      setTimeout(() => {
+                          if (pAct.action === 'accept_call') acceptIncomingHydraCall();
+                          else if (pAct.action === 'decline_call') endHydraCall(true);
+                      }, 150);
+                  } else {
+                      window.__pendingHydraCallAction = null;
+                  }
+              }
+              """
+              if "__pendingHydraCallAction" not in ch:
                   ch = ch.replace(
-                      '<div class="chat-area animate-fade-in" class:mobile={isMobile}>',
-                      '<div class="chat-area animate-fade-in" class:mobile={isMobile}>\n    <audio bind:this={remoteAudioEl} autoplay playsinline style="display:none;"></audio>',
+                      "window.__onHydraChatCallAction =",
+                      pending_call_check + "\n        window.__onHydraChatCallAction =",
                       1
                   )
 
-              # B. Персистентный статус прочтения (сплошной синий круг)
-              read_persist_js = """
-              let peerReadTimestamps = {};
-              try { peerReadTimestamps = JSON.parse(localStorage.getItem('hydra_peer_read_ts') || '{}'); } catch (e) { peerReadTimestamps = {}; }
-              $: currentPeerReadTs = selectedContact ? (peerReadTimestamps[selectedContact.ChatID] || peerReadTimestamps[selectedContact.ID] || 0) : 0;
-
-              let isSelectMode = false;
-              let selectedMsgIds = [];
-              let quoteModalMsg = null;
-
-              function toggleMsgSelect(msgId) {
-                  if (selectedMsgIds.includes(msgId)) {
-                      selectedMsgIds = selectedMsgIds.filter(id => id !== msgId);
-                  } else {
-                      selectedMsgIds = [...selectedMsgIds, msgId];
-                  }
-                  if (selectedMsgIds.length === 0) isSelectMode = false;
-              }
-
-              function copySelectedMessages() {
-                  const texts = (messages || [])
-                      .filter(m => selectedMsgIds.includes(m.ID) && m.Content && !m.Content.startsWith('[HYDRA_'))
-                      .map(m => m.Content);
-                  if (texts.length > 0) {
-                      AppActions.ClipboardSet(texts.join('\\n\\n'));
-                      alert('✅ Скопировано сообщений: ' + texts.length);
-                  }
-                  isSelectMode = false;
-                  selectedMsgIds = [];
-              }
-
-              function handleQuickCameraPhoto(e) {
-                  const file = e.target.files?.[0];
-                  if (!file || !selectedContact) return;
-                  const reader = new FileReader();
-                  reader.onload = async () => {
-                      try {
-                          const tmpPath = await AppActions.SaveTempImage(reader.result, 'camera_' + Date.now() + '.jpg');
-                          if (tmpPath) {
-                              await AppActions.SendFileMessage(selectedContact.ID, '', '', [tmpPath], false);
-                              dispatch('refresh');
-                          }
-                      } catch (err) {
-                          alert('Ошибка отправки фото: ' + err);
-                      }
-                  };
-                  reader.readAsDataURL(file);
-                  e.target.value = '';
-              }
-
-              if (typeof window !== 'undefined') {
-                  window.__toggleHydraSelectMode = (msg) => {
-                      isSelectMode = true;
-                      if (msg && msg.ID && !selectedMsgIds.includes(msg.ID)) {
-                          selectedMsgIds = [...selectedMsgIds, msg.ID];
-                      }
-                  };
-                  window.__openHydraQuoteModal = (msg) => {
-                      quoteModalMsg = msg;
-                  };
-              }
-              """
-              if "let peerReadTimestamps =" not in ch:
-                  ch = ch.replace("let callMinimized = false;", "let callMinimized = false;\n" + read_persist_js, 1)
-
-              ch = ch.replace(
-                  "EventsOn('remote_chat_read', (chatId) => {\n        if (selectedContact && (selectedContact.ChatID === chatId || selectedContact.ID === chatId)) {\n            messages = (messages || []).map(m => m.IsOutgoing ? { ...m, Status: 'read' } : m);\n        }\n    });",
-                  """EventsOn('remote_chat_read', (chatId) => {
-                  peerReadTimestamps[chatId] = Date.now();
-                  peerReadTimestamps = { ...peerReadTimestamps };
-                  localStorage.setItem('hydra_peer_read_ts', JSON.stringify(peerReadTimestamps));
-                  if (selectedContact && (selectedContact.ChatID === chatId || selectedContact.ID === chatId)) {
-                      messages = (messages || []).map(m => m.IsOutgoing ? { ...m, Status: 'read' } : m);
-                  }
-              });"""
-              )
-
-              ch = ch.replace(
-                  "{#if msg.Status === 'read'}",
-                  "{#if msg.Status === 'read' || (currentPeerReadTs > 0 && msg.Timestamp <= currentPeerReadTs)}"
-              )
-
-              # C. Клик по сообщению в режиме мультивыбора + чекбокс
-              ch = ch.replace(
-                  "if (isMobile) {\n                        onShowMessageMenu(e, msg);\n                    }",
-                  "if (isSelectMode) {\n                        toggleMsgSelect(msg.ID);\n                        return;\n                    }\n                    if (isMobile) {\n                        onShowMessageMenu(e, msg);\n                    }"
-              )
-
-              # Панель мультивыбора сверху чата
-              select_bar = """{#if isSelectMode}
-              <div style="background: #1E3A8A; color: #fff; padding: 8px 14px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 700; flex-shrink: 0;">
-                  <span>☑️ Выбрано: {selectedMsgIds.length}</span>
-                  <div style="display: flex; gap: 8px;">
-                      <button type="button" on:click={copySelectedMessages} style="background: #10B981; color: #fff; border: none; border-radius: 100px; padding: 5px 12px; font-size: 12px; font-weight: 800;">📋 Копировать</button>
-                      <button type="button" on:click={() => { isSelectMode = false; selectedMsgIds = []; }} style="background: rgba(255,255,255,0.18); color: #fff; border: none; border-radius: 100px; padding: 5px 10px; font-size: 12px;">✕</button>
-                  </div>
-              </div>
-          {/if}"""
-              if "{#if isSelectMode}" not in ch:
-                  ch = ch.replace("{#if pinnedChatMsg}", select_bar + "\n    {#if pinnedChatMsg}", 1)
-
-              # Подсветка выбранных сообщений
-              ch = ch.replace(
-                  'class:outgoing={msg.IsOutgoing}\n                on:touchstart',
-                  'class:outgoing={msg.IsOutgoing}\n                style={selectedMsgIds.includes(msg.ID) ? "background: rgba(59,130,246,0.18); border-radius: 14px;" : ""}\n                on:touchstart'
-              )
-
-              # D. Вкладки стикерпаков над сеткой (чиним отступы!)
-              old_sticker_grid = """<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 180px; overflow-y: auto;">
-                            {#each customStickers as stUrl}"""
-              new_sticker_grid = """{#if stickerPacks.length > 0}
-                            <div style="display: flex; gap: 6px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 6px;">
-                                {#each stickerPacks as pack, pIdx}
-                                    <button type="button" on:click={() => activeStickerPackIdx = pIdx} style="padding: 4px 10px; border-radius: 100px; border: none; font-size: 11px; font-weight: 700; white-space: nowrap; cursor: pointer; background: {activeStickerPackIdx === pIdx ? '#2563EB' : '#28292D'}; color: #fff;">
-                                        {pack.title} ({pack.stickers.length})
-                                    </button>
-                                {/each}
-                            </div>
-                        {/if}
-                        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 180px; overflow-y: auto;">
-                            {#each visibleStickers as stUrl}"""
-              ch = ch.replace(old_sticker_grid, new_sticker_grid)
-
-              # E. Кнопка камеры (сделать фото) рядом со скрепкой
-              cam_btn = """        <label class="btn-icon" title="Сделать фото с камеры" style="padding: 6px; color: #9CA3AF; cursor: pointer;">
-                      <span style="font-size: 19px;">📸</span>
-                      <input type="file" accept="image/*" capture="environment" style="display: none;" on:change={handleQuickCameraPhoto} />
-                  </label>
-                  <button type="button" class="btn-icon" on:click={onSelectFiles}"""
-              if 'capture="environment"' not in ch:
-                  ch = ch.replace('<button type="button" class="btn-icon" on:click={onSelectFiles}', cam_btn, 1)
-
-              # F. Фикс перекрытия кнопки ↓ и крестика ✕ ответа
-              ch = ch.replace(
-                  'class="btn-scroll-bottom"',
-                  'class="btn-scroll-bottom" style="bottom: {replyingTo ? \'145px\' : \'92px\'}; z-index: 35;"'
-              )
-
-              # G. Модалка для выделения и цитирования отрывка текста
-              quote_modal_html = """
-          {#if quoteModalMsg}
-              <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
-                  <div style="background: #1A1C20; border: 1px solid rgba(59,130,246,0.35); border-radius: 24px; padding: 20px; width: 100%; max-width: 380px;">
-                      <h3 style="margin: 0 0 8px; color: #60A5FA; font-size: 16px;">✂️ Выделите нужный отрывок</h3>
-                      <p style="font-size: 12px; color: #9CA3AF; margin: 0 0 10px;">Выделите часть текста пальцем, чтобы скопировать или вставить цитатой:</p>
-                      <textarea id="hydra-quote-ta" readonly rows="5" style="width: 100%; padding: 12px; border-radius: 14px; background: #121316; color: #E5E7EB; border: 1px solid rgba(255,255,255,0.1); font-size: 14px; box-sizing: border-box; user-select: text; -webkit-user-select: text;">{quoteModalMsg.Content}</textarea>
-                      <div style="display: flex; gap: 8px; margin-top: 12px;">
-                          <button type="button" on:click={() => quoteModalMsg = null} style="flex: 1; padding: 10px; border-radius: 100px; background: #28292D; color: #fff; border: none;">Закрыть</button>
-                          <button type="button" on:click={() => {
-                              const ta = document.getElementById('hydra-quote-ta');
-                              const sel = ta ? ta.value.substring(ta.selectionStart, ta.selectionEnd).trim() : '';
-                              const textToUse = sel || quoteModalMsg.Content;
-                              newMessage = (newMessage ? newMessage + '\\n' : '') + '> ' + textToUse + '\\n';
-                              quoteModalMsg = null;
-                              if (textarea) textarea.focus();
-                          }} style="flex: 1; padding: 10px; border-radius: 100px; background: #1D4ED8; color: #fff; border: none; font-weight: 800;">💬 Вставить цитатой</button>
-                      </div>
-                  </div>
-              </div>
-          {/if}
-          """
-              if "quoteModalMsg" in ch and "hydra-quote-ta" not in ch:
-                  ch = ch.replace("<style>", quote_modal_html + "\n<style>", 1)
-
               with open(ch_path, "w", encoding="utf-8") as f:
                   f.write(ch)
-              print("[OK] 4. Chat.svelte: звук звонка, вкладки стикеров, синий круг, камера, мультивыбор и цитирование готовы!")
+              print("[OK] 4b. Chat.svelte: привязан автоприём отложенного звонка из шторки уведомлений")
           PYEOF
-          python3 audit_v310.py
-          rm -f audit_v310.py
-          gofmt -w mobile/
+          python3 fix_v311.py
+          rm -f fix_v311.py
+          gofmt -w internal/
 
       - name: Install jsQR & Build Frontend (Svelte)
         working-directory: ./frontend
@@ -318,13 +256,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Hydra v3.1.0 Audit Fixes
+      - name: Commit Hydra v3.1.1 Fixes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Hydra v3.1.0: fix call audio on minimize, sticker pack tabs, persistent read blue dot, camera photo, multi-select, quote snippet & CORS hardening [skip ci]"
+            git commit -m "Hydra v3.1.1: instant biometric unlock, mandatory Ed25519 WS verify, global call notification actions & async contact nick resolve [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
@@ -361,5 +299,5 @@ jobs:
       - name: Upload Signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: Hydra-v3.1.0-Signed-APK
+          name: Hydra-v3.1.1-Signed-APK
           path: android/app/build/outputs/apk/release/*.apk
