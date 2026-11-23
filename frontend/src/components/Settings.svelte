@@ -750,7 +750,7 @@
                                 <img src="/icon.png" alt="Hydra" style="width: 100%; height: 100%; object-fit: contain; border-radius: 50%;" />
                             </div>
                             <h2 class="about-title">Hydra</h2>
-                            <p class="about-version">Version {aboutInfo.app_version || '3.0.0-hydra'}</p>
+                            <p class="about-version">Version {aboutInfo.app_version || '3.2.0-hydra'}</p>
                         </div>
 
                         <div class="info-list">
@@ -1021,8 +1021,8 @@
     /* Redesigned About Section */
     .about-branding { text-align: center; margin-bottom: 40px; }
     .about-logo { 
-        width: 100px; height: 100px; background: linear-gradient(135deg, #1D4ED8 0%, #60A5FA 100%); 
-        border-radius: 30px; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;
+        width: 100px; height: 100px; background: transparent; overflow: hidden; 
+        border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;
         box-shadow: 0 15px 35px rgba(29, 78, 216, 0.3); color: white;
     }
     .icon-svg-lg { width: 50px; height: 50px; display: flex; align-items: center; justify-content: center; }

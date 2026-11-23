@@ -109,6 +109,11 @@
     // === ЭТАП 4: СТОРИС НА 24 ЧАСА (ФОТО + ЖИВОЕ ВИДЕО С КАМЕРЫ) ===
     let hydraStories = [];
     let activeStoryModal = null;
+    let storiesCollapsed = localStorage.getItem('hydra_stories_collapsed') === '1';
+    function toggleStoriesBar() {
+        storiesCollapsed = !storiesCollapsed;
+        localStorage.setItem('hydra_stories_collapsed', storiesCollapsed ? '1' : '0');
+    }
     let showCreateStoryModal = false;
     let newStoryText = '';
     let newStoryImage = '';
@@ -327,14 +332,18 @@
     let storyIsVertical = false;
 
     function deleteCurrentStory(stId) {
+        const target = hydraStories.find(s => s.id === stId);
+        const isMine = target && target.author === 'Моя история';
         hydraStories = hydraStories.filter(s => s.id !== stId);
         localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
         activeStoryModal = null;
-        (contacts || []).forEach(c => {
-            if (c && c.ID && !c.IsFavorites && !String(c.Nickname || '').startsWith('👥') && !String(c.Nickname || '').startsWith('📢')) {
-                AppActions.SendText(c.ID, '[HYDRA_STORY_DEL]:' + stId, '').catch(() => {});
-            }
-        });
+        if (isMine) {
+            (contacts || []).forEach(c => {
+                if (c && c.ID && !c.IsFavorites && !String(c.Nickname || '').startsWith('👥') && !String(c.Nickname || '').startsWith('📢')) {
+                    AppActions.SendText(c.ID, '[HYDRA_STORY_DEL]:' + stId, '').catch(() => {});
+                }
+            });
+        }
     }
     
     function openHydraStory(st) {
@@ -346,6 +355,8 @@
             if (!st.openViews) st.openViews = [];
             if (!st.openViews.includes('Вы (Открыто)')) st.openViews.push('Вы (Открыто)');
         }
+        localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
+        st.seen = true;
         localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
         activeStoryModal = st;
     }
@@ -656,7 +667,23 @@
 
         <!-- Mobile Contacts List -->
         
-        <!-- Мобильная лента Сторис (24 часа) -->
+        <!-- Мобильная лента Сторис (сворачиваемая) -->
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 16px 2px; flex-shrink: 0;">
+            <span style="font-size: 11px; color: #9CA3AF; font-weight: 700;">Истории ({hydraStories.length})</span>
+            <button type="button" on:click={toggleStoriesBar} style="background: transparent; border: none; color: #60A5FA; font-size: 11px; font-weight: 700; cursor: pointer;">
+                {storiesCollapsed ? '▾ Развернуть' : '▴ Свернуть'}
+            </button>
+        </div>
+        {#if storiesCollapsed}
+            <div style="display: flex; gap: 8px; padding: 4px 16px 10px; overflow-x: auto; border-bottom: 1px solid rgba(255,255,255,0.06); align-items: center; flex-shrink: 0;">
+                <button type="button" on:click={() => showCreateStoryModal = true} style="padding: 4px 10px; border-radius: 100px; background: #1E1F22; border: 1px dashed #8AB4F8; color: #8AB4F8; font-size: 11px; font-weight: 700; white-space: nowrap;">+ История</button>
+                {#each hydraStories as st}
+                    <button type="button" on:click={() => openHydraStory(st)} class:story-nick-pulse={!st.seen} style="padding: 4px 10px; border-radius: 100px; background: #1E1F22; border: 1px solid {!st.seen ? '#10B981' : 'rgba(255,255,255,0.1)'}; color: {!st.seen ? '#34D399' : '#E5E7EB'}; font-size: 11px; font-weight: 700; white-space: nowrap;">
+                        {st.author}
+                    </button>
+                {/each}
+            </div>
+        {:else}
         <div style="display: flex; gap: 12px; padding: 8px 16px 12px; overflow-x: auto; border-bottom: 1px solid rgba(255,255,255,0.06); align-items: center; flex-shrink: 0;">
             <div on:click={() => showCreateStoryModal = true} style="display: flex; flex-direction: column; align-items: center; cursor: pointer; min-width: 64px;">
                 <div style="width: 52px; height: 52px; border-radius: 50%; background: #1E1F22; border: 2px dashed #8AB4F8; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #8AB4F8; font-weight: 700;">+</div>
@@ -679,6 +706,7 @@
                 </div>
             {/each}
         </div>
+        {/if}
     
         <div class="contacts-list mobile-contacts">
             <!-- Mobile Favorites Chat -->
@@ -1250,4 +1278,6 @@
         opacity: 0 !important;
     }
     
+    .story-nick-pulse { animation: hydraGreenPulse 2.4s ease-in-out infinite; }
+    @keyframes hydraGreenPulse { 0%, 100% { box-shadow: 0 0 0 rgba(16,185,129,0); opacity: 1; } 50% { box-shadow: 0 0 10px rgba(16,185,129,0.65); opacity: 0.7; } }
 </style>

@@ -391,10 +391,8 @@
           }
           
           // Wait for essential data before hiding the overlay
-          await Promise.all([
-              loadContacts(),
-              loadAboutInfo()
-          ]);
+          await loadContacts();
+          loadAboutInfo();
           
           // Start background polling
           setInterval(loadContacts, 300 * 1000);
@@ -1302,9 +1300,14 @@
                 sidebarHandlers.onMovePin(contextMenu.contact.ID, 1);
                 contextMenu.show = false;
             }}>⬇️ Переместить ниже</div>
-            <div class="context-item danger" on:click={() => { 
-                AppActions.DeleteContact(contextMenu.contact.ID); 
-                loadContacts();
+            <div class="context-item danger" on:click={async () => { 
+                const targetId = contextMenu.contact?.ID;
+                contextMenu.show = false;
+                if (!targetId) return;
+                contacts = contacts.filter(c => c.ID !== targetId);
+                await AppActions.DeleteContact(targetId).catch(() => {});
+                await loadContacts();
+                showToast('Контакт удалён', 'info');
             }}>Удалить контакт</div>
         </div>
     {/if}

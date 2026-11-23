@@ -594,6 +594,63 @@
     try { peerReadTimestamps = JSON.parse(localStorage.getItem('hydra_peer_read_ts') || '{}'); } catch (e) { peerReadTimestamps = {}; }
     $: currentPeerReadTs = selectedContact ? (peerReadTimestamps[selectedContact.ChatID] || peerReadTimestamps[selectedContact.ID] || 0) : 0;
 
+    
+    let showPhotoCamModal = false;
+    let photoCamStream = null;
+    let photoCamVideoEl = null;
+    let photoCamFacing = 'environment';
+
+    async function openInAppPhotoCamera(switchFacing = false) {
+        if (switchFacing) {
+            photoCamFacing = photoCamFacing === 'environment' ? 'user' : 'environment';
+            if (photoCamStream) photoCamStream.getTracks().forEach(t => t.stop());
+        } else {
+            showPhotoCamModal = true;
+        }
+        try {
+            photoCamStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: photoCamFacing, width: { ideal: 1280 }, height: { ideal: 1280 } },
+                audio: false
+            });
+            setTimeout(() => {
+                if (photoCamVideoEl && photoCamStream) {
+                    photoCamVideoEl.srcObject = photoCamStream;
+                    photoCamVideoEl.play().catch(() => {});
+                }
+            }, 80);
+        } catch (e) {
+            alert('Не удалось открыть камеру: ' + e);
+            showPhotoCamModal = false;
+        }
+    }
+
+    function closeInAppPhotoCamera() {
+        if (photoCamStream) {
+            photoCamStream.getTracks().forEach(t => t.stop());
+            photoCamStream = null;
+        }
+        showPhotoCamModal = false;
+    }
+
+    async function snapAndSendInAppPhoto() {
+        if (!photoCamVideoEl || !selectedContact) return;
+        const canvas = document.createElement('canvas');
+        canvas.width = photoCamVideoEl.videoWidth || 720;
+        canvas.height = photoCamVideoEl.videoHeight || 720;
+        canvas.getContext('2d').drawImage(photoCamVideoEl, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        closeInAppPhotoCamera();
+        try {
+            const tmpPath = await AppActions.SaveTempImage(dataUrl, 'cam_' + Date.now() + '.jpg');
+            if (tmpPath) {
+                await AppActions.SendFileMessage(selectedContact.ID, '', '', [tmpPath], false);
+                dispatch('refresh');
+            }
+        } catch (e) {
+            alert('Ошибка отправки фото: ' + e);
+        }
+    }
+    
     let isSelectMode = false;
     let selectedMsgIds = [];
     let quoteModalMsg = null;
@@ -1564,12 +1621,7 @@
             <div style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;">
                 <button type="button" on:click={() => emojiTab = 'emoji'} style="padding: 5px 12px; border-radius: 100px; border: none; font-size: 12px; font-weight: 700; background: {emojiTab === 'emoji' ? '#1D4ED8' : '#28292D'}; color: #fff;">😊 Эмодзи</button>
                 <button type="button" on:click={() => emojiTab = 'stickers'} style="padding: 5px 12px; border-radius: 100px; border: none; font-size: 12px; font-weight: 700; background: {emojiTab === 'stickers' ? '#1D4ED8' : '#28292D'}; color: #fff;">🎨 Стикеры ({customStickers.length})</button>
-                {#if emojiTab === 'stickers'}
-                    <label style="margin-left: auto; padding: 5px 12px; border-radius: 100px; background: #10B981; color: #fff; font-size: 11px; font-weight: 800; cursor: pointer;">
-                        + Импорт (.webp/.png)
-                        <input type="file" accept="image/webp,image/png" multiple style="display: none;" on:change={handleImportStickers} />
-                    </label>
-                {/if}
+                
             </div>
             {#if emojiTab === 'emoji'}
                 <div style="display: flex; flex-wrap: wrap; gap: 8px;">
@@ -1699,10 +1751,7 @@
                 style="width: 100%; font-size: 16px;"
             ></textarea>
         </div>
-                <label class="btn-icon" title="Сделать фото с камеры" style="padding: 6px; color: #9CA3AF; cursor: pointer;">
-            <span style="font-size: 19px;">📸</span>
-            <input type="file" accept="image/*" capture="environment" style="display: none;" on:change={handleQuickCameraPhoto} />
-        </label>
+                <button type="button" class="btn-icon" on:click={() => openInAppPhotoCamera(false)} title="Сделать фото с камеры" style="padding: 6px; color: #9CA3AF; cursor: pointer;"><span style="font-size: 19px;">📸</span></button>
         <button type="button" class="btn-icon" on:click={onSelectFiles} title="Прикрепить фото или файл" style="padding: 6px; color: #9CA3AF;">
             <div class="icon-svg">{@html Icons.Paperclip}</div>
         </button>
@@ -1827,6 +1876,20 @@
                     if (textarea) textarea.focus();
                 }} style="flex: 1; padding: 10px; border-radius: 100px; background: #1D4ED8; color: #fff; border: none; font-weight: 800;">💬 Вставить цитатой</button>
             </div>
+        </div>
+    </div>
+{/if}
+
+
+{#if showPhotoCamModal}
+    <div style="position: fixed; inset: 0; background: #000; z-index: 99999; display: flex; flex-direction: column;">
+        <div style="display: flex; justify-content: space-between; padding: 16px; padding-top: calc(16px + env(safe-area-inset-top, 12px));">
+            <button type="button" on:click={closeInAppPhotoCamera} style="width: 42px; height: 42px; border-radius: 50%; background: rgba(255,255,255,0.15); color: #fff; border: none; font-size: 18px;">✕</button>
+            <button type="button" on:click={() => openInAppPhotoCamera(true)} style="width: 42px; height: 42px; border-radius: 50%; background: rgba(255,255,255,0.15); color: #fff; border: none; font-size: 18px;">🔄</button>
+        </div>
+        <video bind:this={photoCamVideoEl} autoplay playsinline muted style="flex: 1; width: 100%; object-fit: cover;"></video>
+        <div style="padding: 24px; display: flex; justify-content: center; background: rgba(0,0,0,0.6);">
+            <button type="button" on:click={snapAndSendInAppPhoto} style="width: 72px; height: 72px; border-radius: 50%; background: #fff; border: 5px solid #3B82F6; cursor: pointer;"></button>
         </div>
     </div>
 {/if}

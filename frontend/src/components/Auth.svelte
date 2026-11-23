@@ -1,5 +1,5 @@
 <script>
-    import { onMount } from 'svelte';
+    import { onMount, onDestroy } from 'svelte';
     import { fade, scale, fly, slide } from 'svelte/transition';
     import { Icons } from '../Icons.js';
     import { showToast } from '../stores.js';
@@ -42,6 +42,10 @@
     let profileContextMenu = { show: false, x: 0, y: 0, profile: null };
     let showDeleteConfirm = false;
     let profileToDelete = null;
+
+    onDestroy(() => {
+        if (typeof window !== 'undefined') window.__onHydraAppResume = null;
+    });
 
     onMount(async () => {
         await loadProfiles();

@@ -78,13 +78,22 @@
     let groupMembersInProfile = [];
     let groupHideMembers = false;
 
-    $: if (contact) {
+    let groupAdminsList = [];
+    let groupPermMsg = true;
+    let groupPermMedia = true;
+    let groupPermInvite = true;
+
+    $: if (showContactProfile && contact) {
         contactMuted = localStorage.getItem('hydra_mute_' + contact.ID) === '1';
         const bUntil = Number(localStorage.getItem('hydra_block_until_' + contact.ID) || 0);
         isContactBlockedNow = bUntil > Date.now();
         try {
             groupMembersInProfile = JSON.parse(localStorage.getItem('hydra_group_members_' + contact.ID) || '["Вы (Создатель)"]');
             groupHideMembers = localStorage.getItem('hydra_group_hide_members_' + contact.ID) === '1';
+            groupAdminsList = JSON.parse(localStorage.getItem('hydra_group_admins_' + contact.ID) || '[]');
+            groupPermMsg = localStorage.getItem('hydra_group_admins_only_' + contact.ID) !== '1';
+            groupPermMedia = localStorage.getItem('hydra_group_perm_media_' + contact.ID) !== '0';
+            groupPermInvite = localStorage.getItem('hydra_group_perm_invite_' + contact.ID) !== '0';
         } catch (e) { groupMembersInProfile = ['Вы (Создатель)']; }
     }
 
@@ -510,34 +519,40 @@
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <span style="font-size: 14px; font-weight: 800; color: #60A5FA;">👥 Участники ({groupMembersInProfile.length})</span>
                 <button type="button" on:click={toggleGroupMembersVisibility} style="background: rgba(59,130,246,0.18); color: #93C5FD; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 700;">
-                    {groupHideMembers ? '🙈 Скрыты (видны вам)' : '👁️ Видны всем'}
+                    {groupHideMembers ? '🙈 Скрыты (видны владельцу)' : '👁️ Видны всем'}
                 </button>
             </div>
             <div style="display: flex; flex-direction: column; gap: 6px;">
                 {#each groupMembersInProfile as mem}
                     <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #121316; border-radius: 12px; font-size: 13px; color: #E5E7EB;">
-                        <span>{mem}</span>
+                        <span>{String(mem).includes('Создатель') ? '👑 Вы (Владелец)' : mem}</span>
                         {#if !String(mem).includes('Создатель')}
                             <button type="button" on:click={() => {
-                                const adminsKey = 'hydra_group_admins_' + contact.ID;
-                                let admins = JSON.parse(localStorage.getItem(adminsKey) || '[]');
-                                if (admins.includes(mem)) admins = admins.filter(x => x !== mem);
-                                else admins.push(mem);
-                                localStorage.setItem(adminsKey, JSON.stringify(admins));
-                                alert('✅ Права администратора обновлены для ' + mem);
-                            }} style="background: #1E3A8A; color: #93C5FD; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 700;">⭐ Админ</button>
+                                if (groupAdminsList.includes(mem)) groupAdminsList = groupAdminsList.filter(x => x !== mem);
+                                else groupAdminsList = [...groupAdminsList, mem];
+                                localStorage.setItem('hydra_group_admins_' + contact.ID, JSON.stringify(groupAdminsList));
+                            }} style="background: {groupAdminsList.includes(mem) ? '#10B981' : '#1E3A8A'}; color: #fff; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 700; cursor: pointer;">
+                                {groupAdminsList.includes(mem) ? '✅ Админ' : '+ Админ'}
+                            </button>
                         {/if}
                     </div>
                 {/each}
             </div>
-            <button type="button" on:click={() => {
-                const k = 'hydra_group_admins_only_' + contact.ID;
-                const next = localStorage.getItem(k) === '1' ? '0' : '1';
-                localStorage.setItem(k, next);
-                alert(next === '1' ? '🔒 Писать могут только создатель и админы' : '💬 Писать могут все участники');
-            }} style="background: #22252A; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.3); border-radius: 12px; padding: 10px; font-size: 12px; font-weight: 700; cursor: pointer;">
-                ⚙️ Переключить право отправки сообщений (Все / Только админы)
-            </button>
+            <div style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+                <div style="font-size: 12px; font-weight: 800; color: #9CA3AF;">⚙️ Разрешения для участников:</div>
+                <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #E5E7EB;">
+                    <span>💬 Отправка сообщений</span>
+                    <input type="checkbox" checked={groupPermMsg} on:change={() => { groupPermMsg = !groupPermMsg; localStorage.setItem('hydra_group_admins_only_' + contact.ID, groupPermMsg ? '0' : '1'); }} style="width: 18px; height: 18px; accent-color: #2563EB;" />
+                </label>
+                <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #E5E7EB;">
+                    <span>🖼️ Отправка фото, видео и стикеров</span>
+                    <input type="checkbox" checked={groupPermMedia} on:change={() => { groupPermMedia = !groupPermMedia; localStorage.setItem('hydra_group_perm_media_' + contact.ID, groupPermMedia ? '1' : '0'); }} style="width: 18px; height: 18px; accent-color: #2563EB;" />
+                </label>
+                <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #E5E7EB;">
+                    <span>➕ Добавление участников</span>
+                    <input type="checkbox" checked={groupPermInvite} on:change={() => { groupPermInvite = !groupPermInvite; localStorage.setItem('hydra_group_perm_invite_' + contact.ID, groupPermInvite ? '1' : '0'); }} style="width: 18px; height: 18px; accent-color: #2563EB;" />
+                </label>
+            </div>
         </div>
     {/if}
     
