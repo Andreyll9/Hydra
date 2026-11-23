@@ -38,20 +38,38 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply Hydra v3.4.0 (Coturn Calls, Native Android Camera, Multi-Select Chats & Delete for Both)
+      - name: Apply Hydra v3.4.1 Hardening (Anti-Tamper, R8, WebView Lock & Clean Legacy URLs)
         run: |
-          cat << 'PYEOF' > fix_v340.py
-          import os, re
+          cat << 'PYEOF' > harden_v341.py
+          import os, re, subprocess
 
-          # 0. Обновляем версию до 3.4.0-hydra
+          # 0. Обновляем версию до 3.4.1-hydra
           gr_path = "android/app/build.gradle"
+          store_pass = ""
           if os.path.exists(gr_path):
               with open(gr_path, "r", encoding="utf-8") as f:
                   gr = f.read()
-              gr = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.4.0-hydra"', gr)
-              gr = re.sub(r'versionCode\s+\d+', 'versionCode 340', gr)
+              gr = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.4.1-hydra"', gr)
+              gr = re.sub(r'versionCode\s+\d+', 'versionCode 341', gr)
+
+              # Достаём пароль keystore для извлечения SHA-256
+              m_pass = re.search(r'storePassword\s+["\']([^"\']+)["\']', gr)
+              if m_pass:
+                  store_pass = m_pass.group(1)
+
+              # Включаем R8 обфускацию и сжатие ресурсов в release
+              if "minifyEnabled false" in gr:
+                  gr = gr.replace("minifyEnabled false", "minifyEnabled true\n            shrinkResources true")
+              elif "minifyEnabled true" not in gr:
+                  gr = re.sub(
+                      r'(release\s*\{)',
+                      r'\1\n            minifyEnabled true\n            shrinkResources true\n            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"',
+                      gr,
+                      count=1
+                  )
               with open(gr_path, "w", encoding="utf-8") as f:
                   f.write(gr)
+              print("[OK] 0. build.gradle: версия 3.4.1-hydra и R8 (minifyEnabled + shrinkResources) включены")
 
           for root, _, files in os.walk("internal/appcore"):
               for fn in files:
@@ -60,296 +78,116 @@ jobs:
                       with open(fp, "r", encoding="utf-8") as f:
                           txt = f.read()
                       if "AppVersion:" in txt:
-                          txt = re.sub(r'AppVersion:\s*"[^"]+"', 'AppVersion: "3.4.0-hydra"', txt)
+                          txt = re.sub(r'AppVersion:\s*"[^"]+"', 'AppVersion: "3.4.1-hydra"', txt)
                           with open(fp, "w", encoding="utf-8") as f:
                               f.write(txt)
 
-          # 1. Go (appcore.go + messages.go): поддержка команды [HYDRA_DEL_CHAT]: (удалить диалог у обоих)
-          ac_path = "internal/appcore/appcore.go"
-          if os.path.exists(ac_path):
-              with open(ac_path, "r", encoding="utf-8") as f:
-                  ac = f.read()
-              if "[HYDRA_DEL_CHAT]:" not in ac:
-                  ac = ac.replace(
-                      'if strings.HasPrefix(msg.Content, "[HYDRA_DEL_MSG]:") {',
-                      '''if strings.HasPrefix(msg.Content, "[HYDRA_DEL_CHAT]:") {
-          		if a.Repo != nil && contact != nil {
-          			_ = a.Repo.DeleteContact(a.Ctx, contact.ID)
-          			a.Emitter.Emit("contact_updated")
-          		}
-          		return
-          	}
-          	if strings.HasPrefix(msg.Content, "[HYDRA_DEL_MSG]:") {'''
+          # 1. Извлекаем SHA-256 подписи из hydra-release-key.jks
+          cert_sha256 = ""
+          jks_path = "android/app/hydra-release-key.jks"
+          if os.path.exists(jks_path) and store_pass:
+              try:
+                  out = subprocess.check_output(
+                      ["keytool", "-list", "-v", "-keystore", jks_path, "-storepass", store_pass],
+                      stderr=subprocess.STDOUT, text=True
                   )
-              with open(ac_path, "w", encoding="utf-8") as f:
-                  f.write(ac)
+                  m_sha = re.search(r'SHA256:\s*([0-9A-Fa-f:]+)', out)
+                  if m_sha:
+                      cert_sha256 = m_sha.group(1).replace(":", "").upper()
+                      print(f"[OK] 1. Извлечён SHA-256 сертификата: {cert_sha256[:12]}...")
+              except Exception as e:
+                  print(f"[WARN] Не удалось извлечь SHA-256 из keystore: {e}")
 
-          msg_path = "internal/appcore/messages.go"
-          if os.path.exists(msg_path):
-              with open(msg_path, "r", encoding="utf-8") as f:
-                  mc = f.read()
-              if '"[HYDRA_DEL_CHAT]:"' not in mc:
-                  mc = mc.replace('"[HYDRA_DEL_MSG]:",', '"[HYDRA_DEL_MSG]:",\n\t\t"[HYDRA_DEL_CHAT]:",')
-              with open(msg_path, "w", encoding="utf-8") as f:
-                  f.write(mc)
+          # 2. Создаём/обновляем proguard-rules.pro для R8 (чтобы не сломать JNI Go и JS Bridge)
+          pg_path = "android/app/proguard-rules.pro"
+          pg_rules = """# Hydra R8 / ProGuard Rules
+          -keep class mobile.** { *; }
+          -keep class go.** { *; }
+          -keep class com.teleghost.app.MainActivity$HydraNativeBridge { *; }
+          -keep class com.teleghost.app.TeleGhostService { *; }
+          -keep class com.teleghost.app.DirectReplyReceiver { *; }
+          -keepclassmembers class * {
+              @android.webkit.JavascriptInterface <methods>;
+          }
+          -keepattributes *Annotation*,JavascriptInterface
+          -dontwarn mobile.**
+          -dontwarn go.**
+          """
+          with open(pg_path, "w", encoding="utf-8") as f:
+              f.write(pg_rules)
+          print("[OK] 2. proguard-rules.pro обновлён")
 
-          # 2. MainActivity.kt: запуск родной камеры Android (ACTION_IMAGE_CAPTURE) без блокировки отпечатком
+          # 3. MainActivity.kt: проверка подписи APK (Anti-Tamper) + запрет отладки WebView
           kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
           if os.path.exists(kt_path):
               with open(kt_path, "r", encoding="utf-8") as f:
                   kt = f.read()
 
-              if "private var pendingCameraFilePath: String?" not in kt:
+              if "WebView.setWebContentsDebuggingEnabled(false)" not in kt:
                   kt = kt.replace(
-                      "private var isBiometricPromptOpen = false",
-                      "private var isBiometricPromptOpen = false\n    private var pendingCameraFilePath: String? = null"
-                  )
-
-              cam_launcher = """    private val nativeCameraLauncher = registerForActivityResult(
-                  ActivityResultContracts.StartActivityForResult()
-              ) { result ->
-                  val path = pendingCameraFilePath
-                  pendingCameraFilePath = null
-                  if (result.resultCode == Activity.RESULT_OK && !path.isNullOrEmpty() && File(path).exists()) {
-                      val safePath = JSONObject.quote(path)
-                      runOnUiThread {
-                          webView.evaluateJavascript("if(window.__onNativeCameraPhoto) window.__onNativeCameraPhoto($safePath);", null)
-                      }
-                  }
-              }
-
-              private val filePickerLauncher ="""
-              if "nativeCameraLauncher" not in kt:
-                  kt = kt.replace("private val filePickerLauncher =", cam_launcher, 1)
-
-              cam_bridge_fn = """        @JavascriptInterface
-                  fun openNativeCamera() {
-                      runOnUiThread {
-                          try {
-                              val tempDir = File(filesDir, "tmp_uploads")
-                              if (!tempDir.exists()) tempDir.mkdirs()
-                              val photoFile = File(tempDir, "cam_${System.currentTimeMillis()}.jpg")
-                              pendingCameraFilePath = photoFile.absolutePath
-                              val photoUri = androidx.core.content.FileProvider.getUriForFile(
-                                  this@MainActivity,
-                                  "com.teleghost.app.fileprovider",
-                                  photoFile
-                              )
-                              val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE).apply {
-                                  putExtra(android.provider.MediaStore.EXTRA_OUTPUT, photoUri)
-                                  addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                              }
-                              isOpeningSystemPicker = true
-                              webView.evaluateJavascript("window.__hydraSkipLock = true;", null)
-                              nativeCameraLauncher.launch(intent)
-                          } catch (e: Exception) {
-                              pushNativeLog("CAM-ERR", "Ошибка запуска родной камеры: ${e.message}")
-                          }
-                      }
-                  }
-
-                  @JavascriptInterface
-                  fun setCallActive("""
-              if "fun openNativeCamera()" not in kt:
-                  kt = kt.replace("@JavascriptInterface\n        fun setCallActive(", cam_bridge_fn, 1)
-
-              with open(kt_path, "w", encoding="utf-8") as f:
-                  f.write(kt)
-              print("[OK] 2. MainActivity.kt: добавлен запуск родной камеры телефона")
-
-          # 3. Chat.svelte: Coturn TURN-сервер в WebRTC + вызов родной камеры в шторке вложений
-          ch_path = "frontend/src/components/Chat.svelte"
-          if os.path.exists(ch_path):
-              with open(ch_path, "r", encoding="utf-8") as f:
-                  ch = f.read()
-
-              old_ice = "{ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }"
-              new_ice = "{ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:rtbeta.duckdns.org:3478' }, { urls: ['turn:rtbeta.duckdns.org:3478?transport=udp', 'turn:rtbeta.duckdns.org:3478?transport=tcp'], username: 'hydra', credential: 'HydraTurn2026!' }] }"
-              ch = ch.replace(old_ice, new_ice)
-
-              # Обработчик фото от родной камеры Android (вставляем строго перед async function openAttachSheet)
-              native_cam_js = """
-              function triggerSystemCameraForChat() {
-                  closeAttachSheet();
-                  if (window.HydraNative && typeof window.HydraNative.openNativeCamera === 'function') {
-                      window.__onNativeCameraPhoto = async (filePath) => {
-                          if (!filePath || !selectedContact) return;
-                          isUploadingMedia = true;
-                          uploadingLabel = 'Шифрование фото E2EE...';
-                          try {
-                              await AppActions.SendFileMessage(selectedContact.ID, '', '', [filePath], false);
-                              dispatch('refresh');
-                          } catch (e) {
-                              alert('Ошибка отправки фото: ' + e);
-                          } finally {
-                              isUploadingMedia = false;
-                          }
-                      };
-                      window.HydraNative.openNativeCamera();
-                  } else {
-                      openInAppPhotoCamera(false);
-                  }
-              }
-              """
-              if "function triggerSystemCameraForChat()" not in ch:
-                  ch = ch.replace("async function openAttachSheet()", native_cam_js + "\n    async function openAttachSheet()", 1)
-                  ch = ch.replace(
-                      "on:click={() => { closeAttachSheet(); openInAppPhotoCamera(false); }}",
-                      "on:click={triggerSystemCameraForChat}"
-                  )
-
-              with open(ch_path, "w", encoding="utf-8") as f:
-                  f.write(ch)
-              print("[OK] 3. Chat.svelte: Coturn TURN подключён, камера в шторке открывает родную камеру телефона")
-
-          # 4. Sidebar.svelte:
-          # - родная камера для Сторис
-          # - мультивыбор контактов/групп/каналов + модалка "Удалить только у меня" / "Удалить у обоих"
-          sb_path = "frontend/src/components/Sidebar.svelte"
-          if os.path.exists(sb_path):
-              with open(sb_path, "r", encoding="utf-8") as f:
-                  sb = f.read()
-
-              multiselect_js = """
-              let isSelectChatsMode = false;
-              let selectedChatIds = [];
-              let deleteChatsModalTargets = []; // массив объектов контактов для удаления
-
-              function toggleChatSelection(contactId) {
-                  if (selectedChatIds.includes(contactId)) {
-                      selectedChatIds = selectedChatIds.filter(id => id !== contactId);
-                  } else {
-                      selectedChatIds = [...selectedChatIds, contactId];
-                  }
-                  if (selectedChatIds.length === 0) isSelectChatsMode = false;
-              }
-
-              function openDeleteSelectedChatsModal() {
-                  const targets = (contacts || []).filter(c => selectedChatIds.includes(c.ID));
-                  if (targets.length > 0) deleteChatsModalTargets = targets;
-              }
-
-              async function executeDeleteChats(forBoth = false) {
-                  const targets = [...deleteChatsModalTargets];
-                  deleteChatsModalTargets = [];
-                  isSelectChatsMode = false;
-                  selectedChatIds = [];
-                  for (const c of targets) {
-                      const isGroupOrChan = String(c.Nickname || '').startsWith('👥') || String(c.Nickname || '').startsWith('📢');
-                      if (forBoth && !isGroupOrChan && !c.IsFavorites) {
-                          await AppActions.SendText(c.ID, '[HYDRA_DEL_CHAT]:1', '').catch(() => {});
-                      }
-                      await AppActions.DeleteContact(c.ID).catch(() => {});
-                  }
-                  contacts = (contacts || []).filter(c => !targets.some(t => t.ID === c.ID));
-              }
-
-              function openNativeCameraForStory() {
-                  if (window.HydraNative && typeof window.HydraNative.openNativeCamera === 'function') {
-                      window.__onNativeCameraPhoto = async (filePath) => {
-                          if (!filePath) return;
-                          try {
-                              const b64 = await AppActions.GetFileBase64(filePath);
-                              if (b64) {
-                                  newStoryImage = 'data:image/jpeg;base64,' + b64;
-                                  newStoryVideo = '';
-                              }
-                          } catch (e) {}
-                      };
-                      window.HydraNative.openNativeCamera();
-                  } else {
-                      toggleStoryCamera(false);
-                  }
-              }
-
-              if (typeof window !== 'undefined') {
-                  window.__openDeleteChatConfirmModal = (contactObj) => {
-                      if (contactObj) deleteChatsModalTargets = [contactObj];
-                  };
-              }
-              """
-              if "let isSelectChatsMode =" not in sb:
-                  sb = sb.replace("let longPressTimer;", "let longPressTimer;\n" + multiselect_js, 1)
-
-              # Кнопка мультивыбора ☑️ в мобильной шапке рядом с зелёной точкой
-              if "isSelectChatsMode = !isSelectChatsMode" not in sb:
-                  sb = sb.replace(
-                      '<div class="mobile-network-dot"',
-                      '<button type="button" on:click={() => { isSelectChatsMode = !isSelectChatsMode; selectedChatIds = []; }} style="background: {isSelectChatsMode ? \'#1D4ED8\' : \'rgba(255,255,255,0.08)\'}; color: #fff; border: none; border-radius: 10px; padding: 5px 10px; font-size: 12px; font-weight: 700; cursor: pointer;">{isSelectChatsMode ? "Готово" : "☑️"}</button>\n            <div class="mobile-network-dot"',
+                      "private fun setupWebView() {",
+                      "private fun setupWebView() {\n        WebView.setWebContentsDebuggingEnabled(false)",
                       1
                   )
 
-              # Панель массового удаления под шапкой
-              multi_bar = """        {#if isSelectChatsMode && selectedChatIds.length > 0}
-                      <div style="background: #1E3A8A; color: #fff; padding: 8px 16px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 700; flex-shrink: 0;">
-                          <span>Выбрано чатов: {selectedChatIds.length}</span>
-                          <button type="button" on:click={openDeleteSelectedChatsModal} style="background: #EF4444; color: #fff; border: none; border-radius: 100px; padding: 5px 14px; font-size: 12px; font-weight: 800; cursor: pointer;">🗑️ Удалить</button>
-                      </div>
-                  {/if}
-                  <!-- Mobile Search -->"""
-              if "openDeleteSelectedChatsModal" in sb and "Выбрано чатов:" not in sb:
-                  sb = sb.replace("<!-- Mobile Search -->", multi_bar, 1)
+              if cert_sha256 and "private fun verifyApkSignature()" not in kt:
+                  verify_fn = f"""    private fun verifyApkSignature(): Boolean {{
+                  return try {{
+                      val expected = "{cert_sha256}"
+                      val sigs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {{
+                          val pi = packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+                          pi.signingInfo?.apkContentsSigners ?: emptyArray()
+                      }} else {{
+                          @Suppress("DEPRECATION")
+                          val pi = packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES)
+                          @Suppress("DEPRECATION")
+                          pi.signatures ?: emptyArray()
+                      }}
+                      val md = java.security.MessageDigest.getInstance("SHA-256")
+                      sigs.any {{ sig ->
+                          val hash = md.digest(sig.toByteArray()).joinToString("") {{ "%02X".format(it) }}
+                          hash.equals(expected, ignoreCase = true)
+                      }}
+                  }} catch (_: Exception) {{
+                      true
+                  }}
+              }}
 
-              # Клик по контакту в мобильном списке: либо выбор, либо открытие чата
-              sb = sb.replace(
-                  'on:click={() => onSelectContact(contact)}\n                    on:contextmenu|preventDefault={(e) => onContextMenu(e, contact)}\n                    on:touchstart={(e) => handleTouchStart(contact, \'contact\', e)}\n                    on:touchend={handleTouchEnd}\n                    on:touchmove={handleTouchEnd}\n                    tabindex="0"',
-                  'style={selectedChatIds.includes(contact.ID) ? "background: rgba(59,130,246,0.22); border: 1px solid #3B82F6;" : ""}\n                    on:click={() => isSelectChatsMode ? toggleChatSelection(contact.ID) : onSelectContact(contact)}\n                    on:contextmenu|preventDefault={(e) => onContextMenu(e, contact)}\n                    on:touchstart={(e) => handleTouchStart(contact, \'contact\', e)}\n                    on:touchend={handleTouchEnd}\n                    on:touchmove={handleTouchEnd}\n                    tabindex="0"'
-              )
+              override fun onCreate("""
+                  kt = kt.replace("override fun onCreate(", verify_fn, 1)
+                  kt = kt.replace(
+                      "super.onCreate(savedInstanceState)\n        currentInstance = this",
+                      "super.onCreate(savedInstanceState)\n        if (!verifyApkSignature()) { finishAffinity(); return }\n        currentInstance = this",
+                      1
+                  )
+                  print("[OK] 3. MainActivity.kt: Anti-Tamper проверка подписи и запрет отладки WebView добавлены")
 
-              # Кнопка родной камеры в создании Сторис
-              sb = sb.replace(
-                  'on:click={() => toggleStoryCamera(false)}',
-                  'on:click={openNativeCameraForStory}'
-              )
+              with open(kt_path, "w", encoding="utf-8") as f:
+                  f.write(kt)
 
-              # Модалка подтверждения удаления диалога (У меня / У обоих)
-              del_modal_html = """
-          {#if deleteChatsModalTargets.length > 0}
-              <div style="position: fixed; inset: 0; background: rgba(8,9,14,0.9); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
-                  <div style="background: #1A1C20; border: 1px solid rgba(239,68,68,0.4); border-radius: 24px; padding: 20px; width: 100%; max-width: 350px;">
-                      <h3 style="margin: 0 0 8px; color: #fff; font-size: 17px;">🗑️ Удалить {deleteChatsModalTargets.length === 1 ? `«${deleteChatsModalTargets[0].Nickname}»` : `выбранные (${deleteChatsModalTargets.length})`}?</h3>
-                      <p style="font-size: 12px; color: #9CA3AF; margin: 0 0 16px;">Выберите способ удаления переписки:</p>
-                      <div style="display: flex; flex-direction: column; gap: 8px;">
-                          <button type="button" on:click={() => executeDeleteChats(false)} style="width: 100%; padding: 12px; border-radius: 14px; background: #28292D; color: #fff; border: none; font-weight: 700; font-size: 13px; cursor: pointer;">🗑️ Удалить только у меня</button>
-                          {#if deleteChatsModalTargets.some(c => !String(c.Nickname || '').startsWith('👥') && !String(c.Nickname || '').startsWith('📢'))}
-                              <button type="button" on:click={() => executeDeleteChats(true)} style="width: 100%; padding: 12px; border-radius: 14px; background: #EF4444; color: #fff; border: none; font-weight: 800; font-size: 13px; cursor: pointer;">🔥 Удалить у обоих</button>
-                          {/if}
-                          <button type="button" on:click={() => deleteChatsModalTargets = []} style="width: 100%; padding: 10px; border-radius: 14px; background: transparent; color: #9CA3AF; border: none; font-size: 13px; cursor: pointer;">Отмена</button>
-                      </div>
-                  </div>
-              </div>
-          {/if}
-          """
-              if "deleteChatsModalTargets.length > 0" not in sb:
-                  sb = sb.replace("<style>", del_modal_html + "\n<style>", 1)
-
-              with open(sb_path, "w", encoding="utf-8") as f:
-                  f.write(sb)
-              print("[OK] 4. Sidebar.svelte: мультивыбор чатов, удаление у обоих и родная камера для Сторис готовы")
-
-          # 5. App.svelte: контекстное меню "Удалить контакт" открывает модалку "У меня / У обоих"
-          app_path = "frontend/src/App.svelte"
-          if os.path.exists(app_path):
-              with open(app_path, "r", encoding="utf-8") as f:
-                  ap = f.read()
-              ap = re.sub(
-                  r'<div class="context-item danger" on:click=\{async \(\) => \{[\s\S]*?Удалить контакт</div>',
-                  '''<div class="context-item danger" on:click={() => {
-                          const target = contextMenu.contact;
-                          contextMenu.show = false;
-                          if (target && window.__openDeleteChatConfirmModal) {
-                              window.__openDeleteChatConfirmModal(target);
-                          }
-                      }}>Удалить диалог</div>''',
-                  ap,
-                  count=1
-              )
-              with open(app_path, "w", encoding="utf-8") as f:
-                  f.write(ap)
-              print("[OK] 5. App.svelte: удаление диалога подключено к выбору 'У меня / У обоих'")
+          # 4. Чистка старых URL и голого IP из Go-кода (191.223.137.164:8085, ya.ru, 127.0.0.1:7070/7657)
+          cleaned_files = 0
+          for root, _, files in os.walk("internal"):
+              for fn in files:
+                  if not fn.endswith(".go"):
+                      continue
+                  fp = os.path.join(root, fn)
+                  with open(fp, "r", encoding="utf-8") as f:
+                      txt = f.read()
+                  orig = txt
+                  txt = txt.replace("http://191.223.137.164:8085", "https://rtbeta.duckdns.org")
+                  txt = txt.replace("191.223.137.164:8085", "rtbeta.duckdns.org")
+                  txt = txt.replace("https://ya.ru", "https://rtbeta.duckdns.org/health")
+                  txt = txt.replace("http://127.0.0.1:7070", "http://127.0.0.1:8080")
+                  txt = txt.replace("http://127.0.0.1:7657", "http://127.0.0.1:8080")
+                  if txt != orig:
+                      with open(fp, "w", encoding="utf-8") as f:
+                          f.write(txt)
+                      cleaned_files += 1
+          print(f"[OK] 4. Очищены старые URL/IP в Go-файлах: {cleaned_files}")
           PYEOF
-          python3 fix_v340.py
-          rm -f fix_v340.py
+          python3 harden_v341.py
+          rm -f harden_v341.py
           gofmt -w internal/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -359,13 +197,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Hydra v3.4.0 Update
+      - name: Commit Hydra v3.4.1 Hardening
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Hydra v3.4.0: Coturn TURN calls, native Android camera, multi-select chats & delete dialog for both [skip ci]"
+            git commit -m "Hydra v3.4.1: anti-tamper signature check, R8 obfuscation, strip Go symbols, disable WebView debug & clean legacy URLs [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
@@ -383,7 +221,7 @@ jobs:
           mkdir -p mobile/dist
           cp -r frontend/dist/* mobile/dist/
 
-      - name: Build Go Mobile AAR
+      - name: Build Go Mobile AAR (Stripped)
         run: |
           export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125
           go install golang.org/x/mobile/cmd/gomobile@latest
@@ -391,7 +229,7 @@ jobs:
           export PATH=$PATH:$(go env GOPATH)/bin
           gomobile init
           mkdir -p android/app/libs
-          gomobile bind -target=android -androidapi 24 -o android/app/libs/teleghost.aar ./mobile
+          gomobile bind -target=android -androidapi 24 -ldflags="-s -w" -o android/app/libs/teleghost.aar ./mobile
 
       - name: Build Signed APK with Persistent Key
         working-directory: ./android
@@ -402,5 +240,5 @@ jobs:
       - name: Upload Signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: Hydra-v3.4.0-Signed-APK
+          name: Hydra-v3.4.1-Signed-APK
           path: android/app/build/outputs/apk/release/*.apk
