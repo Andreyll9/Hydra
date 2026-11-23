@@ -167,7 +167,7 @@ jobs:
               new_ice = "{ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:rtbeta.duckdns.org:3478' }, { urls: ['turn:rtbeta.duckdns.org:3478?transport=udp', 'turn:rtbeta.duckdns.org:3478?transport=tcp'], username: 'hydra', credential: 'HydraTurn2026!' }] }"
               ch = ch.replace(old_ice, new_ice)
 
-              # Обработчик фото от родной камеры Android
+              # Обработчик фото от родной камеры Android (вставляем строго перед async function openAttachSheet)
               native_cam_js = """
               function triggerSystemCameraForChat() {
                   closeAttachSheet();
@@ -192,7 +192,7 @@ jobs:
               }
               """
               if "function triggerSystemCameraForChat()" not in ch:
-                  ch = ch.replace("function openAttachSheet()", native_cam_js + "\n    function openAttachSheet()", 1)
+                  ch = ch.replace("async function openAttachSheet()", native_cam_js + "\n    async function openAttachSheet()", 1)
                   ch = ch.replace(
                       "on:click={() => { closeAttachSheet(); openInAppPhotoCamera(false); }}",
                       "on:click={triggerSystemCameraForChat}"
