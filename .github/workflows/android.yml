@@ -38,215 +38,354 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply Security, Instant Biometric, Global Call Notif & Async Contacts Fixes (v3.1.1)
+      - name: Apply Hydra v3.2.0 Fixes (Biometric, In-App Camera, Stories Bar, Group Perms, Version Sync)
         run: |
-          cat << 'PYEOF' > fix_v311.py
+          cat << 'PYEOF' > fix_v320.py
           import os, re
 
-          # 1. Auth.svelte: мгновенный запуск биометрии без ожидания пинга сервера
+          # 1. Единая версия 3.2.0-hydra в build.gradle и Go
+          gr_path = "android/app/build.gradle"
+          if os.path.exists(gr_path):
+              with open(gr_path, "r", encoding="utf-8") as f:
+                  gr = f.read()
+              gr = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.2.0-hydra"', gr)
+              gr = re.sub(r'versionCode\s+\d+', 'versionCode 320', gr)
+              with open(gr_path, "w", encoding="utf-8") as f:
+                  f.write(gr)
+
+          for root, _, files in os.walk("internal/appcore"):
+              for fn in files:
+                  if fn.endswith(".go"):
+                      fp = os.path.join(root, fn)
+                      with open(fp, "r", encoding="utf-8") as f:
+                          txt = f.read()
+                      if "AppVersion:" in txt:
+                          txt = re.sub(r'AppVersion:\s*"[^"]+"', 'AppVersion: "3.2.0-hydra"', txt)
+                          with open(fp, "w", encoding="utf-8") as f:
+                              f.write(txt)
+
+          # 2. Auth.svelte: очищаем window.__onHydraAppResume при размонтировании (фикс ложного отпечатка)
           auth_path = "frontend/src/components/Auth.svelte"
           if os.path.exists(auth_path):
               with open(auth_path, "r", encoding="utf-8") as f:
                   au = f.read()
-
-              old_bio = """    async function triggerBiometricUnlock() {
-                  const profId = selectedProfile?.id || (allProfiles[0]?.id) || 'default';
-                  await runStartupDiagnostics(profId);
-                  if (localStorage.getItem('hydra_biometric') === '0') return;
-                  if (window.HydraNative && typeof window.HydraNative.authenticateBiometric === 'function') {
-                      if (!systemPermStatus.biometricBound) {
-                          bioPromptStatus = 'ℹ️ Отпечаток ещё не привязан (введите ПИН и привяжите его в Настройки → Приватность)';
-                          return;
-                      }
-                      bioPromptStatus = '👆 Приложите палец к сканеру...';
-                      window.HydraNative.authenticateBiometric(profId);
-                  }
-              }"""
-
-              new_bio = """    function triggerBiometricUnlock() {
-                  const profId = selectedProfile?.id || (allProfiles[0]?.id) || 'default';
-                  if (localStorage.getItem('hydra_biometric') === '0') return;
-                  if (window.HydraNative && typeof window.HydraNative.checkSystemStatus === 'function') {
-                      try {
-                          const parsed = JSON.parse(window.HydraNative.checkSystemStatus(profId));
-                          systemPermStatus = { ...systemPermStatus, ...parsed };
-                      } catch (e) {}
-                  }
-                  if (window.HydraNative && typeof window.HydraNative.authenticateBiometric === 'function') {
-                      if (!systemPermStatus.biometricBound) {
-                          bioPromptStatus = 'ℹ️ Отпечаток ещё не привязан (введите ПИН и привяжите его в Настройки → Приватность)';
-                          return;
-                      }
-                      bioPromptStatus = '👆 Приложите палец к сканеру...';
-                      window.HydraNative.authenticateBiometric(profId);
-                  }
-                  runStartupDiagnostics(profId);
-              }"""
-
-              if old_bio in au:
-                  au = au.replace(old_bio, new_bio, 1)
-              else:
-                  au = re.sub(
-                      r"async function triggerBiometricUnlock\(\)\s*\{[\s\S]*?authenticateBiometric\(profId\);\s*\}\s*\}",
-                      new_bio.strip(),
-                      au,
-                      count=1
+              if "onDestroy" not in au:
+                  au = au.replace("import { onMount } from 'svelte';", "import { onMount, onDestroy } from 'svelte';", 1)
+                  au = au.replace(
+                      "onMount(async () => {",
+                      "onDestroy(() => {\n        if (typeof window !== 'undefined') window.__onHydraAppResume = null;\n    });\n\n    onMount(async () => {",
+                      1
                   )
-
-              # Запускаем биометрию сразу после выбора PIN-профиля (100 мс вместо 300 мс)
-              au = au.replace(
-                  "setTimeout(() => { if (typeof triggerBiometricUnlock === 'function') triggerBiometricUnlock(); }, 300);\n        selectedProfile = p;",
-                  "selectedProfile = p;\n        if (p.use_pin) setTimeout(() => { if (typeof triggerBiometricUnlock === 'function') triggerBiometricUnlock(); }, 100);"
-              )
-
               with open(auth_path, "w", encoding="utf-8") as f:
                   f.write(au)
-              print("[OK] 1. Auth.svelte: биометрия запускается мгновенно без ожидания сети")
 
-          # 2. internal/network/messenger/messenger.go: обязательная подпись Ed25519 + E2EE подписей вложений
-          ms_path = "internal/network/messenger/messenger.go"
-          if os.path.exists(ms_path):
-              with open(ms_path, "r", encoding="utf-8") as f:
-                  ms = f.read()
-
-              old_sig = """	if len(packet.Payload) > 0 && len(packet.Signature) > 0 {
-          		if valid, err := identity.VerifySignatureBase64(senderPubKey, packet.Payload, packet.Signature); err != nil || !valid {
-          			return
-          		}
-          	}"""
-
-              new_sig = """	if len(packet.Payload) > 0 {
-          		if len(packet.Signature) == 0 {
-          			return
-          		}
-          		if valid, err := identity.VerifySignatureBase64(senderPubKey, packet.Payload, packet.Signature); err != nil || !valid {
-          			return
-          		}
-          	}"""
-
-              ms = ms.replace(old_sig, new_sig, 1)
-              ms = ms.replace(
-                  "Content:     content,\n\t\tTimestamp:   time.Now().UnixMilli(),\n\t\tMessageId:   messageID,\n\t\tAttachments: attachments,",
-                  "Content:     s.identity.EncryptForPeer(destination, content),\n\t\tTimestamp:   time.Now().UnixMilli(),\n\t\tMessageId:   messageID,\n\t\tAttachments: attachments,"
-              )
-
-              with open(ms_path, "w", encoding="utf-8") as f:
-                  f.write(ms)
-              print("[OK] 2. messenger.go: проверка подписи Ed25519 стала обязательной, подписи вложений зашифрованы")
-
-          # 3. internal/appcore/contacts.go: асинхронный резолв Unknown-ников без блокировки GetContacts
-          ct_path = "internal/appcore/contacts.go"
-          if os.path.exists(ct_path):
-              with open(ct_path, "r", encoding="utf-8") as f:
-                  ct = f.read()
-
-              old_res = """		if (len(c.Nickname) > 28 && !strings.Contains(c.Nickname, " ")) || strings.HasPrefix(c.Nickname, "Unknown") || strings.HasPrefix(c.Nickname, "Контакт ") {
-          			if resolved := resolveNickByPubFromVPS(c.I2PAddress); resolved != "" {
-          				c.Nickname = resolved
-          				updated = true
-          			}
-          		}"""
-
-              new_res = """		if (len(c.Nickname) > 28 && !strings.Contains(c.Nickname, " ")) || strings.HasPrefix(c.Nickname, "Unknown") || strings.HasPrefix(c.Nickname, "Контакт ") {
-          			cCopy := *c
-          			go func(cc core.Contact) {
-          				if resolved := resolveNickByPubFromVPS(cc.I2PAddress); resolved != "" {
-          					cc.Nickname = resolved
-          					if a.Repo != nil {
-          						_ = a.Repo.SaveContact(a.Ctx, &cc)
-          						a.Emitter.Emit("contact_updated")
-          					}
-          				}
-          			}(cCopy)
-          		}"""
-
-              ct = ct.replace(old_res, new_res, 1)
-              with open(ct_path, "w", encoding="utf-8") as f:
-                  f.write(ct)
-              print("[OK] 3. contacts.go: резолв ников переведён в фоновую горутину")
-
-          # 4. App.svelte + Chat.svelte: глобальный приём/отклонение звонка из уведомления с любого экрана
+          # 3. App.svelte: не блокируем вход на loadAboutInfo + мгновенное удаление контакта с 1 раза
           app_path = "frontend/src/App.svelte"
           if os.path.exists(app_path):
               with open(app_path, "r", encoding="utf-8") as f:
                   ap = f.read()
+              ap = ap.replace(
+                  "await Promise.all([\n              loadContacts(),\n              loadAboutInfo()\n          ]);",
+                  "await loadContacts();\n          loadAboutInfo();"
+              )
+              old_del_c = """            <div class="context-item danger" on:click={() => { 
+                          AppActions.DeleteContact(contextMenu.contact.ID); 
+                          loadContacts();
+                      }}>Удалить контакт</div>"""
+              new_del_c = """            <div class="context-item danger" on:click={async () => { 
+                          const targetId = contextMenu.contact?.ID;
+                          contextMenu.show = false;
+                          if (!targetId) return;
+                          contacts = contacts.filter(c => c.ID !== targetId);
+                          await AppActions.DeleteContact(targetId).catch(() => {});
+                          await loadContacts();
+                          showToast('Контакт удалён', 'info');
+                      }}>Удалить контакт</div>"""
+              ap = ap.replace(old_del_c, new_del_c)
+              with open(app_path, "w", encoding="utf-8") as f:
+                  f.write(ap)
 
-              global_call_handler = """        window.__onHydraCallNotifAction = async (senderNick, action) => {
-                      if (typeof window.__onHydraChatCallAction === 'function') {
-                          window.__onHydraChatCallAction(senderNick, action);
-                          return;
+          # 4. Settings.svelte: ровная круглая парящая иконка в "О программе" + версия 3.2.0-hydra
+          st_path = "frontend/src/components/Settings.svelte"
+          if os.path.exists(st_path):
+              with open(st_path, "r", encoding="utf-8") as f:
+                  st = f.read()
+              st = st.replace("aboutInfo.app_version || '3.0.0-hydra'", "aboutInfo.app_version || '3.2.0-hydra'")
+              st = st.replace(
+                  "width: 100px; height: 100px; background: linear-gradient(135deg, #1D4ED8 0%, #60A5FA 100%); \n        border-radius: 30px;",
+                  "width: 100px; height: 100px; background: transparent; overflow: hidden; \n        border-radius: 50%;"
+              )
+              with open(st_path, "w", encoding="utf-8") as f:
+                  f.write(st)
+
+          # 5. Sidebar.svelte:
+          # - удаляем историю у всех ТОЛЬКО если автор — мы ('Моя история')
+          # - сворачиваемая лента историй + медленно мигающие зелёным ники для новых историй
+          sb_path = "frontend/src/components/Sidebar.svelte"
+          if os.path.exists(sb_path):
+              with open(sb_path, "r", encoding="utf-8") as f:
+                  sb = f.read()
+
+              old_del_st = """    function deleteCurrentStory(stId) {
+                  hydraStories = hydraStories.filter(s => s.id !== stId);
+                  localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
+                  activeStoryModal = null;
+                  (contacts || []).forEach(c => {
+                      if (c && c.ID && !c.IsFavorites && !String(c.Nickname || '').startsWith('👥') && !String(c.Nickname || '').startsWith('📢')) {
+                          AppActions.SendText(c.ID, '[HYDRA_STORY_DEL]:' + stId, '').catch(() => {});
                       }
-                      const list = (contacts && contacts.length > 0) ? contacts : (await AppActions.GetContacts().catch(() => []));
-                      const target = (list || []).find(c => (c.Nickname || '').toLowerCase().includes((senderNick || '').toLowerCase()));
-                      if (target) {
-                          window.__pendingHydraCallAction = { senderNick, action, ts: Date.now() };
-                          selectContact(target);
-                      }
-                  };
-          """
-              if "__onHydraCallNotifAction" not in ap:
-                  ap = ap.replace(
-                      "window.__onHydraDirectReply = async",
-                      global_call_handler + "\n        window.__onHydraDirectReply = async",
+                  });
+              }"""
+              new_del_st = """    function deleteCurrentStory(stId) {
+                  const target = hydraStories.find(s => s.id === stId);
+                  const isMine = target && target.author === 'Моя история';
+                  hydraStories = hydraStories.filter(s => s.id !== stId);
+                  localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));
+                  activeStoryModal = null;
+                  if (isMine) {
+                      (contacts || []).forEach(c => {
+                          if (c && c.ID && !c.IsFavorites && !String(c.Nickname || '').startsWith('👥') && !String(c.Nickname || '').startsWith('📢')) {
+                              AppActions.SendText(c.ID, '[HYDRA_STORY_DEL]:' + stId, '').catch(() => {});
+                          }
+                      });
+                  }
+              }"""
+              sb = sb.replace(old_del_st, new_del_st)
+
+              if "let storiesCollapsed =" not in sb:
+                  sb = sb.replace(
+                      "let activeStoryModal = null;",
+                      "let activeStoryModal = null;\n    let storiesCollapsed = localStorage.getItem('hydra_stories_collapsed') === '1';\n    function toggleStoriesBar() {\n        storiesCollapsed = !storiesCollapsed;\n        localStorage.setItem('hydra_stories_collapsed', storiesCollapsed ? '1' : '0');\n    }"
+                  )
+
+              # Помечаем историю как просмотренную при открытии
+              sb = sb.replace(
+                  "activeStoryModal = st;",
+                  "st.seen = true;\n        localStorage.setItem('hydra_stories_v1', JSON.stringify(hydraStories));\n        activeStoryModal = st;"
+              )
+
+              # Компактный / развёрнутый режим ленты историй на мобильном
+              old_mob_stories = """        <!-- Мобильная лента Сторис (24 часа) -->
+                  <div style="display: flex; gap: 12px; padding: 8px 16px 12px; overflow-x: auto; border-bottom: 1px solid rgba(255,255,255,0.06); align-items: center; flex-shrink: 0;">"""
+              new_mob_stories = """        <!-- Мобильная лента Сторис (сворачиваемая) -->
+                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 16px 2px; flex-shrink: 0;">
+                      <span style="font-size: 11px; color: #9CA3AF; font-weight: 700;">Истории ({hydraStories.length})</span>
+                      <button type="button" on:click={toggleStoriesBar} style="background: transparent; border: none; color: #60A5FA; font-size: 11px; font-weight: 700; cursor: pointer;">
+                          {storiesCollapsed ? '▾ Развернуть' : '▴ Свернуть'}
+                      </button>
+                  </div>
+                  {#if storiesCollapsed}
+                      <div style="display: flex; gap: 8px; padding: 4px 16px 10px; overflow-x: auto; border-bottom: 1px solid rgba(255,255,255,0.06); align-items: center; flex-shrink: 0;">
+                          <button type="button" on:click={() => showCreateStoryModal = true} style="padding: 4px 10px; border-radius: 100px; background: #1E1F22; border: 1px dashed #8AB4F8; color: #8AB4F8; font-size: 11px; font-weight: 700; white-space: nowrap;">+ История</button>
+                          {#each hydraStories as st}
+                              <button type="button" on:click={() => openHydraStory(st)} class:story-nick-pulse={!st.seen} style="padding: 4px 10px; border-radius: 100px; background: #1E1F22; border: 1px solid {!st.seen ? '#10B981' : 'rgba(255,255,255,0.1)'}; color: {!st.seen ? '#34D399' : '#E5E7EB'}; font-size: 11px; font-weight: 700; white-space: nowrap;">
+                                  {st.author}
+                              </button>
+                          {/each}
+                      </div>
+                  {:else}
+                  <div style="display: flex; gap: 12px; padding: 8px 16px 12px; overflow-x: auto; border-bottom: 1px solid rgba(255,255,255,0.06); align-items: center; flex-shrink: 0;">"""
+
+              if "toggleStoriesBar" in sb and "story-nick-pulse" not in sb:
+                  sb = sb.replace(old_mob_stories, new_mob_stories, 1)
+                  sb = sb.replace(
+                      '        </div>\n    \n        <div class="contacts-list mobile-contacts">',
+                      '        </div>\n        {/if}\n    \n        <div class="contacts-list mobile-contacts">',
+                      1
+                  )
+                  sb = sb.replace(
+                      "</style>",
+                      "    .story-nick-pulse { animation: hydraGreenPulse 2.4s ease-in-out infinite; }\n    @keyframes hydraGreenPulse { 0%, 100% { box-shadow: 0 0 0 rgba(16,185,129,0); opacity: 1; } 50% { box-shadow: 0 0 10px rgba(16,185,129,0.65); opacity: 0.7; } }\n</style>",
                       1
                   )
 
-              global_sig_listener = """    EventsOn("hydra_call_signal", (sig) => {
-                  if (sig && sig.content && String(sig.content).startsWith('[HYDRA_CALL_RING]:')) {
-                      window.__lastIncomingCallOffer = { ...sig, ts: Date.now() };
-                  } else if (sig && sig.content && (String(sig.content).startsWith('[HYDRA_CALL_END]:') || String(sig.content).startsWith('[HYDRA_CALL_MISSED]:'))) {
-                      window.__lastIncomingCallOffer = null;
-                  }
-              });
+              with open(sb_path, "w", encoding="utf-8") as f:
+                  f.write(sb)
 
-              EventsOn("unread_count","""
-              if "__lastIncomingCallOffer" not in ap:
-                  ap = ap.replace('EventsOn("unread_count",', global_sig_listener, 1)
+          # 6. Modals.svelte: перезагрузка участников при открытии профиля + реактивные права группы и админы
+          md_path = "frontend/src/components/Modals.svelte"
+          if os.path.exists(md_path):
+              with open(md_path, "r", encoding="utf-8") as f:
+                  md = f.read()
 
-              with open(app_path, "w", encoding="utf-8") as f:
-                  f.write(ap)
-              print("[OK] 4a. App.svelte: добавлен глобальный перехват звонков и кнопок уведомлений")
+              md = md.replace(
+                  "$: if (contact) {",
+                  """let groupAdminsList = [];
+              let groupPermMsg = true;
+              let groupPermMedia = true;
+              let groupPermInvite = true;
 
+              $: if (showContactProfile && contact) {"""
+              )
+              md = md.replace(
+                  "groupHideMembers = localStorage.getItem('hydra_group_hide_members_' + contact.ID) === '1';",
+                  """groupHideMembers = localStorage.getItem('hydra_group_hide_members_' + contact.ID) === '1';
+                      groupAdminsList = JSON.parse(localStorage.getItem('hydra_group_admins_' + contact.ID) || '[]');
+                      groupPermMsg = localStorage.getItem('hydra_group_admins_only_' + contact.ID) !== '1';
+                      groupPermMedia = localStorage.getItem('hydra_group_perm_media_' + contact.ID) !== '0';
+                      groupPermInvite = localStorage.getItem('hydra_group_perm_invite_' + contact.ID) !== '0';"""
+              )
+
+              old_grp_block = re.search(
+                  r'\{#if String\(contact\.Nickname \|\| \'\'\)\.startsWith\(\'👥\'\) \|\| String\(contact\.Nickname \|\| \'\'\)\.startsWith\(\'📢\'\)\}[\s\S]*?Переключить право отправки сообщений[\s\S]*?\{/if\}',
+                  md
+              )
+              if old_grp_block:
+                  new_grp_block = """{#if String(contact.Nickname || '').startsWith('👥') || String(contact.Nickname || '').startsWith('📢')}
+                  <div style="margin: 0 16px 16px; background: #1A1C20; border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 10px;">
+                      <div style="display: flex; justify-content: space-between; align-items: center;">
+                          <span style="font-size: 14px; font-weight: 800; color: #60A5FA;">👥 Участники ({groupMembersInProfile.length})</span>
+                          <button type="button" on:click={toggleGroupMembersVisibility} style="background: rgba(59,130,246,0.18); color: #93C5FD; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 700;">
+                              {groupHideMembers ? '🙈 Скрыты (видны владельцу)' : '👁️ Видны всем'}
+                          </button>
+                      </div>
+                      <div style="display: flex; flex-direction: column; gap: 6px;">
+                          {#each groupMembersInProfile as mem}
+                              <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #121316; border-radius: 12px; font-size: 13px; color: #E5E7EB;">
+                                  <span>{String(mem).includes('Создатель') ? '👑 Вы (Владелец)' : mem}</span>
+                                  {#if !String(mem).includes('Создатель')}
+                                      <button type="button" on:click={() => {
+                                          if (groupAdminsList.includes(mem)) groupAdminsList = groupAdminsList.filter(x => x !== mem);
+                                          else groupAdminsList = [...groupAdminsList, mem];
+                                          localStorage.setItem('hydra_group_admins_' + contact.ID, JSON.stringify(groupAdminsList));
+                                      }} style="background: {groupAdminsList.includes(mem) ? '#10B981' : '#1E3A8A'}; color: #fff; border: none; border-radius: 100px; padding: 4px 10px; font-size: 11px; font-weight: 700; cursor: pointer;">
+                                          {groupAdminsList.includes(mem) ? '✅ Админ' : '+ Админ'}
+                                      </button>
+                                  {/if}
+                              </div>
+                          {/each}
+                      </div>
+                      <div style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+                          <div style="font-size: 12px; font-weight: 800; color: #9CA3AF;">⚙️ Разрешения для участников:</div>
+                          <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #E5E7EB;">
+                              <span>💬 Отправка сообщений</span>
+                              <input type="checkbox" checked={groupPermMsg} on:change={() => { groupPermMsg = !groupPermMsg; localStorage.setItem('hydra_group_admins_only_' + contact.ID, groupPermMsg ? '0' : '1'); }} style="width: 18px; height: 18px; accent-color: #2563EB;" />
+                          </label>
+                          <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #E5E7EB;">
+                              <span>🖼️ Отправка фото, видео и стикеров</span>
+                              <input type="checkbox" checked={groupPermMedia} on:change={() => { groupPermMedia = !groupPermMedia; localStorage.setItem('hydra_group_perm_media_' + contact.ID, groupPermMedia ? '1' : '0'); }} style="width: 18px; height: 18px; accent-color: #2563EB;" />
+                          </label>
+                          <label style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #E5E7EB;">
+                              <span>➕ Добавление участников</span>
+                              <input type="checkbox" checked={groupPermInvite} on:change={() => { groupPermInvite = !groupPermInvite; localStorage.setItem('hydra_group_perm_invite_' + contact.ID, groupPermInvite ? '1' : '0'); }} style="width: 18px; height: 18px; accent-color: #2563EB;" />
+                          </label>
+                      </div>
+                  </div>
+              {/if}"""
+                  md = md[:old_grp_block.start()] + new_grp_block + md[old_grp_block.end():]
+
+              with open(md_path, "w", encoding="utf-8") as f:
+                  f.write(md)
+
+          # 7. Chat.svelte:
+          # - убираем кнопку "+ Импорт (.webp/.png)"
+          # - встроенная камера для фото (getUserMedia, не открывает галерею и не триггерит отпечаток)
           ch_path = "frontend/src/components/Chat.svelte"
           if os.path.exists(ch_path):
               with open(ch_path, "r", encoding="utf-8") as f:
                   ch = f.read()
 
-              ch = ch.replace("window.__onHydraCallNotifAction =", "window.__onHydraChatCallAction =")
+              # Убираем кнопку + Импорт (.webp/.png)
+              ch = re.sub(
+                  r'\{#if emojiTab === \'stickers\'\}\s*<label[\s\S]*?Импорт \(\.webp/\.png\)[\s\S]*?</label>\s*\{/if\}',
+                  '',
+                  ch,
+                  count=1
+              )
 
-              pending_call_check = """
-              $: if (selectedContact && typeof window !== 'undefined' && window.__pendingHydraCallAction) {
-                  const pAct = window.__pendingHydraCallAction;
-                  if (Date.now() - pAct.ts < 15000) {
-                      window.__pendingHydraCallAction = null;
-                      const lastSig = window.__lastIncomingCallOffer;
-                      if (lastSig && lastSig.content && Date.now() - lastSig.ts < 45000 && !incomingCallOffer) {
-                          incomingCallOffer = String(lastSig.content).slice('[HYDRA_CALL_RING]:'.length);
-                          activeCallModal = true;
-                          callConnected = false;
-                      }
-                      setTimeout(() => {
-                          if (pAct.action === 'accept_call') acceptIncomingHydraCall();
-                          else if (pAct.action === 'decline_call') endHydraCall(true);
-                      }, 150);
+              # Встроенная камера для фото
+              inapp_cam_js = """
+              let showPhotoCamModal = false;
+              let photoCamStream = null;
+              let photoCamVideoEl = null;
+              let photoCamFacing = 'environment';
+
+              async function openInAppPhotoCamera(switchFacing = false) {
+                  if (switchFacing) {
+                      photoCamFacing = photoCamFacing === 'environment' ? 'user' : 'environment';
+                      if (photoCamStream) photoCamStream.getTracks().forEach(t => t.stop());
                   } else {
-                      window.__pendingHydraCallAction = null;
+                      showPhotoCamModal = true;
+                  }
+                  try {
+                      photoCamStream = await navigator.mediaDevices.getUserMedia({
+                          video: { facingMode: photoCamFacing, width: { ideal: 1280 }, height: { ideal: 1280 } },
+                          audio: false
+                      });
+                      setTimeout(() => {
+                          if (photoCamVideoEl && photoCamStream) {
+                              photoCamVideoEl.srcObject = photoCamStream;
+                              photoCamVideoEl.play().catch(() => {});
+                          }
+                      }, 80);
+                  } catch (e) {
+                      alert('Не удалось открыть камеру: ' + e);
+                      showPhotoCamModal = false;
+                  }
+              }
+
+              function closeInAppPhotoCamera() {
+                  if (photoCamStream) {
+                      photoCamStream.getTracks().forEach(t => t.stop());
+                      photoCamStream = null;
+                  }
+                  showPhotoCamModal = false;
+              }
+
+              async function snapAndSendInAppPhoto() {
+                  if (!photoCamVideoEl || !selectedContact) return;
+                  const canvas = document.createElement('canvas');
+                  canvas.width = photoCamVideoEl.videoWidth || 720;
+                  canvas.height = photoCamVideoEl.videoHeight || 720;
+                  canvas.getContext('2d').drawImage(photoCamVideoEl, 0, 0, canvas.width, canvas.height);
+                  const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                  closeInAppPhotoCamera();
+                  try {
+                      const tmpPath = await AppActions.SaveTempImage(dataUrl, 'cam_' + Date.now() + '.jpg');
+                      if (tmpPath) {
+                          await AppActions.SendFileMessage(selectedContact.ID, '', '', [tmpPath], false);
+                          dispatch('refresh');
+                      }
+                  } catch (e) {
+                      alert('Ошибка отправки фото: ' + e);
                   }
               }
               """
-              if "__pendingHydraCallAction" not in ch:
-                  ch = ch.replace(
-                      "window.__onHydraChatCallAction =",
-                      pending_call_check + "\n        window.__onHydraChatCallAction =",
-                      1
-                  )
+              if "let showPhotoCamModal =" not in ch:
+                  ch = ch.replace("let isSelectMode = false;", inapp_cam_js + "\n    let isSelectMode = false;", 1)
+
+              # Меняем <label>...<input capture> на кнопку openInAppPhotoCamera
+              ch = re.sub(
+                  r'<label class="btn-icon" title="Сделать фото с камеры"[\s\S]*?</label>',
+                  '<button type="button" class="btn-icon" on:click={() => openInAppPhotoCamera(false)} title="Сделать фото с камеры" style="padding: 6px; color: #9CA3AF; cursor: pointer;"><span style="font-size: 19px;">📸</span></button>',
+                  ch,
+                  count=1
+              )
+
+              photo_cam_modal = """
+          {#if showPhotoCamModal}
+              <div style="position: fixed; inset: 0; background: #000; z-index: 99999; display: flex; flex-direction: column;">
+                  <div style="display: flex; justify-content: space-between; padding: 16px; padding-top: calc(16px + env(safe-area-inset-top, 12px));">
+                      <button type="button" on:click={closeInAppPhotoCamera} style="width: 42px; height: 42px; border-radius: 50%; background: rgba(255,255,255,0.15); color: #fff; border: none; font-size: 18px;">✕</button>
+                      <button type="button" on:click={() => openInAppPhotoCamera(true)} style="width: 42px; height: 42px; border-radius: 50%; background: rgba(255,255,255,0.15); color: #fff; border: none; font-size: 18px;">🔄</button>
+                  </div>
+                  <video bind:this={photoCamVideoEl} autoplay playsinline muted style="flex: 1; width: 100%; object-fit: cover;"></video>
+                  <div style="padding: 24px; display: flex; justify-content: center; background: rgba(0,0,0,0.6);">
+                      <button type="button" on:click={snapAndSendInAppPhoto} style="width: 72px; height: 72px; border-radius: 50%; background: #fff; border: 5px solid #3B82F6; cursor: pointer;"></button>
+                  </div>
+              </div>
+          {/if}
+          """
+              if "showPhotoCamModal" in ch and "snapAndSendInAppPhoto" in ch and "photoCamVideoEl" in ch:
+                  ch = ch.replace("<style>", photo_cam_modal + "\n<style>", 1)
 
               with open(ch_path, "w", encoding="utf-8") as f:
                   f.write(ch)
-              print("[OK] 4b. Chat.svelte: привязан автоприём отложенного звонка из шторки уведомлений")
+
+          print("[OK] Hydra v3.2.0: все правки применены успешно!")
           PYEOF
-          python3 fix_v311.py
-          rm -f fix_v311.py
+          python3 fix_v320.py
+          rm -f fix_v320.py
           gofmt -w internal/
 
       - name: Install jsQR & Build Frontend (Svelte)
@@ -256,13 +395,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Hydra v3.1.1 Fixes
+      - name: Commit Hydra v3.2.0 Fixes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Hydra v3.1.1: instant biometric unlock, mandatory Ed25519 WS verify, global call notification actions & async contact nick resolve [skip ci]"
+            git commit -m "Hydra v3.2.0: in-app photo camera, biometric unmount fix, collapsible stories bar, group owner/admin permissions, round logo & version sync [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
@@ -299,5 +438,5 @@ jobs:
       - name: Upload Signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: Hydra-v3.1.1-Signed-APK
+          name: Hydra-v3.2.0-Signed-APK
           path: android/app/build/outputs/apk/release/*.apk
