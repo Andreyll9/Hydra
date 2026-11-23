@@ -38,18 +38,18 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply Hydra v3.3.0 (Real Profile Media, In-Chat Search, Creative E2EE Loader, Telegram Attach Sheet)
+      - name: Apply Hydra v3.4.0 (Coturn Calls, Native Android Camera, Multi-Select Chats & Delete for Both)
         run: |
-          cat << 'PYEOF' > fix_v330.py
+          cat << 'PYEOF' > fix_v340.py
           import os, re
 
-          # 0. Обновляем версию до 3.3.0-hydra
+          # 0. Обновляем версию до 3.4.0-hydra
           gr_path = "android/app/build.gradle"
           if os.path.exists(gr_path):
               with open(gr_path, "r", encoding="utf-8") as f:
                   gr = f.read()
-              gr = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.3.0-hydra"', gr)
-              gr = re.sub(r'versionCode\s+\d+', 'versionCode 330', gr)
+              gr = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.4.0-hydra"', gr)
+              gr = re.sub(r'versionCode\s+\d+', 'versionCode 340', gr)
               with open(gr_path, "w", encoding="utf-8") as f:
                   f.write(gr)
 
@@ -60,341 +60,297 @@ jobs:
                       with open(fp, "r", encoding="utf-8") as f:
                           txt = f.read()
                       if "AppVersion:" in txt:
-                          txt = re.sub(r'AppVersion:\s*"[^"]+"', 'AppVersion: "3.3.0-hydra"', txt)
+                          txt = re.sub(r'AppVersion:\s*"[^"]+"', 'AppVersion: "3.4.0-hydra"', txt)
                           with open(fp, "w", encoding="utf-8") as f:
                               f.write(txt)
 
-          # 1. App.svelte: передаём {messages}, onPreviewImage и onSaveFile в <Modals>
-          app_path = "frontend/src/App.svelte"
-          if os.path.exists(app_path):
-              with open(app_path, "r", encoding="utf-8") as f:
-                  ap = f.read()
-              if "messages={messages}" not in ap:
-                  ap = ap.replace(
-                      "contact={selectedContact}",
-                      "contact={selectedContact}\n        messages={messages}\n        onPreviewImage={chatHandlers.onPreviewImage}\n        onSaveFile={chatHandlers.onSaveFile}",
-                      1
+          # 1. Go (appcore.go + messages.go): поддержка команды [HYDRA_DEL_CHAT]: (удалить диалог у обоих)
+          ac_path = "internal/appcore/appcore.go"
+          if os.path.exists(ac_path):
+              with open(ac_path, "r", encoding="utf-8") as f:
+                  ac = f.read()
+              if "[HYDRA_DEL_CHAT]:" not in ac:
+                  ac = ac.replace(
+                      'if strings.HasPrefix(msg.Content, "[HYDRA_DEL_MSG]:") {',
+                      '''if strings.HasPrefix(msg.Content, "[HYDRA_DEL_CHAT]:") {
+          		if a.Repo != nil && contact != nil {
+          			_ = a.Repo.DeleteContact(a.Ctx, contact.ID)
+          			a.Emitter.Emit("contact_updated")
+          		}
+          		return
+          	}
+          	if strings.HasPrefix(msg.Content, "[HYDRA_DEL_MSG]:") {'''
                   )
-              with open(app_path, "w", encoding="utf-8") as f:
-                  f.write(ap)
-              print("[OK] 1. App.svelte: сообщения и обработчики медиа переданы в Modals")
+              with open(ac_path, "w", encoding="utf-8") as f:
+                  f.write(ac)
 
-          # 2. Modals.svelte: реальные вкладки Фото и медиа / Файлы / Голосовые
-          md_path = "frontend/src/components/Modals.svelte"
-          if os.path.exists(md_path):
-              with open(md_path, "r", encoding="utf-8") as f:
-                  md = f.read()
+          msg_path = "internal/appcore/messages.go"
+          if os.path.exists(msg_path):
+              with open(msg_path, "r", encoding="utf-8") as f:
+                  mc = f.read()
+              if '"[HYDRA_DEL_CHAT]:"' not in mc:
+                  mc = mc.replace('"[HYDRA_DEL_MSG]:",', '"[HYDRA_DEL_MSG]:",\n\t\t"[HYDRA_DEL_CHAT]:",')
+              with open(msg_path, "w", encoding="utf-8") as f:
+                  f.write(mc)
 
-              if "export let messages =" not in md:
-                  md = md.replace(
-                      "export let contact = null;",
-                      "export let contact = null;\n    export let messages = [];\n    export let onPreviewImage = null;\n    export let onSaveFile = null;",
-                      1
+          # 2. MainActivity.kt: запуск родной камеры Android (ACTION_IMAGE_CAPTURE) без блокировки отпечатком
+          kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
+          if os.path.exists(kt_path):
+              with open(kt_path, "r", encoding="utf-8") as f:
+                  kt = f.read()
+
+              if "private var pendingCameraFilePath: String?" not in kt:
+                  kt = kt.replace(
+                      "private var isBiometricPromptOpen = false",
+                      "private var isBiometricPromptOpen = false\n    private var pendingCameraFilePath: String? = null"
                   )
 
-              media_computed_js = """
-              $: profileMediaItems = (messages || []).flatMap(m => {
-                  const items = [];
-                  if (m.Attachments && m.Attachments.length > 0) {
-                      for (const att of m.Attachments) {
-                          if (att.MimeType && att.MimeType.startsWith('image/')) {
-                              const fname = String(att.LocalPath || '').split('/').pop();
-                              items.push({ type: 'image', src: '/media/' + fname, path: att.LocalPath, ts: m.Timestamp });
+              cam_launcher = """    private val nativeCameraLauncher = registerForActivityResult(
+                  ActivityResultContracts.StartActivityForResult()
+              ) { result ->
+                  val path = pendingCameraFilePath
+                  pendingCameraFilePath = null
+                  if (result.resultCode == Activity.RESULT_OK && !path.isNullOrEmpty() && File(path).exists()) {
+                      val safePath = JSONObject.quote(path)
+                      runOnUiThread {
+                          webView.evaluateJavascript("if(window.__onNativeCameraPhoto) window.__onNativeCameraPhoto($safePath);", null)
+                      }
+                  }
+              }
+
+              private val filePickerLauncher ="""
+              if "nativeCameraLauncher" not in kt:
+                  kt = kt.replace("private val filePickerLauncher =", cam_launcher, 1)
+
+              cam_bridge_fn = """        @JavascriptInterface
+                  fun openNativeCamera() {
+                      runOnUiThread {
+                          try {
+                              val tempDir = File(filesDir, "tmp_uploads")
+                              if (!tempDir.exists()) tempDir.mkdirs()
+                              val photoFile = File(tempDir, "cam_${System.currentTimeMillis()}.jpg")
+                              pendingCameraFilePath = photoFile.absolutePath
+                              val photoUri = androidx.core.content.FileProvider.getUriForFile(
+                                  this@MainActivity,
+                                  "com.teleghost.app.fileprovider",
+                                  photoFile
+                              )
+                              val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                                  putExtra(android.provider.MediaStore.EXTRA_OUTPUT, photoUri)
+                                  addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                              }
+                              isOpeningSystemPicker = true
+                              webView.evaluateJavascript("window.__hydraSkipLock = true;", null)
+                              nativeCameraLauncher.launch(intent)
+                          } catch (e: Exception) {
+                              pushNativeLog("CAM-ERR", "Ошибка запуска родной камеры: ${e.message}")
                           }
                       }
                   }
-                  const c = String(m.Content || '');
-                  if (c.startsWith('[HYDRA_CIRCLE]:')) {
-                      items.push({ type: 'circle', src: c.slice('[HYDRA_CIRCLE]:'.length), ts: m.Timestamp });
-                  } else if (c.startsWith('[HYDRA_VIDEO]:')) {
-                      items.push({ type: 'video', src: c.slice('[HYDRA_VIDEO]:'.length), ts: m.Timestamp });
-                  }
-                  return items;
-              }).reverse();
 
-              $: profileFileItems = (messages || []).flatMap(m => {
-                  const items = [];
-                  if (m.Attachments && m.Attachments.length > 0) {
-                      for (const att of m.Attachments) {
-                          if (!att.MimeType || !att.MimeType.startsWith('image/')) {
-                              items.push({ name: att.Filename || 'Файл', size: att.Size || 0, path: att.LocalPath, ts: m.Timestamp });
-                          }
-                      }
-                  }
-                  return items;
-              }).reverse();
+                  @JavascriptInterface
+                  fun setCallActive("""
+              if "fun openNativeCamera()" not in kt:
+                  kt = kt.replace("@JavascriptInterface\n        fun setCallActive(", cam_bridge_fn, 1)
 
-              $: profileVoiceItems = (messages || [])
-                  .filter(m => String(m.Content || '').startsWith('[HYDRA_VOICE]:'))
-                  .map(m => ({ id: m.ID, src: String(m.Content).slice('[HYDRA_VOICE]:'.length), ts: m.Timestamp, outgoing: m.IsOutgoing }))
-                  .reverse();
-              """
-              if "profileMediaItems" not in md:
-                  md = md.replace("let profileActiveTab = 'media';", "let profileActiveTab = 'media';\n" + media_computed_js, 1)
+              with open(kt_path, "w", encoding="utf-8") as f:
+                  f.write(kt)
+              print("[OK] 2. MainActivity.kt: добавлен запуск родной камеры телефона")
 
-              old_placeholder = """    <div style="padding: 16px; text-align: center; color: #6B7280; font-size: 13px;">
-                  🔒 Все {profileActiveTab === 'media' ? 'фото и видео-кружки' : (profileActiveTab === 'files' ? 'переданные файлы' : 'голосовые сообщения')} этого чата хранятся в зашифрованном контейнере E2EE.
-              </div>"""
-
-              new_tabs_content = """    <div style="padding: 0 16px 32px;">
-                  {#if profileActiveTab === 'media'}
-                      {#if profileMediaItems.length === 0}
-                          <div style="text-align: center; color: #6B7280; font-size: 13px; padding: 24px 0;">Пока нет фото, видео или кружков в этом чате</div>
-                      {:else}
-                          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;">
-                              {#each profileMediaItems as item}
-                                  <div style="aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: #1A1C20; position: relative; cursor: pointer;" on:click={() => { if (item.type === 'image' && onPreviewImage) { onCloseContactProfile(); onPreviewImage(item.path); } }}>
-                                      {#if item.type === 'image'}
-                                          <img src={item.src} alt="media" style="width: 100%; height: 100%; object-fit: cover;" />
-                                      {:else}
-                                          <video muted playsinline src={item.src} style="width: 100%; height: 100%; object-fit: cover;"></video>
-                                          <span style="position: absolute; bottom: 4px; right: 4px; background: rgba(0,0,0,0.65); color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 8px;">{item.type === 'circle' ? '📹' : '🎬'}</span>
-                                      {/if}
-                                  </div>
-                              {/each}
-                          </div>
-                      {/if}
-                  {:else if profileActiveTab === 'files'}
-                      {#if profileFileItems.length === 0}
-                          <div style="text-align: center; color: #6B7280; font-size: 13px; padding: 24px 0;">В этом чате пока нет переданных файлов</div>
-                      {:else}
-                          <div style="display: flex; flex-direction: column; gap: 8px;">
-                              {#each profileFileItems as f}
-                                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px; background: #1A1C20; border-radius: 14px;">
-                                      <div style="min-width: 0; flex: 1;">
-                                          <div style="font-size: 13px; font-weight: 700; color: #E5E7EB; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">📄 {f.name}</div>
-                                          <div style="font-size: 11px; color: #9CA3AF; margin-top: 2px;">{f.size ? (f.size / 1024).toFixed(1) + ' КБ' : 'Файл'}</div>
-                                      </div>
-                                      {#if onSaveFile && f.path}
-                                          <button type="button" on:click={() => onSaveFile(f.path, f.name)} style="background: #1D4ED8; color: #fff; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700; cursor: pointer;">⬇️</button>
-                                      {/if}
-                                  </div>
-                              {/each}
-                          </div>
-                      {/if}
-                  {:else}
-                      {#if profileVoiceItems.length === 0}
-                          <div style="text-align: center; color: #6B7280; font-size: 13px; padding: 24px 0;">В этом чате пока нет голосовых сообщений</div>
-                      {:else}
-                          <div style="display: flex; flex-direction: column; gap: 8px;">
-                              {#each profileVoiceItems as v}
-                                  <div style="padding: 10px 12px; background: #1A1C20; border-radius: 14px; display: flex; flex-direction: column; gap: 6px;">
-                                      <div style="font-size: 11px; color: #9CA3AF;">🎤 {v.outgoing ? 'Вы' : contact.Nickname} • {new Date(v.ts).toLocaleString().slice(0, 16)}</div>
-                                      <audio controls src={v.src} style="width: 100%; height: 34px;"></audio>
-                                  </div>
-                              {/each}
-                          </div>
-                      {/if}
-                  {/if}
-              </div>"""
-
-              if old_placeholder in md:
-                  md = md.replace(old_placeholder, new_tabs_content, 1)
-              else:
-                  md = re.sub(
-                      r'<div style="padding: 16px; text-align: center; color: #6B7280; font-size: 13px;">[\s\S]*?контейнере E2EE\.\s*</div>',
-                      new_tabs_content.strip(),
-                      md,
-                      count=1
-                  )
-
-              with open(md_path, "w", encoding="utf-8") as f:
-                  f.write(md)
-              print("[OK] 2. Modals.svelte: вкладки Фото и медиа / Файлы / Голосовые показывают реальные данные")
-
-          # 3. Chat.svelte:
-          # - Поиск по сообщениям внутри чата
-          # - Уникальный анимированный индикатор отправки медиа (Hydra E2EE Pulse)
-          # - Шторка вложений как в Telegram с живым квадратом камеры по нажатию на скрепку
+          # 3. Chat.svelte: Coturn TURN-сервер в WebRTC + вызов родной камеры в шторке вложений
           ch_path = "frontend/src/components/Chat.svelte"
           if os.path.exists(ch_path):
               with open(ch_path, "r", encoding="utf-8") as f:
                   ch = f.read()
 
-              new_chat_logic = """
-              // === ПОИСК ВНУТРИ ЧАТА ===
-              let showChatSearch = false;
-              let chatSearchQuery = '';
-              let chatSearchMatches = [];
-              let chatSearchIdx = 0;
+              old_ice = "{ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }"
+              new_ice = "{ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:rtbeta.duckdns.org:3478' }, { urls: ['turn:rtbeta.duckdns.org:3478?transport=udp', 'turn:rtbeta.duckdns.org:3478?transport=tcp'], username: 'hydra', credential: 'HydraTurn2026!' }] }"
+              ch = ch.replace(old_ice, new_ice)
 
-              $: {
-                  const q = (chatSearchQuery || '').trim().toLowerCase();
-                  if (showChatSearch && q.length > 0) {
-                      chatSearchMatches = (messages || [])
-                          .filter(m => m.Content && !String(m.Content).startsWith('[HYDRA_') && String(m.Content).toLowerCase().includes(q))
-                          .map(m => m.ID)
-                          .reverse();
-                      if (chatSearchIdx >= chatSearchMatches.length) chatSearchIdx = 0;
-                  } else {
-                      chatSearchMatches = [];
-                      chatSearchIdx = 0;
-                  }
-              }
-
-              function jumpToSearchMatch(idx) {
-                  if (!chatSearchMatches.length) return;
-                  chatSearchIdx = (idx + chatSearchMatches.length) % chatSearchMatches.length;
-                  const targetId = chatSearchMatches[chatSearchIdx];
-                  const el = document.getElementById('msg-' + targetId);
-                  if (el) {
-                      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                      el.classList.add('highlight-scroll');
-                      setTimeout(() => el.classList.remove('highlight-scroll'), 1800);
-                  }
-              }
-
-              // === ШТОРКА ВЛОЖЕНИЙ (КАК В TELEGRAM) С ЖИВЫМ КВАДРАТОМ КАМЕРЫ ===
-              let showAttachSheet = false;
-              let attachCamStream = null;
-              let attachCamVideoEl = null;
-              let isUploadingMedia = false;
-              let uploadingLabel = 'Шифрование E2EE...';
-
-              async function openAttachSheet() {
-                  showAttachSheet = true;
-                  try {
-                      attachCamStream = await navigator.mediaDevices.getUserMedia({
-                          video: { facingMode: 'environment', width: { ideal: 480 }, height: { ideal: 480 } },
-                          audio: false
-                      });
-                      setTimeout(() => {
-                          if (attachCamVideoEl && attachCamStream) {
-                              attachCamVideoEl.srcObject = attachCamStream;
-                              attachCamVideoEl.play().catch(() => {});
+              # Обработчик фото от родной камеры Android
+              native_cam_js = """
+              function triggerSystemCameraForChat() {
+                  closeAttachSheet();
+                  if (window.HydraNative && typeof window.HydraNative.openNativeCamera === 'function') {
+                      window.__onNativeCameraPhoto = async (filePath) => {
+                          if (!filePath || !selectedContact) return;
+                          isUploadingMedia = true;
+                          uploadingLabel = 'Шифрование фото E2EE...';
+                          try {
+                              await AppActions.SendFileMessage(selectedContact.ID, '', '', [filePath], false);
+                              dispatch('refresh');
+                          } catch (e) {
+                              alert('Ошибка отправки фото: ' + e);
+                          } finally {
+                              isUploadingMedia = false;
                           }
-                      }, 80);
-                  } catch (e) {}
-              }
-
-              function closeAttachSheet() {
-                  if (attachCamStream) {
-                      attachCamStream.getTracks().forEach(t => t.stop());
-                      attachCamStream = null;
+                      };
+                      window.HydraNative.openNativeCamera();
+                  } else {
+                      openInAppPhotoCamera(false);
                   }
-                  showAttachSheet = false;
               }
               """
-              if "let showChatSearch =" not in ch:
-                  ch = ch.replace("let showPhotoCamModal = false;", new_chat_logic + "\n    let showPhotoCamModal = false;", 1)
-
-              # Оборачиваем отправку фото с камеры и кружков в креативный индикатор isUploadingMedia
-              ch = ch.replace(
-                  "const tmpPath = await AppActions.SaveTempImage(dataUrl, 'cam_' + Date.now() + '.jpg');",
-                  "isUploadingMedia = true; uploadingLabel = 'Шифрование фото E2EE...';\n                  const tmpPath = await AppActions.SaveTempImage(dataUrl, 'cam_' + Date.now() + '.jpg');"
-              )
-              ch = ch.replace(
-                  "alert('Ошибка отправки фото: ' + e);\n                  }",
-                  "alert('Ошибка отправки фото: ' + e);\n                  } finally { isUploadingMedia = false; }"
-              )
-
-              # Добавляем кнопку 🔍 в шапку чата рядом с меню ⋮
-              if "showChatSearch = !showChatSearch" not in ch:
+              if "function triggerSystemCameraForChat()" not in ch:
+                  ch = ch.replace("function openAttachSheet()", native_cam_js + "\n    function openAttachSheet()", 1)
                   ch = ch.replace(
-                      '<div style="position: relative;">\n                <button type="button" on:click|stopPropagation={() => showChatHeaderMenu = !showChatHeaderMenu}',
-                      '<button type="button" on:click={() => { showChatSearch = !showChatSearch; chatSearchQuery = ""; }} style="background: {showChatSearch ? \'#1D4ED8\' : \'#22252A\'}; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.25); border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 15px; cursor: pointer; flex-shrink: 0;" title="Поиск в чате">🔍</button>\n            <div style="position: relative;">\n                <button type="button" on:click|stopPropagation={() => showChatHeaderMenu = !showChatHeaderMenu}',
+                      "on:click={() => { closeAttachSheet(); openInAppPhotoCamera(false); }}",
+                      "on:click={triggerSystemCameraForChat}"
+                  )
+
+              with open(ch_path, "w", encoding="utf-8") as f:
+                  f.write(ch)
+              print("[OK] 3. Chat.svelte: Coturn TURN подключён, камера в шторке открывает родную камеру телефона")
+
+          # 4. Sidebar.svelte:
+          # - родная камера для Сторис
+          # - мультивыбор контактов/групп/каналов + модалка "Удалить только у меня" / "Удалить у обоих"
+          sb_path = "frontend/src/components/Sidebar.svelte"
+          if os.path.exists(sb_path):
+              with open(sb_path, "r", encoding="utf-8") as f:
+                  sb = f.read()
+
+              multiselect_js = """
+              let isSelectChatsMode = false;
+              let selectedChatIds = [];
+              let deleteChatsModalTargets = []; // массив объектов контактов для удаления
+
+              function toggleChatSelection(contactId) {
+                  if (selectedChatIds.includes(contactId)) {
+                      selectedChatIds = selectedChatIds.filter(id => id !== contactId);
+                  } else {
+                      selectedChatIds = [...selectedChatIds, contactId];
+                  }
+                  if (selectedChatIds.length === 0) isSelectChatsMode = false;
+              }
+
+              function openDeleteSelectedChatsModal() {
+                  const targets = (contacts || []).filter(c => selectedChatIds.includes(c.ID));
+                  if (targets.length > 0) deleteChatsModalTargets = targets;
+              }
+
+              async function executeDeleteChats(forBoth = false) {
+                  const targets = [...deleteChatsModalTargets];
+                  deleteChatsModalTargets = [];
+                  isSelectChatsMode = false;
+                  selectedChatIds = [];
+                  for (const c of targets) {
+                      const isGroupOrChan = String(c.Nickname || '').startsWith('👥') || String(c.Nickname || '').startsWith('📢');
+                      if (forBoth && !isGroupOrChan && !c.IsFavorites) {
+                          await AppActions.SendText(c.ID, '[HYDRA_DEL_CHAT]:1', '').catch(() => {});
+                      }
+                      await AppActions.DeleteContact(c.ID).catch(() => {});
+                  }
+                  contacts = (contacts || []).filter(c => !targets.some(t => t.ID === c.ID));
+              }
+
+              function openNativeCameraForStory() {
+                  if (window.HydraNative && typeof window.HydraNative.openNativeCamera === 'function') {
+                      window.__onNativeCameraPhoto = async (filePath) => {
+                          if (!filePath) return;
+                          try {
+                              const b64 = await AppActions.GetFileBase64(filePath);
+                              if (b64) {
+                                  newStoryImage = 'data:image/jpeg;base64,' + b64;
+                                  newStoryVideo = '';
+                              }
+                          } catch (e) {}
+                      };
+                      window.HydraNative.openNativeCamera();
+                  } else {
+                      toggleStoryCamera(false);
+                  }
+              }
+
+              if (typeof window !== 'undefined') {
+                  window.__openDeleteChatConfirmModal = (contactObj) => {
+                      if (contactObj) deleteChatsModalTargets = [contactObj];
+                  };
+              }
+              """
+              if "let isSelectChatsMode =" not in sb:
+                  sb = sb.replace("let longPressTimer;", "let longPressTimer;\n" + multiselect_js, 1)
+
+              # Кнопка мультивыбора ☑️ в мобильной шапке рядом с зелёной точкой
+              if "isSelectChatsMode = !isSelectChatsMode" not in sb:
+                  sb = sb.replace(
+                      '<div class="mobile-network-dot"',
+                      '<button type="button" on:click={() => { isSelectChatsMode = !isSelectChatsMode; selectedChatIds = []; }} style="background: {isSelectChatsMode ? \'#1D4ED8\' : \'rgba(255,255,255,0.08)\'}; color: #fff; border: none; border-radius: 10px; padding: 5px 10px; font-size: 12px; font-weight: 700; cursor: pointer;">{isSelectChatsMode ? "Готово" : "☑️"}</button>\n            <div class="mobile-network-dot"',
                       1
                   )
 
-              # Панель поиска + креативный индикатор загрузки под шапкой чата
-              search_and_loader_ui = """{#if showChatSearch}
-              <div style="display: flex; align-items: center; gap: 6px; padding: 8px 12px; background: #16181F; border-bottom: 1px solid rgba(59,130,246,0.25); flex-shrink: 0;">
-                  <input type="text" placeholder="Поиск по сообщениям..." bind:value={chatSearchQuery} on:keydown={(e) => e.key === 'Enter' && jumpToSearchMatch(chatSearchIdx)} style="flex: 1; padding: 8px 12px; border-radius: 100px; background: #0E1015; color: #fff; border: 1px solid rgba(255,255,255,0.1); font-size: 13px; outline: none;" />
-                  {#if chatSearchMatches.length > 0}
-                      <span style="font-size: 11px; color: #93C5FD; font-weight: 700; white-space: nowrap;">{chatSearchIdx + 1}/{chatSearchMatches.length}</span>
-                      <button type="button" on:click={() => jumpToSearchMatch(chatSearchIdx + 1)} style="background: #22252A; color: #fff; border: none; border-radius: 50%; width: 28px; height: 28px; font-size: 11px;">▲</button>
-                      <button type="button" on:click={() => jumpToSearchMatch(chatSearchIdx - 1)} style="background: #22252A; color: #fff; border: none; border-radius: 50%; width: 28px; height: 28px; font-size: 11px;">▼</button>
+              # Панель массового удаления под шапкой
+              multi_bar = """        {#if isSelectChatsMode && selectedChatIds.length > 0}
+                      <div style="background: #1E3A8A; color: #fff; padding: 8px 16px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 700; flex-shrink: 0;">
+                          <span>Выбрано чатов: {selectedChatIds.length}</span>
+                          <button type="button" on:click={openDeleteSelectedChatsModal} style="background: #EF4444; color: #fff; border: none; border-radius: 100px; padding: 5px 14px; font-size: 12px; font-weight: 800; cursor: pointer;">🗑️ Удалить</button>
+                      </div>
                   {/if}
-                  <button type="button" on:click={() => { showChatSearch = false; chatSearchQuery = ''; }} style="background: transparent; color: #9CA3AF; border: none; font-size: 16px; padding: 4px;">✕</button>
-              </div>
-          {/if}
-          {#if isUploadingMedia}
-              <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: linear-gradient(90deg, rgba(29,78,216,0.22), rgba(16,185,129,0.16)); border-bottom: 1px solid rgba(96,165,250,0.35); flex-shrink: 0;">
-                  <div class="hydra-orbit-loader"><span>🔐</span></div>
-                  <div style="flex: 1; min-width: 0;">
-                      <div style="font-size: 12px; font-weight: 800; color: #93C5FD;">{uploadingLabel}</div>
-                      <div class="hydra-crypto-wave"><span></span><span></span><span></span><span></span><span></span></div>
-                  </div>
-              </div>
-          {/if}"""
+                  <!-- Mobile Search -->"""
+              if "openDeleteSelectedChatsModal" in sb and "Выбрано чатов:" not in sb:
+                  sb = sb.replace("<!-- Mobile Search -->", multi_bar, 1)
 
-              if "hydra-orbit-loader" not in ch:
-                  ch = ch.replace("{#if activeCallModal && callMinimized}", search_and_loader_ui + "\n{#if activeCallModal && callMinimized}", 1)
-
-              # Убираем отдельную кнопку камеры из инпута и привязываем скрепку к Telegram-шторке
-              ch = re.sub(
-                  r'<button type="button" class="btn-icon" on:click=\{\(\) => openInAppPhotoCamera\(false\)\}[^>]*>[\s\S]*?</button>',
-                  '',
-                  ch,
-                  count=1
-              )
-              ch = ch.replace(
-                  'on:click={onSelectFiles} title="Прикрепить фото или файл"',
-                  'on:click={openAttachSheet} title="Прикрепить фото, камеру или файл"'
+              # Клик по контакту в мобильном списке: либо выбор, либо открытие чата
+              sb = sb.replace(
+                  'on:click={() => onSelectContact(contact)}\n                    on:contextmenu|preventDefault={(e) => onContextMenu(e, contact)}\n                    on:touchstart={(e) => handleTouchStart(contact, \'contact\', e)}\n                    on:touchend={handleTouchEnd}\n                    on:touchmove={handleTouchEnd}\n                    tabindex="0"',
+                  'style={selectedChatIds.includes(contact.ID) ? "background: rgba(59,130,246,0.22); border: 1px solid #3B82F6;" : ""}\n                    on:click={() => isSelectChatsMode ? toggleChatSelection(contact.ID) : onSelectContact(contact)}\n                    on:contextmenu|preventDefault={(e) => onContextMenu(e, contact)}\n                    on:touchstart={(e) => handleTouchStart(contact, \'contact\', e)}\n                    on:touchend={handleTouchEnd}\n                    on:touchmove={handleTouchEnd}\n                    tabindex="0"'
               )
 
-              # Добавляем Telegram-шторку вложений и стили креативного лоадера
-              attach_sheet_html = """
-          {#if showAttachSheet}
-              <div on:click={closeAttachSheet} style="position: fixed; inset: 0; background: rgba(0,0,0,0.65); backdrop-filter: blur(4px); z-index: 99990; display: flex; flex-direction: column; justify-content: flex-end;">
-                  <div on:click|stopPropagation style="background: #181A20; border-top: 1px solid rgba(59,130,246,0.3); border-radius: 24px 24px 0 0; padding: 14px 16px calc(18px + env(safe-area-inset-bottom, 10px)); box-shadow: 0 -12px 36px rgba(0,0,0,0.6);">
-                      <div style="width: 40px; height: 4px; background: rgba(255,255,255,0.2); border-radius: 100px; margin: 0 auto 14px;"></div>
-                      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
-                          <!-- Живой квадрат камеры как в Telegram -->
-                          <div on:click={() => { closeAttachSheet(); openInAppPhotoCamera(false); }} style="aspect-ratio: 1; border-radius: 18px; overflow: hidden; background: #0B0D12; border: 2px solid #3B82F6; position: relative; cursor: pointer; display: flex; align-items: center; justify-content: center;">
-                              <video bind:this={attachCamVideoEl} autoplay muted playsinline style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.78;"></video>
-                              <div style="position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 4px; text-shadow: 0 2px 8px rgba(0,0,0,0.9);">
-                                  <span style="font-size: 28px;">📸</span>
-                                  <span style="font-size: 11px; font-weight: 800; color: #fff;">Камера</span>
-                              </div>
-                          </div>
-                          <!-- Галерея -->
-                          <div on:click={() => { closeAttachSheet(); if (onSelectFiles) onSelectFiles(); }} style="aspect-ratio: 1; border-radius: 18px; background: linear-gradient(135deg, #1E3A8A, #2563EB); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; cursor: pointer;">
-                              <span style="font-size: 28px;">🖼️</span>
-                              <span style="font-size: 12px; font-weight: 800; color: #fff;">Галерея</span>
-                          </div>
-                          <!-- Файлы -->
-                          <div on:click={() => { closeAttachSheet(); if (onSelectFiles) onSelectFiles(); }} style="aspect-ratio: 1; border-radius: 18px; background: linear-gradient(135deg, #065F46, #059669); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; cursor: pointer;">
-                              <span style="font-size: 28px;">📄</span>
-                              <span style="font-size: 12px; font-weight: 800; color: #fff;">Файлы</span>
-                          </div>
+              # Кнопка родной камеры в создании Сторис
+              sb = sb.replace(
+                  'on:click={() => toggleStoryCamera(false)}',
+                  'on:click={openNativeCameraForStory}'
+              )
+
+              # Модалка подтверждения удаления диалога (У меня / У обоих)
+              del_modal_html = """
+          {#if deleteChatsModalTargets.length > 0}
+              <div style="position: fixed; inset: 0; background: rgba(8,9,14,0.9); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+                  <div style="background: #1A1C20; border: 1px solid rgba(239,68,68,0.4); border-radius: 24px; padding: 20px; width: 100%; max-width: 350px;">
+                      <h3 style="margin: 0 0 8px; color: #fff; font-size: 17px;">🗑️ Удалить {deleteChatsModalTargets.length === 1 ? `«${deleteChatsModalTargets[0].Nickname}»` : `выбранные (${deleteChatsModalTargets.length})`}?</h3>
+                      <p style="font-size: 12px; color: #9CA3AF; margin: 0 0 16px;">Выберите способ удаления переписки:</p>
+                      <div style="display: flex; flex-direction: column; gap: 8px;">
+                          <button type="button" on:click={() => executeDeleteChats(false)} style="width: 100%; padding: 12px; border-radius: 14px; background: #28292D; color: #fff; border: none; font-weight: 700; font-size: 13px; cursor: pointer;">🗑️ Удалить только у меня</button>
+                          {#if deleteChatsModalTargets.some(c => !String(c.Nickname || '').startsWith('👥') && !String(c.Nickname || '').startsWith('📢'))}
+                              <button type="button" on:click={() => executeDeleteChats(true)} style="width: 100%; padding: 12px; border-radius: 14px; background: #EF4444; color: #fff; border: none; font-weight: 800; font-size: 13px; cursor: pointer;">🔥 Удалить у обоих</button>
+                          {/if}
+                          <button type="button" on:click={() => deleteChatsModalTargets = []} style="width: 100%; padding: 10px; border-radius: 14px; background: transparent; color: #9CA3AF; border: none; font-size: 13px; cursor: pointer;">Отмена</button>
                       </div>
                   </div>
               </div>
           {/if}
           """
-              loader_css = """
-              .hydra-orbit-loader {
-                  width: 34px; height: 34px; border-radius: 50%;
-                  border: 2.5px solid rgba(59,130,246,0.2);
-                  border-top-color: #60A5FA; border-right-color: #34D399;
-                  display: flex; align-items: center; justify-content: center;
-                  font-size: 14px; animation: hydraOrbitSpin 1.1s linear infinite;
-                  flex-shrink: 0;
-              }
-              .hydra-orbit-loader span { animation: hydraOrbitSpin 1.1s linear infinite reverse; }
-              @keyframes hydraOrbitSpin { to { transform: rotate(360deg); } }
-              .hydra-crypto-wave { display: flex; gap: 4px; margin-top: 5px; height: 8px; align-items: center; }
-              .hydra-crypto-wave span {
-                  width: 14px; height: 4px; border-radius: 4px; background: #60A5FA;
-                  animation: hydraWavePulse 1.2s ease-in-out infinite;
-              }
-              .hydra-crypto-wave span:nth-child(2) { animation-delay: 0.15s; background: #3B82F6; }
-              .hydra-crypto-wave span:nth-child(3) { animation-delay: 0.3s; background: #34D399; }
-              .hydra-crypto-wave span:nth-child(4) { animation-delay: 0.45s; background: #3B82F6; }
-              .hydra-crypto-wave span:nth-child(5) { animation-delay: 0.6s; background: #60A5FA; }
-              @keyframes hydraWavePulse { 0%, 100% { transform: scaleY(0.6); opacity: 0.4; } 50% { transform: scaleY(1.8); opacity: 1; } }
-          """
+              if "deleteChatsModalTargets.length > 0" not in sb:
+                  sb = sb.replace("<style>", del_modal_html + "\n<style>", 1)
 
-              if "showAttachSheet" in ch and "hydra-orbit-loader" in ch:
-                  ch = ch.replace("<style>", attach_sheet_html + "\n<style>\n" + loader_css, 1)
+              with open(sb_path, "w", encoding="utf-8") as f:
+                  f.write(sb)
+              print("[OK] 4. Sidebar.svelte: мультивыбор чатов, удаление у обоих и родная камера для Сторис готовы")
 
-              with open(ch_path, "w", encoding="utf-8") as f:
-                  f.write(ch)
-              print("[OK] 3. Chat.svelte: поиск по чату, Hydra E2EE Pulse и шторка вложений с живой камерой готовы!")
+          # 5. App.svelte: контекстное меню "Удалить контакт" открывает модалку "У меня / У обоих"
+          app_path = "frontend/src/App.svelte"
+          if os.path.exists(app_path):
+              with open(app_path, "r", encoding="utf-8") as f:
+                  ap = f.read()
+              ap = re.sub(
+                  r'<div class="context-item danger" on:click=\{async \(\) => \{[\s\S]*?Удалить контакт</div>',
+                  '''<div class="context-item danger" on:click={() => {
+                          const target = contextMenu.contact;
+                          contextMenu.show = false;
+                          if (target && window.__openDeleteChatConfirmModal) {
+                              window.__openDeleteChatConfirmModal(target);
+                          }
+                      }}>Удалить диалог</div>''',
+                  ap,
+                  count=1
+              )
+              with open(app_path, "w", encoding="utf-8") as f:
+                  f.write(ap)
+              print("[OK] 5. App.svelte: удаление диалога подключено к выбору 'У меня / У обоих'")
           PYEOF
-          python3 fix_v330.py
-          rm -f fix_v330.py
+          python3 fix_v340.py
+          rm -f fix_v340.py
+          gofmt -w internal/
 
       - name: Install jsQR & Build Frontend (Svelte)
         working-directory: ./frontend
@@ -403,13 +359,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Hydra v3.3.0 Update
+      - name: Commit Hydra v3.4.0 Update
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Hydra v3.3.0: real profile media/files/voice tabs, in-chat search, Hydra E2EE Pulse loader & Telegram attach sheet with live camera tile [skip ci]"
+            git commit -m "Hydra v3.4.0: Coturn TURN calls, native Android camera, multi-select chats & delete dialog for both [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
@@ -446,5 +402,5 @@ jobs:
       - name: Upload Signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: Hydra-v3.3.0-Signed-APK
+          name: Hydra-v3.4.0-Signed-APK
           path: android/app/build/outputs/apk/release/*.apk
