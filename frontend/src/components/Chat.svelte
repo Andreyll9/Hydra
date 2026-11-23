@@ -635,6 +635,29 @@
     let isUploadingMedia = false;
     let uploadingLabel = 'Шифрование E2EE...';
 
+    
+    function triggerSystemCameraForChat() {
+        closeAttachSheet();
+        if (window.HydraNative && typeof window.HydraNative.openNativeCamera === 'function') {
+            window.__onNativeCameraPhoto = async (filePath) => {
+                if (!filePath || !selectedContact) return;
+                isUploadingMedia = true;
+                uploadingLabel = 'Шифрование фото E2EE...';
+                try {
+                    await AppActions.SendFileMessage(selectedContact.ID, '', '', [filePath], false);
+                    dispatch('refresh');
+                } catch (e) {
+                    alert('Ошибка отправки фото: ' + e);
+                } finally {
+                    isUploadingMedia = false;
+                }
+            };
+            window.HydraNative.openNativeCamera();
+        } else {
+            openInAppPhotoCamera(false);
+        }
+    }
+    
     async function openAttachSheet() {
         showAttachSheet = true;
         try {
@@ -1008,7 +1031,7 @@
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             window.__hydraCallStream = stream;
-            hydraPeerConn = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+            hydraPeerConn = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:rtbeta.duckdns.org:3478' }, { urls: ['turn:rtbeta.duckdns.org:3478?transport=udp', 'turn:rtbeta.duckdns.org:3478?transport=tcp'], username: 'hydra', credential: 'HydraTurn2026!' }] });
             stream.getTracks().forEach(t => hydraPeerConn.addTrack(t, stream));
             hydraPeerConn.ontrack = (ev) => {
                 if (remoteAudioEl && ev.streams[0]) {
@@ -1042,7 +1065,7 @@
             callStatusText = '🔐 Подключение защищённого аудиопотока...';
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             window.__hydraCallStream = stream;
-            hydraPeerConn = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+            hydraPeerConn = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:rtbeta.duckdns.org:3478' }, { urls: ['turn:rtbeta.duckdns.org:3478?transport=udp', 'turn:rtbeta.duckdns.org:3478?transport=tcp'], username: 'hydra', credential: 'HydraTurn2026!' }] });
             stream.getTracks().forEach(t => hydraPeerConn.addTrack(t, stream));
             hydraPeerConn.ontrack = (ev) => {
                 if (remoteAudioEl && ev.streams[0]) {
@@ -1987,7 +2010,7 @@
             <div style="width: 40px; height: 4px; background: rgba(255,255,255,0.2); border-radius: 100px; margin: 0 auto 14px;"></div>
             <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
                 <!-- Живой квадрат камеры как в Telegram -->
-                <div on:click={() => { closeAttachSheet(); openInAppPhotoCamera(false); }} style="aspect-ratio: 1; border-radius: 18px; overflow: hidden; background: #0B0D12; border: 2px solid #3B82F6; position: relative; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                <div on:click={triggerSystemCameraForChat} style="aspect-ratio: 1; border-radius: 18px; overflow: hidden; background: #0B0D12; border: 2px solid #3B82F6; position: relative; cursor: pointer; display: flex; align-items: center; justify-content: center;">
                     <video bind:this={attachCamVideoEl} autoplay muted playsinline style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.78;"></video>
                     <div style="position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 4px; text-shadow: 0 2px 8px rgba(0,0,0,0.9);">
                         <span style="font-size: 28px;">📸</span>

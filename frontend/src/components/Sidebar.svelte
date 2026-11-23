@@ -33,6 +33,64 @@
     export let onFolderContextMenu;
 
     let longPressTimer;
+
+    let isSelectChatsMode = false;
+    let selectedChatIds = [];
+    let deleteChatsModalTargets = []; // массив объектов контактов для удаления
+
+    function toggleChatSelection(contactId) {
+        if (selectedChatIds.includes(contactId)) {
+            selectedChatIds = selectedChatIds.filter(id => id !== contactId);
+        } else {
+            selectedChatIds = [...selectedChatIds, contactId];
+        }
+        if (selectedChatIds.length === 0) isSelectChatsMode = false;
+    }
+
+    function openDeleteSelectedChatsModal() {
+        const targets = (contacts || []).filter(c => selectedChatIds.includes(c.ID));
+        if (targets.length > 0) deleteChatsModalTargets = targets;
+    }
+
+    async function executeDeleteChats(forBoth = false) {
+        const targets = [...deleteChatsModalTargets];
+        deleteChatsModalTargets = [];
+        isSelectChatsMode = false;
+        selectedChatIds = [];
+        for (const c of targets) {
+            const isGroupOrChan = String(c.Nickname || '').startsWith('👥') || String(c.Nickname || '').startsWith('📢');
+            if (forBoth && !isGroupOrChan && !c.IsFavorites) {
+                await AppActions.SendText(c.ID, '[HYDRA_DEL_CHAT]:1', '').catch(() => {});
+            }
+            await AppActions.DeleteContact(c.ID).catch(() => {});
+        }
+        contacts = (contacts || []).filter(c => !targets.some(t => t.ID === c.ID));
+    }
+
+    function openNativeCameraForStory() {
+        if (window.HydraNative && typeof window.HydraNative.openNativeCamera === 'function') {
+            window.__onNativeCameraPhoto = async (filePath) => {
+                if (!filePath) return;
+                try {
+                    const b64 = await AppActions.GetFileBase64(filePath);
+                    if (b64) {
+                        newStoryImage = 'data:image/jpeg;base64,' + b64;
+                        newStoryVideo = '';
+                    }
+                } catch (e) {}
+            };
+            window.HydraNative.openNativeCamera();
+        } else {
+            toggleStoryCamera(false);
+        }
+    }
+
+    if (typeof window !== 'undefined') {
+        window.__openDeleteChatConfirmModal = (contactObj) => {
+            if (contactObj) deleteChatsModalTargets = [contactObj];
+        };
+    }
+    
     let sidebarActiveCall = typeof window !== 'undefined' ? (window.__hydraActiveCall || null) : null;
     if (typeof window !== 'undefined') {
         window.addEventListener('hydra-call-banner', () => {
@@ -615,6 +673,7 @@
                 <div class="icon-svg">{@html Icons.Menu}</div>
             </button>
             <h1 class="mobile-title">Hydra</h1>
+            <button type="button" on:click={() => { isSelectChatsMode = !isSelectChatsMode; selectedChatIds = []; }} style="background: {isSelectChatsMode ? '#1D4ED8' : 'rgba(255,255,255,0.08)'}; color: #fff; border: none; border-radius: 10px; padding: 5px 10px; font-size: 12px; font-weight: 700; cursor: pointer;">{isSelectChatsMode ? "Готово" : "☑️"}</button>
             <div class="mobile-network-dot" style="background: {getStatusColor(networkStatus)}" title={getStatusText(networkStatus)}></div>
         </div>
         
@@ -622,6 +681,12 @@
             <div on:click={() => { if (sidebarActiveCall?.contact && onSelectContact) onSelectContact(sidebarActiveCall.contact); }} style="background: linear-gradient(90deg, #1D4ED8, #2563EB); color: #fff; padding: 9px 16px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 800; cursor: pointer; flex-shrink: 0;">
                 <span>📞 Активный вызов: {sidebarActiveCall.nick || 'Hydra'}</span>
                 <span style="font-size: 11px; opacity: 0.9;">Вернуться ›</span>
+            </div>
+        {/if}
+                {#if isSelectChatsMode && selectedChatIds.length > 0}
+            <div style="background: #1E3A8A; color: #fff; padding: 8px 16px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 700; flex-shrink: 0;">
+                <span>Выбрано чатов: {selectedChatIds.length}</span>
+                <button type="button" on:click={openDeleteSelectedChatsModal} style="background: #EF4444; color: #fff; border: none; border-radius: 100px; padding: 5px 14px; font-size: 12px; font-weight: 800; cursor: pointer;">🗑️ Удалить</button>
             </div>
         {/if}
         <!-- Mobile Search -->
@@ -732,7 +797,8 @@
                 <div 
                     class="contact-item animate-card"
                     class:selected={selectedContact && selectedContact.ID === contact.ID}
-                    on:click={() => onSelectContact(contact)}
+                    style={selectedChatIds.includes(contact.ID) ? "background: rgba(59,130,246,0.22); border: 1px solid #3B82F6;" : ""}
+                    on:click={() => isSelectChatsMode ? toggleChatSelection(contact.ID) : onSelectContact(contact)}
                     on:contextmenu|preventDefault={(e) => onContextMenu(e, contact)}
                     on:touchstart={(e) => handleTouchStart(contact, 'contact', e)}
                     on:touchend={handleTouchEnd}
@@ -819,7 +885,7 @@
             {/if}
 
             <div style="display: flex; gap: 8px; margin-bottom: 10px;">
-                <button type="button" on:click={() => toggleStoryCamera(false)} style="flex: 1; padding: 11px; border-radius: 100px; background: {isStoryCameraOpen ? '#ff4757' : '#8AB4F8'}; color: {isStoryCameraOpen ? '#fff' : '#062E6F'}; border: none; font-weight: 700; font-size: 12px; cursor: pointer;">
+                <button type="button" on:click={openNativeCameraForStory} style="flex: 1; padding: 11px; border-radius: 100px; background: {isStoryCameraOpen ? '#ff4757' : '#8AB4F8'}; color: {isStoryCameraOpen ? '#fff' : '#062E6F'}; border: none; font-weight: 700; font-size: 12px; cursor: pointer;">
                     {isStoryCameraOpen ? '✕ Закрыть камеру' : '📹 Открыть камеру (Фото/Видео)'}
                 </button>
                 <label style="padding: 11px 14px; border-radius: 100px; background: #28292D; color: #8AB4F8; border: 1px solid rgba(138,180,248,0.35); font-weight: 700; font-size: 12px; cursor: pointer; display: flex; align-items: center;">
@@ -929,6 +995,23 @@
                     </div>
                 {/if}
             {/if}
+        </div>
+    </div>
+{/if}
+
+
+{#if deleteChatsModalTargets.length > 0}
+    <div style="position: fixed; inset: 0; background: rgba(8,9,14,0.9); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+        <div style="background: #1A1C20; border: 1px solid rgba(239,68,68,0.4); border-radius: 24px; padding: 20px; width: 100%; max-width: 350px;">
+            <h3 style="margin: 0 0 8px; color: #fff; font-size: 17px;">🗑️ Удалить {deleteChatsModalTargets.length === 1 ? `«${deleteChatsModalTargets[0].Nickname}»` : `выбранные (${deleteChatsModalTargets.length})`}?</h3>
+            <p style="font-size: 12px; color: #9CA3AF; margin: 0 0 16px;">Выберите способ удаления переписки:</p>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                <button type="button" on:click={() => executeDeleteChats(false)} style="width: 100%; padding: 12px; border-radius: 14px; background: #28292D; color: #fff; border: none; font-weight: 700; font-size: 13px; cursor: pointer;">🗑️ Удалить только у меня</button>
+                {#if deleteChatsModalTargets.some(c => !String(c.Nickname || '').startsWith('👥') && !String(c.Nickname || '').startsWith('📢'))}
+                    <button type="button" on:click={() => executeDeleteChats(true)} style="width: 100%; padding: 12px; border-radius: 14px; background: #EF4444; color: #fff; border: none; font-weight: 800; font-size: 13px; cursor: pointer;">🔥 Удалить у обоих</button>
+                {/if}
+                <button type="button" on:click={() => deleteChatsModalTargets = []} style="width: 100%; padding: 10px; border-radius: 14px; background: transparent; color: #9CA3AF; border: none; font-size: 13px; cursor: pointer;">Отмена</button>
+            </div>
         </div>
     </div>
 {/if}

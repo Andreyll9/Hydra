@@ -134,6 +134,7 @@ func (a *AppCore) SendText(contactID, text, replyToID string) error {
 		"[HYDRA_GROUP_INVITE]:",
 		"[HYDRA_GROUP_MEMBERS]:",
 		"[HYDRA_DEL_MSG]:",
+		"[HYDRA_DEL_CHAT]:",
 		"[HYDRA_READ_ACK]:",
 		"[HYDRA_STORY_SYNC]:",
 		"[HYDRA_STORY_DEL]:",

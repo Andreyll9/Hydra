@@ -28,6 +28,7 @@ class MainActivity : AppCompatActivity(), mobile.PlatformBridge {
     private var pausedAtMs: Long = 0L
     private var isCallActive = false
     private var isBiometricPromptOpen = false
+    private var pendingCameraFilePath: String? = null
 
     companion object {
         private const val TAG = "Hydra"
@@ -72,7 +73,33 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
     }
 
     inner class HydraNativeBridge {
-            @JavascriptInterface
+                    @JavascriptInterface
+        fun openNativeCamera() {
+            runOnUiThread {
+                try {
+                    val tempDir = File(filesDir, "tmp_uploads")
+                    if (!tempDir.exists()) tempDir.mkdirs()
+                    val photoFile = File(tempDir, "cam_${System.currentTimeMillis()}.jpg")
+                    pendingCameraFilePath = photoFile.absolutePath
+                    val photoUri = androidx.core.content.FileProvider.getUriForFile(
+                        this@MainActivity,
+                        "com.teleghost.app.fileprovider",
+                        photoFile
+                    )
+                    val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                        putExtra(android.provider.MediaStore.EXTRA_OUTPUT, photoUri)
+                        addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    isOpeningSystemPicker = true
+                    webView.evaluateJavascript("window.__hydraSkipLock = true;", null)
+                    nativeCameraLauncher.launch(intent)
+                } catch (e: Exception) {
+                    pushNativeLog("CAM-ERR", "Ошибка запуска родной камеры: ${e.message}")
+                }
+            }
+        }
+
+        @JavascriptInterface
         fun setCallActive(active: Boolean) {
             isCallActive = active
         }
@@ -330,6 +357,19 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
             val notificationManager: android.app.NotificationManager =
                 getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
             notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+        private val nativeCameraLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val path = pendingCameraFilePath
+        pendingCameraFilePath = null
+        if (result.resultCode == Activity.RESULT_OK && !path.isNullOrEmpty() && File(path).exists()) {
+            val safePath = JSONObject.quote(path)
+            runOnUiThread {
+                webView.evaluateJavascript("if(window.__onNativeCameraPhoto) window.__onNativeCameraPhoto($safePath);", null)
+            }
         }
     }
 

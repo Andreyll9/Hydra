@@ -1303,15 +1303,13 @@
                 sidebarHandlers.onMovePin(contextMenu.contact.ID, 1);
                 contextMenu.show = false;
             }}>⬇️ Переместить ниже</div>
-            <div class="context-item danger" on:click={async () => { 
-                const targetId = contextMenu.contact?.ID;
+            <div class="context-item danger" on:click={() => {
+                const target = contextMenu.contact;
                 contextMenu.show = false;
-                if (!targetId) return;
-                contacts = contacts.filter(c => c.ID !== targetId);
-                await AppActions.DeleteContact(targetId).catch(() => {});
-                await loadContacts();
-                showToast('Контакт удалён', 'info');
-            }}>Удалить контакт</div>
+                if (target && window.__openDeleteChatConfirmModal) {
+                    window.__openDeleteChatConfirmModal(target);
+                }
+            }}>Удалить диалог</div>
         </div>
     {/if}
 

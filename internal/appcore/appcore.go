@@ -899,6 +899,13 @@ func (a *AppCore) OnMessageReceived(msg *core.Message, senderPubKey, senderAddr 
 		msg.Content = a.Identity.Keys.DecryptFromPeer(senderPubKey, msg.Content)
 	}
 
+	if strings.HasPrefix(msg.Content, "[HYDRA_DEL_CHAT]:") {
+		if a.Repo != nil && contact != nil {
+			_ = a.Repo.DeleteContact(a.Ctx, contact.ID)
+			a.Emitter.Emit("contact_updated")
+		}
+		return
+	}
 	if strings.HasPrefix(msg.Content, "[HYDRA_DEL_MSG]:") {
 		targetMsgID := strings.TrimSpace(strings.TrimPrefix(msg.Content, "[HYDRA_DEL_MSG]:"))
 		if targetMsgID != "" && a.Repo != nil {
