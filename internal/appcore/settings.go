@@ -68,7 +68,7 @@ func (a *AppCore) GetAppAboutInfo() *AppAboutInfo {
 	myPub := a.GetMyDestination()
 	start := time.Now()
 	client := &http.Client{Timeout: 4 * time.Second}
-	resp, err := client.Get("http://191.223.137.164:8085/health?pub=" + url.QueryEscape(myPub))
+	resp, err := client.Get("https://rtbeta.duckdns.org/health?pub=" + url.QueryEscape(myPub))
 	netInfo := "Hydra Relay v2 (Офлайн — нет связи с VPS)"
 	if err == nil {
 		defer resp.Body.Close()
@@ -81,7 +81,7 @@ func (a *AppCore) GetAppAboutInfo() *AppAboutInfo {
 	} else {
 		yaOk, gOk := false, false
 		probe := &http.Client{Timeout: 3 * time.Second}
-		if r1, e1 := probe.Get("https://ya.ru"); e1 == nil && r1 != nil {
+		if r1, e1 := probe.Get("https://rtbeta.duckdns.org/health"); e1 == nil && r1 != nil {
 			yaOk = true
 			r1.Body.Close()
 		}
@@ -99,7 +99,7 @@ func (a *AppCore) GetAppAboutInfo() *AppAboutInfo {
 	}
 
 	return &AppAboutInfo{
-		AppVersion: "3.4.0-hydra",
+		AppVersion: "3.4.1-hydra",
 		I2PVersion: netInfo,
 		I2PPath:    "Локальная зашифрованная БД (SQLite E2EE)",
 		Author:     "@RTbeta (Hydra) | Оригинал ядра: @nullcoredev (TeleGhost)",

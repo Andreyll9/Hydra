@@ -697,7 +697,7 @@ func (a *AppCore) ConnectToI2P() {
 	a.Messenger.SetProfileUpdateHandler(a.onProfileUpdate)
 	a.Messenger.SetProfileRequestHandler(a.onProfileRequest)
 	if err := a.Messenger.Start(a.Ctx); err != nil {
-		log.Printf("[AppCore] Local SAM not running (%v), switching to Direct VPS Relay mode (191.223.137.164:8085)", err)
+		log.Printf("[AppCore] Local SAM not running (%v), switching to Direct VPS Relay mode (rtbeta.duckdns.org)", err)
 	}
 	a.SetNetworkStatus(StatusOnline)
 	go a.StartVPSRelayLoop()
@@ -1241,7 +1241,7 @@ func (a *AppCore) GetMnemonic() string {
 	return a.Identity.Mnemonic
 }
 
-// SendViaVPSRelay отправляет сообщение напрямую через VPS релей 191.223.137.164:8085.
+// SendViaVPSRelay отправляет сообщение напрямую через VPS релей rtbeta.duckdns.org.
 func (a *AppCore) SendViaVPSRelay(toPub, chatID, msgID, text, replyToID string) error {
 	if a.Identity == nil || a.Identity.Keys == nil {
 		return fmt.Errorf("no identity")

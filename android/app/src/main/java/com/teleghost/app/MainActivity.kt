@@ -415,8 +415,31 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
         cb.onReceiveValue(null)
     }
 
+        private fun verifyApkSignature(): Boolean {
+        return try {
+            val expected = "AF3C225F897FBC937DABC30D2517B1325D901EED1954FF8BCD03D82E8A8637ED"
+            val sigs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val pi = packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+                pi.signingInfo?.apkContentsSigners ?: emptyArray()
+            } else {
+                @Suppress("DEPRECATION")
+                val pi = packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES)
+                @Suppress("DEPRECATION")
+                pi.signatures ?: emptyArray()
+            }
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            sigs.any { sig ->
+                val hash = md.digest(sig.toByteArray()).joinToString("") { "%02X".format(it) }
+                hash.equals(expected, ignoreCase = true)
+            }
+        } catch (_: Exception) {
+            true
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (!verifyApkSignature()) { finishAffinity(); return }
         currentInstance = this
 
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
@@ -645,6 +668,7 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
+        WebView.setWebContentsDebuggingEnabled(false)
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
