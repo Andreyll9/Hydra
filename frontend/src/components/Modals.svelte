@@ -23,6 +23,9 @@
     // Contact Profile Modal
     export let showContactProfile = false;
     export let contact = null;
+    export let messages = [];
+    export let onPreviewImage = null;
+    export let onSaveFile = null;
     export let onCloseContactProfile;
     export let onUpdateProfile = null;
     
@@ -67,7 +70,44 @@
     // I2P address toggle
     let showFullAddress = false;
 
-    let profileActiveTab = 'media'; // 'media' | 'files' | 'voice'
+    let profileActiveTab = 'media';
+
+    $: profileMediaItems = (messages || []).flatMap(m => {
+        const items = [];
+        if (m.Attachments && m.Attachments.length > 0) {
+            for (const att of m.Attachments) {
+                if (att.MimeType && att.MimeType.startsWith('image/')) {
+                    const fname = String(att.LocalPath || '').split('/').pop();
+                    items.push({ type: 'image', src: '/media/' + fname, path: att.LocalPath, ts: m.Timestamp });
+                }
+            }
+        }
+        const c = String(m.Content || '');
+        if (c.startsWith('[HYDRA_CIRCLE]:')) {
+            items.push({ type: 'circle', src: c.slice('[HYDRA_CIRCLE]:'.length), ts: m.Timestamp });
+        } else if (c.startsWith('[HYDRA_VIDEO]:')) {
+            items.push({ type: 'video', src: c.slice('[HYDRA_VIDEO]:'.length), ts: m.Timestamp });
+        }
+        return items;
+    }).reverse();
+
+    $: profileFileItems = (messages || []).flatMap(m => {
+        const items = [];
+        if (m.Attachments && m.Attachments.length > 0) {
+            for (const att of m.Attachments) {
+                if (!att.MimeType || !att.MimeType.startsWith('image/')) {
+                    items.push({ name: att.Filename || 'Файл', size: att.Size || 0, path: att.LocalPath, ts: m.Timestamp });
+                }
+            }
+        }
+        return items;
+    }).reverse();
+
+    $: profileVoiceItems = (messages || [])
+        .filter(m => String(m.Content || '').startsWith('[HYDRA_VOICE]:'))
+        .map(m => ({ id: m.ID, src: String(m.Content).slice('[HYDRA_VOICE]:'.length), ts: m.Timestamp, outgoing: m.IsOutgoing }))
+        .reverse();
+     // 'media' | 'files' | 'voice'
     let showProfileDotsMenu = false;
     let contactMuted = false;
 
@@ -562,8 +602,56 @@
         <button type="button" on:click={() => profileActiveTab = 'files'} style="padding: 8px 18px; border-radius: 100px; border: none; font-size: 13px; font-weight: 700; background: {profileActiveTab === 'files' ? '#1E3A8A' : '#1A1C20'}; color: {profileActiveTab === 'files' ? '#fff' : '#9CA3AF'}; cursor: pointer;">Файлы</button>
         <button type="button" on:click={() => profileActiveTab = 'voice'} style="padding: 8px 18px; border-radius: 100px; border: none; font-size: 13px; font-weight: 700; background: {profileActiveTab === 'voice' ? '#1E3A8A' : '#1A1C20'}; color: {profileActiveTab === 'voice' ? '#fff' : '#9CA3AF'}; cursor: pointer;">Голосовые</button>
     </div>
-    <div style="padding: 16px; text-align: center; color: #6B7280; font-size: 13px;">
-        🔒 Все {profileActiveTab === 'media' ? 'фото и видео-кружки' : (profileActiveTab === 'files' ? 'переданные файлы' : 'голосовые сообщения')} этого чата хранятся в зашифрованном контейнере E2EE.
+    <div style="padding: 0 16px 32px;">
+        {#if profileActiveTab === 'media'}
+            {#if profileMediaItems.length === 0}
+                <div style="text-align: center; color: #6B7280; font-size: 13px; padding: 24px 0;">Пока нет фото, видео или кружков в этом чате</div>
+            {:else}
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;">
+                    {#each profileMediaItems as item}
+                        <div style="aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: #1A1C20; position: relative; cursor: pointer;" on:click={() => { if (item.type === 'image' && onPreviewImage) { onCloseContactProfile(); onPreviewImage(item.path); } }}>
+                            {#if item.type === 'image'}
+                                <img src={item.src} alt="media" style="width: 100%; height: 100%; object-fit: cover;" />
+                            {:else}
+                                <video muted playsinline src={item.src} style="width: 100%; height: 100%; object-fit: cover;"></video>
+                                <span style="position: absolute; bottom: 4px; right: 4px; background: rgba(0,0,0,0.65); color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 8px;">{item.type === 'circle' ? '📹' : '🎬'}</span>
+                            {/if}
+                        </div>
+                    {/each}
+                </div>
+            {/if}
+        {:else if profileActiveTab === 'files'}
+            {#if profileFileItems.length === 0}
+                <div style="text-align: center; color: #6B7280; font-size: 13px; padding: 24px 0;">В этом чате пока нет переданных файлов</div>
+            {:else}
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    {#each profileFileItems as f}
+                        <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px; background: #1A1C20; border-radius: 14px;">
+                            <div style="min-width: 0; flex: 1;">
+                                <div style="font-size: 13px; font-weight: 700; color: #E5E7EB; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">📄 {f.name}</div>
+                                <div style="font-size: 11px; color: #9CA3AF; margin-top: 2px;">{f.size ? (f.size / 1024).toFixed(1) + ' КБ' : 'Файл'}</div>
+                            </div>
+                            {#if onSaveFile && f.path}
+                                <button type="button" on:click={() => onSaveFile(f.path, f.name)} style="background: #1D4ED8; color: #fff; border: none; border-radius: 100px; padding: 6px 12px; font-size: 11px; font-weight: 700; cursor: pointer;">⬇️</button>
+                            {/if}
+                        </div>
+                    {/each}
+                </div>
+            {/if}
+        {:else}
+            {#if profileVoiceItems.length === 0}
+                <div style="text-align: center; color: #6B7280; font-size: 13px; padding: 24px 0;">В этом чате пока нет голосовых сообщений</div>
+            {:else}
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    {#each profileVoiceItems as v}
+                        <div style="padding: 10px 12px; background: #1A1C20; border-radius: 14px; display: flex; flex-direction: column; gap: 6px;">
+                            <div style="font-size: 11px; color: #9CA3AF;">🎤 {v.outgoing ? 'Вы' : contact.Nickname} • {new Date(v.ts).toLocaleString().slice(0, 16)}</div>
+                            <audio controls src={v.src} style="width: 100%; height: 34px;"></audio>
+                        </div>
+                    {/each}
+                </div>
+            {/if}
+        {/if}
     </div>
 </div>
 {/if}

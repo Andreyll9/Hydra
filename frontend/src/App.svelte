@@ -1216,7 +1216,10 @@
         onCancelFolder={modalHandlers.onCancelFolder}
         onDeleteFolder={modalHandlers.onDeleteFolder}
         showContactProfile={showContactProfile} 
-        contact={selectedContact} 
+        contact={selectedContact}
+        messages={messages}
+        onPreviewImage={chatHandlers.onPreviewImage}
+        onSaveFile={chatHandlers.onSaveFile} 
         onCloseContactProfile={modalHandlers.onCloseContactProfile} 
         onUpdateProfile={settingsHandlers.onUpdateProfile}
         {showAddContact} 

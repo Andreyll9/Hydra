@@ -595,6 +595,70 @@
     $: currentPeerReadTs = selectedContact ? (peerReadTimestamps[selectedContact.ChatID] || peerReadTimestamps[selectedContact.ID] || 0) : 0;
 
     
+    
+    // === ПОИСК ВНУТРИ ЧАТА ===
+    let showChatSearch = false;
+    let chatSearchQuery = '';
+    let chatSearchMatches = [];
+    let chatSearchIdx = 0;
+
+    $: {
+        const q = (chatSearchQuery || '').trim().toLowerCase();
+        if (showChatSearch && q.length > 0) {
+            chatSearchMatches = (messages || [])
+                .filter(m => m.Content && !String(m.Content).startsWith('[HYDRA_') && String(m.Content).toLowerCase().includes(q))
+                .map(m => m.ID)
+                .reverse();
+            if (chatSearchIdx >= chatSearchMatches.length) chatSearchIdx = 0;
+        } else {
+            chatSearchMatches = [];
+            chatSearchIdx = 0;
+        }
+    }
+
+    function jumpToSearchMatch(idx) {
+        if (!chatSearchMatches.length) return;
+        chatSearchIdx = (idx + chatSearchMatches.length) % chatSearchMatches.length;
+        const targetId = chatSearchMatches[chatSearchIdx];
+        const el = document.getElementById('msg-' + targetId);
+        if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.classList.add('highlight-scroll');
+            setTimeout(() => el.classList.remove('highlight-scroll'), 1800);
+        }
+    }
+
+    // === ШТОРКА ВЛОЖЕНИЙ (КАК В TELEGRAM) С ЖИВЫМ КВАДРАТОМ КАМЕРЫ ===
+    let showAttachSheet = false;
+    let attachCamStream = null;
+    let attachCamVideoEl = null;
+    let isUploadingMedia = false;
+    let uploadingLabel = 'Шифрование E2EE...';
+
+    async function openAttachSheet() {
+        showAttachSheet = true;
+        try {
+            attachCamStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'environment', width: { ideal: 480 }, height: { ideal: 480 } },
+                audio: false
+            });
+            setTimeout(() => {
+                if (attachCamVideoEl && attachCamStream) {
+                    attachCamVideoEl.srcObject = attachCamStream;
+                    attachCamVideoEl.play().catch(() => {});
+                }
+            }, 80);
+        } catch (e) {}
+    }
+
+    function closeAttachSheet() {
+        if (attachCamStream) {
+            attachCamStream.getTracks().forEach(t => t.stop());
+            attachCamStream = null;
+        }
+        showAttachSheet = false;
+    }
+    
     let showPhotoCamModal = false;
     let photoCamStream = null;
     let photoCamVideoEl = null;
@@ -641,7 +705,8 @@
         const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
         closeInAppPhotoCamera();
         try {
-            const tmpPath = await AppActions.SaveTempImage(dataUrl, 'cam_' + Date.now() + '.jpg');
+            isUploadingMedia = true; uploadingLabel = 'Шифрование фото E2EE...';
+                  const tmpPath = await AppActions.SaveTempImage(dataUrl, 'cam_' + Date.now() + '.jpg');
             if (tmpPath) {
                 await AppActions.SendFileMessage(selectedContact.ID, '', '', [tmpPath], false);
                 dispatch('refresh');
@@ -1255,6 +1320,7 @@
             {#if !String(selectedContact.Nickname || '').startsWith('👥') && !String(selectedContact.Nickname || '').startsWith('📢')}
                 <button type="button" on:click={startHydraCall} style="background: #1D4ED8; color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; flex-shrink: 0;" title="Позвонить">📞</button>
             {/if}
+            <button type="button" on:click={() => { showChatSearch = !showChatSearch; chatSearchQuery = ""; }} style="background: {showChatSearch ? '#1D4ED8' : '#22252A'}; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.25); border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 15px; cursor: pointer; flex-shrink: 0;" title="Поиск в чате">🔍</button>
             <div style="position: relative;">
                 <button type="button" on:click|stopPropagation={() => showChatHeaderMenu = !showChatHeaderMenu} style="background: #22252A; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.25); border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; cursor: pointer;">⋮</button>
                 {#if showChatHeaderMenu}
@@ -1274,6 +1340,26 @@
     {/if}
 </div>
 
+{#if showChatSearch}
+    <div style="display: flex; align-items: center; gap: 6px; padding: 8px 12px; background: #16181F; border-bottom: 1px solid rgba(59,130,246,0.25); flex-shrink: 0;">
+        <input type="text" placeholder="Поиск по сообщениям..." bind:value={chatSearchQuery} on:keydown={(e) => e.key === 'Enter' && jumpToSearchMatch(chatSearchIdx)} style="flex: 1; padding: 8px 12px; border-radius: 100px; background: #0E1015; color: #fff; border: 1px solid rgba(255,255,255,0.1); font-size: 13px; outline: none;" />
+        {#if chatSearchMatches.length > 0}
+            <span style="font-size: 11px; color: #93C5FD; font-weight: 700; white-space: nowrap;">{chatSearchIdx + 1}/{chatSearchMatches.length}</span>
+            <button type="button" on:click={() => jumpToSearchMatch(chatSearchIdx + 1)} style="background: #22252A; color: #fff; border: none; border-radius: 50%; width: 28px; height: 28px; font-size: 11px;">▲</button>
+            <button type="button" on:click={() => jumpToSearchMatch(chatSearchIdx - 1)} style="background: #22252A; color: #fff; border: none; border-radius: 50%; width: 28px; height: 28px; font-size: 11px;">▼</button>
+        {/if}
+        <button type="button" on:click={() => { showChatSearch = false; chatSearchQuery = ''; }} style="background: transparent; color: #9CA3AF; border: none; font-size: 16px; padding: 4px;">✕</button>
+    </div>
+{/if}
+{#if isUploadingMedia}
+    <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: linear-gradient(90deg, rgba(29,78,216,0.22), rgba(16,185,129,0.16)); border-bottom: 1px solid rgba(96,165,250,0.35); flex-shrink: 0;">
+        <div class="hydra-orbit-loader"><span>🔐</span></div>
+        <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 12px; font-weight: 800; color: #93C5FD;">{uploadingLabel}</div>
+            <div class="hydra-crypto-wave"><span></span><span></span><span></span><span></span><span></span></div>
+        </div>
+    </div>
+{/if}
 {#if activeCallModal && callMinimized}
     <div on:click={() => callMinimized = false} style="background: linear-gradient(90deg, #1D4ED8, #2563EB); color: #fff; padding: 9px 16px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 800; cursor: pointer; flex-shrink: 0; border-bottom: 1px solid rgba(255,255,255,0.12);">
         <span>📞 Активный вызов: {selectedContact?.Nickname || 'Hydra'}</span>
@@ -1751,8 +1837,8 @@
                 style="width: 100%; font-size: 16px;"
             ></textarea>
         </div>
-                <button type="button" class="btn-icon" on:click={() => openInAppPhotoCamera(false)} title="Сделать фото с камеры" style="padding: 6px; color: #9CA3AF; cursor: pointer;"><span style="font-size: 19px;">📸</span></button>
-        <button type="button" class="btn-icon" on:click={onSelectFiles} title="Прикрепить фото или файл" style="padding: 6px; color: #9CA3AF;">
+                
+        <button type="button" class="btn-icon" on:click={openAttachSheet} title="Прикрепить фото, камеру или файл" style="padding: 6px; color: #9CA3AF;">
             <div class="icon-svg">{@html Icons.Paperclip}</div>
         </button>
 
@@ -1894,7 +1980,58 @@
     </div>
 {/if}
 
+
+{#if showAttachSheet}
+    <div on:click={closeAttachSheet} style="position: fixed; inset: 0; background: rgba(0,0,0,0.65); backdrop-filter: blur(4px); z-index: 99990; display: flex; flex-direction: column; justify-content: flex-end;">
+        <div on:click|stopPropagation style="background: #181A20; border-top: 1px solid rgba(59,130,246,0.3); border-radius: 24px 24px 0 0; padding: 14px 16px calc(18px + env(safe-area-inset-bottom, 10px)); box-shadow: 0 -12px 36px rgba(0,0,0,0.6);">
+            <div style="width: 40px; height: 4px; background: rgba(255,255,255,0.2); border-radius: 100px; margin: 0 auto 14px;"></div>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                <!-- Живой квадрат камеры как в Telegram -->
+                <div on:click={() => { closeAttachSheet(); openInAppPhotoCamera(false); }} style="aspect-ratio: 1; border-radius: 18px; overflow: hidden; background: #0B0D12; border: 2px solid #3B82F6; position: relative; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                    <video bind:this={attachCamVideoEl} autoplay muted playsinline style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.78;"></video>
+                    <div style="position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 4px; text-shadow: 0 2px 8px rgba(0,0,0,0.9);">
+                        <span style="font-size: 28px;">📸</span>
+                        <span style="font-size: 11px; font-weight: 800; color: #fff;">Камера</span>
+                    </div>
+                </div>
+                <!-- Галерея -->
+                <div on:click={() => { closeAttachSheet(); if (onSelectFiles) onSelectFiles(); }} style="aspect-ratio: 1; border-radius: 18px; background: linear-gradient(135deg, #1E3A8A, #2563EB); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; cursor: pointer;">
+                    <span style="font-size: 28px;">🖼️</span>
+                    <span style="font-size: 12px; font-weight: 800; color: #fff;">Галерея</span>
+                </div>
+                <!-- Файлы -->
+                <div on:click={() => { closeAttachSheet(); if (onSelectFiles) onSelectFiles(); }} style="aspect-ratio: 1; border-radius: 18px; background: linear-gradient(135deg, #065F46, #059669); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; cursor: pointer;">
+                    <span style="font-size: 28px;">📄</span>
+                    <span style="font-size: 12px; font-weight: 800; color: #fff;">Файлы</span>
+                </div>
+            </div>
+        </div>
+    </div>
+{/if}
+
 <style>
+
+    .hydra-orbit-loader {
+        width: 34px; height: 34px; border-radius: 50%;
+        border: 2.5px solid rgba(59,130,246,0.2);
+        border-top-color: #60A5FA; border-right-color: #34D399;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 14px; animation: hydraOrbitSpin 1.1s linear infinite;
+        flex-shrink: 0;
+    }
+    .hydra-orbit-loader span { animation: hydraOrbitSpin 1.1s linear infinite reverse; }
+    @keyframes hydraOrbitSpin { to { transform: rotate(360deg); } }
+    .hydra-crypto-wave { display: flex; gap: 4px; margin-top: 5px; height: 8px; align-items: center; }
+    .hydra-crypto-wave span {
+        width: 14px; height: 4px; border-radius: 4px; background: #60A5FA;
+        animation: hydraWavePulse 1.2s ease-in-out infinite;
+    }
+    .hydra-crypto-wave span:nth-child(2) { animation-delay: 0.15s; background: #3B82F6; }
+    .hydra-crypto-wave span:nth-child(3) { animation-delay: 0.3s; background: #34D399; }
+    .hydra-crypto-wave span:nth-child(4) { animation-delay: 0.45s; background: #3B82F6; }
+    .hydra-crypto-wave span:nth-child(5) { animation-delay: 0.6s; background: #60A5FA; }
+    @keyframes hydraWavePulse { 0%, 100% { transform: scaleY(0.6); opacity: 0.4; } 50% { transform: scaleY(1.8); opacity: 1; } }
+
     .chat-area { flex: 1; display: flex; flex-direction: column; background: var(--bg-primary, #121316); overflow: hidden; overflow-x: hidden; position: relative; overscroll-behavior: contain; width: 100%; }
     .chat-header { 
         height: auto; 
