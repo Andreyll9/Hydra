@@ -1,4 +1,61 @@
 <script>
+
+    const HYDRA_GH_REPO = "Andreyll9/Hydra";
+    const HYDRA_LOCAL_VER = "3.5.0";
+    let updateChecking = false;
+    let updateStatusText = '';
+    let updateDownloadUrl = '';
+    let updateLatestTag = '';
+
+    function compareSemver(a, b) {
+        const pa = String(a).replace(/^v/i, '').split('-')[0].split('.').map(Number);
+        const pb = String(b).replace(/^v/i, '').split('-')[0].split('.').map(Number);
+        for (let i = 0; i < 3; i++) {
+            const diff = (pa[i] || 0) - (pb[i] || 0);
+            if (diff !== 0) return diff;
+        }
+        return 0;
+    }
+
+    async function checkHydraUpdates() {
+        if (!HYDRA_GH_REPO) {
+            updateStatusText = 'Репозиторий обновлений не задан';
+            return;
+        }
+        updateChecking = true;
+        updateStatusText = 'Проверка обновлений...';
+        updateDownloadUrl = '';
+        try {
+            const resp = await fetch('https://api.github.com/repos/' + HYDRA_GH_REPO + '/releases/latest', {
+                headers: { 'Accept': 'application/vnd.github+json' }
+            });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const data = await resp.json();
+            const latestTag = data.tag_name || '';
+            const apkAsset = (data.assets || []).find(a => String(a.name || '').toLowerCase().endsWith('.apk'));
+            if (latestTag && compareSemver(latestTag, HYDRA_LOCAL_VER) > 0) {
+                updateLatestTag = latestTag;
+                updateDownloadUrl = apkAsset ? apkAsset.browser_download_url : (data.html_url || '');
+                updateStatusText = 'Доступна новая версия ' + latestTag;
+            } else {
+                updateStatusText = '✅ Установлена последняя версия (v' + HYDRA_LOCAL_VER + ')';
+            }
+        } catch (e) {
+            updateStatusText = '⚠️ Не удалось проверить обновления (проверьте интернет)';
+        } finally {
+            updateChecking = false;
+        }
+    }
+
+    function openHydraUpdateDownload() {
+        if (!updateDownloadUrl) return;
+        if (window.HydraNative && typeof window.HydraNative.openExternalUrl === 'function') {
+            window.HydraNative.openExternalUrl(updateDownloadUrl);
+        } else {
+            window.open(updateDownloadUrl, '_blank');
+        }
+    }
+    
     import { Icons } from '../Icons.js';
     import { getInitials, getStatusColor, getStatusText } from '../utils.js';
     import * as AppActions from '../../wailsjs/go/main/App.js';
@@ -750,7 +807,24 @@
                                 <img src="/icon.png" alt="Hydra" style="width: 100%; height: 100%; object-fit: contain; border-radius: 50%;" />
                             </div>
                             <h2 class="about-title">Hydra</h2>
-                            <p class="about-version">Version {aboutInfo.app_version || '3.2.0-hydra'}</p>
+                            <p class="about-version">Version {aboutInfo.app_version || '3.5.0-hydra'}</p>
+
+        <div style="margin: 14px 0; display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%;">
+            <button type="button" on:click={checkHydraUpdates} disabled={updateChecking} style="padding: 10px 20px; border-radius: 100px; background: #1D4ED8; color: #fff; border: none; font-size: 13px; font-weight: 700; cursor: pointer; opacity: {updateChecking ? 0.65 : 1};">
+                {updateChecking ? '⏳ Проверяем...' : '🔄 Проверить обновления'}
+            </button>
+            {#if updateStatusText}
+                <div style="font-size: 12px; color: {updateDownloadUrl ? '#34D399' : '#9CA3AF'}; font-weight: 600; text-align: center;">
+                    {updateStatusText}
+                </div>
+            {/if}
+            {#if updateDownloadUrl}
+                <button type="button" on:click={openHydraUpdateDownload} style="padding: 10px 22px; border-radius: 100px; background: #10B981; color: #fff; border: none; font-size: 13px; font-weight: 800; cursor: pointer;">
+                    ⬇️ Скачать {updateLatestTag} (APK)
+                </button>
+            {/if}
+        </div>
+    
                         </div>
 
                         <div class="info-list">

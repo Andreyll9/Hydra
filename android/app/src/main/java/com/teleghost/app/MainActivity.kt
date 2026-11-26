@@ -99,6 +99,19 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
             }
         }
 
+                @JavascriptInterface
+        fun openExternalUrl(url: String) {
+            runOnUiThread {
+                try {
+                    isOpeningSystemPicker = true
+                    val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    pushNativeLog("UPD-ERR", "Не удалось открыть ссылку: ${e.message}")
+                }
+            }
+        }
+
         @JavascriptInterface
         fun setCallActive(active: Boolean) {
             isCallActive = active
