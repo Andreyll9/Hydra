@@ -132,7 +132,7 @@ jobs:
                   updateStatusText = 'Проверка обновлений...';
                   updateDownloadUrl = '';
                   try {{
-                      const resp = await fetch(`https://api.github.com/repos/${{HYDRA_GH_REPO}}/releases/latest`, {{
+                      const resp = await fetch('https://api.github.com/repos/' + HYDRA_GH_REPO + '/releases/latest', {{
                           headers: {{ 'Accept': 'application/vnd.github+json' }}
                       }});
                       if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -142,9 +142,9 @@ jobs:
                       if (latestTag && compareSemver(latestTag, HYDRA_LOCAL_VER) > 0) {{
                           updateLatestTag = latestTag;
                           updateDownloadUrl = apkAsset ? apkAsset.browser_download_url : (data.html_url || '');
-                          updateStatusText = `Доступна новая версия ${{latestTag}}`;
+                          updateStatusText = 'Доступна новая версия ' + latestTag;
                       }} else {{
-                          updateStatusText = `✅ Установлена последняя версия (v${{HYDRA_LOCAL_VER}})`;
+                          updateStatusText = '✅ Установлена последняя версия (v' + HYDRA_LOCAL_VER + ')';
                       }}
                   }} catch (e) {{
                       updateStatusText = '⚠️ Не удалось проверить обновления (проверьте интернет)';
