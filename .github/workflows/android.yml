@@ -38,38 +38,22 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply Hydra v3.4.1 Hardening (Anti-Tamper, R8, WebView Lock & Clean Legacy URLs)
+      - name: Apply Android 7-15 UI Stability & Compatibility Fixes (v3.4.2)
         run: |
-          cat << 'PYEOF' > harden_v341.py
-          import os, re, subprocess
+          cat << 'PYEOF' > fix_compat_v342.py
+          import os, re
 
-          # 0. Обновляем версию до 3.4.1-hydra
+          # 1. Версия 3.4.2-hydra и minSdk 24 (Android 7.0+)
           gr_path = "android/app/build.gradle"
-          store_pass = ""
           if os.path.exists(gr_path):
               with open(gr_path, "r", encoding="utf-8") as f:
                   gr = f.read()
-              gr = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.4.1-hydra"', gr)
-              gr = re.sub(r'versionCode\s+\d+', 'versionCode 341', gr)
-
-              # Достаём пароль keystore для извлечения SHA-256
-              m_pass = re.search(r'storePassword\s+["\']([^"\']+)["\']', gr)
-              if m_pass:
-                  store_pass = m_pass.group(1)
-
-              # Включаем R8 обфускацию и сжатие ресурсов в release
-              if "minifyEnabled false" in gr:
-                  gr = gr.replace("minifyEnabled false", "minifyEnabled true\n            shrinkResources true")
-              elif "minifyEnabled true" not in gr:
-                  gr = re.sub(
-                      r'(release\s*\{)',
-                      r'\1\n            minifyEnabled true\n            shrinkResources true\n            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"',
-                      gr,
-                      count=1
-                  )
+              gr = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.4.2-hydra"', gr)
+              gr = re.sub(r'versionCode\s+\d+', 'versionCode 342', gr)
+              gr = re.sub(r'minSdk(?:Version)?\s+\d+', 'minSdk 24', gr)
               with open(gr_path, "w", encoding="utf-8") as f:
                   f.write(gr)
-              print("[OK] 0. build.gradle: версия 3.4.1-hydra и R8 (minifyEnabled + shrinkResources) включены")
+              print("[OK] 1. build.gradle: minSdk 24, version 3.4.2-hydra")
 
           for root, _, files in os.walk("internal/appcore"):
               for fn in files:
@@ -78,117 +62,113 @@ jobs:
                       with open(fp, "r", encoding="utf-8") as f:
                           txt = f.read()
                       if "AppVersion:" in txt:
-                          txt = re.sub(r'AppVersion:\s*"[^"]+"', 'AppVersion: "3.4.1-hydra"', txt)
+                          txt = re.sub(r'AppVersion:\s*"[^"]+"', 'AppVersion: "3.4.2-hydra"', txt)
                           with open(fp, "w", encoding="utf-8") as f:
                               f.write(txt)
 
-          # 1. Извлекаем SHA-256 подписи из hydra-release-key.jks
-          cert_sha256 = ""
-          jks_path = "android/app/hydra-release-key.jks"
-          if os.path.exists(jks_path) and store_pass:
-              try:
-                  out = subprocess.check_output(
-                      ["keytool", "-list", "-v", "-keystore", jks_path, "-storepass", store_pass],
-                      stderr=subprocess.STDOUT, text=True
-                  )
-                  m_sha = re.search(r'SHA256:\s*([0-9A-Fa-f:]+)', out)
-                  if m_sha:
-                      cert_sha256 = m_sha.group(1).replace(":", "").upper()
-                      print(f"[OK] 1. Извлечён SHA-256 сертификата: {cert_sha256[:12]}...")
-              except Exception as e:
-                  print(f"[WARN] Не удалось извлечь SHA-256 из keystore: {e}")
-
-          # 2. Создаём/обновляем proguard-rules.pro для R8 (чтобы не сломать JNI Go и JS Bridge)
-          pg_path = "android/app/proguard-rules.pro"
-          pg_rules = """# Hydra R8 / ProGuard Rules
-          -keep class mobile.** { *; }
-          -keep class go.** { *; }
-          -keep class com.teleghost.app.MainActivity$HydraNativeBridge { *; }
-          -keep class com.teleghost.app.TeleGhostService { *; }
-          -keep class com.teleghost.app.DirectReplyReceiver { *; }
-          -keepclassmembers class * {
-              @android.webkit.JavascriptInterface <methods>;
-          }
-          -keepattributes *Annotation*,JavascriptInterface
-          -dontwarn mobile.**
-          -dontwarn go.**
-          """
-          with open(pg_path, "w", encoding="utf-8") as f:
-              f.write(pg_rules)
-          print("[OK] 2. proguard-rules.pro обновлён")
-
-          # 3. MainActivity.kt: проверка подписи APK (Anti-Tamper) + запрет отладки WebView
+          # 2. MainActivity.kt: textZoom = 100, fitsSystemWindows = true, OVER_SCROLL_NEVER
           kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
           if os.path.exists(kt_path):
               with open(kt_path, "r", encoding="utf-8") as f:
                   kt = f.read()
-
-              if "WebView.setWebContentsDebuggingEnabled(false)" not in kt:
+              if "textZoom = 100" not in kt:
                   kt = kt.replace(
-                      "private fun setupWebView() {",
-                      "private fun setupWebView() {\n        WebView.setWebContentsDebuggingEnabled(false)",
+                      "displayZoomControls = false",
+                      "displayZoomControls = false\n            textZoom = 100",
                       1
                   )
-
-              if cert_sha256 and "private fun verifyApkSignature()" not in kt:
-                  verify_fn = f"""    private fun verifyApkSignature(): Boolean {{
-                  return try {{
-                      val expected = "{cert_sha256}"
-                      val sigs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {{
-                          val pi = packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
-                          pi.signingInfo?.apkContentsSigners ?: emptyArray()
-                      }} else {{
-                          @Suppress("DEPRECATION")
-                          val pi = packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES)
-                          @Suppress("DEPRECATION")
-                          pi.signatures ?: emptyArray()
-                      }}
-                      val md = java.security.MessageDigest.getInstance("SHA-256")
-                      sigs.any {{ sig ->
-                          val hash = md.digest(sig.toByteArray()).joinToString("") {{ "%02X".format(it) }}
-                          hash.equals(expected, ignoreCase = true)
-                      }}
-                  }} catch (_: Exception) {{
-                      true
-                  }}
-              }}
-
-              override fun onCreate("""
-                  kt = kt.replace("override fun onCreate(", verify_fn, 1)
+              if "fitsSystemWindows = true" not in kt:
                   kt = kt.replace(
-                      "super.onCreate(savedInstanceState)\n        currentInstance = this",
-                      "super.onCreate(savedInstanceState)\n        if (!verifyApkSignature()) { finishAffinity(); return }\n        currentInstance = this",
+                      'setBackgroundColor(android.graphics.Color.parseColor("#121212"))',
+                      'setBackgroundColor(android.graphics.Color.parseColor("#121212"))\n            fitsSystemWindows = true\n            overScrollMode = View.OVER_SCROLL_NEVER',
                       1
                   )
-                  print("[OK] 3. MainActivity.kt: Anti-Tamper проверка подписи и запрет отладки WebView добавлены")
-
               with open(kt_path, "w", encoding="utf-8") as f:
                   f.write(kt)
+              print("[OK] 2. MainActivity.kt: зафиксирован textZoom=100 и fitsSystemWindows")
 
-          # 4. Чистка старых URL и голого IP из Go-кода (191.223.137.164:8085, ya.ru, 127.0.0.1:7070/7657)
-          cleaned_files = 0
-          for root, _, files in os.walk("internal"):
+          # 3. Замена inset: 0 на top/right/bottom/left и 100dvh на var(--app-height, 100vh) во всех .svelte
+          patched_svelte = 0
+          for root, _, files in os.walk("frontend/src"):
               for fn in files:
-                  if not fn.endswith(".go"):
+                  if not fn.endswith(".svelte"):
                       continue
                   fp = os.path.join(root, fn)
                   with open(fp, "r", encoding="utf-8") as f:
                       txt = f.read()
                   orig = txt
-                  txt = txt.replace("http://191.223.137.164:8085", "https://rtbeta.duckdns.org")
-                  txt = txt.replace("191.223.137.164:8085", "rtbeta.duckdns.org")
-                  txt = txt.replace("https://ya.ru", "https://rtbeta.duckdns.org/health")
-                  txt = txt.replace("http://127.0.0.1:7070", "http://127.0.0.1:8080")
-                  txt = txt.replace("http://127.0.0.1:7657", "http://127.0.0.1:8080")
+                  txt = re.sub(r'\binset:\s*0\s*;', 'top: 0; right: 0; bottom: 0; left: 0;', txt)
+                  txt = txt.replace("100dvh", "var(--app-height, 100vh)")
                   if txt != orig:
                       with open(fp, "w", encoding="utf-8") as f:
                           f.write(txt)
-                      cleaned_files += 1
-          print(f"[OK] 4. Очищены старые URL/IP в Go-файлах: {cleaned_files}")
+                      patched_svelte += 1
+          print(f"[OK] 3. Заменены inset: 0 и 100dvh в {patched_svelte} Svelte-файлах")
+
+          # 4. App.svelte: динамический расчёт --app-height + блокировка растягивания html/body
+          app_path = "frontend/src/App.svelte"
+          if os.path.exists(app_path):
+              with open(app_path, "r", encoding="utf-8") as f:
+                  ap = f.read()
+
+              height_js = """
+              // Фиксация реальной высоты экрана для Android 7-15 (исключает скачки и растягивание)
+              if (typeof window !== 'undefined' && !window.__hydraHeightSync) {
+                  window.__hydraHeightSync = true;
+                  const syncAppHeight = () => {
+                      const h = (window.visualViewport && window.visualViewport.height) ? window.visualViewport.height : window.innerHeight;
+                      document.documentElement.style.setProperty('--app-height', Math.round(h) + 'px');
+                  };
+                  syncAppHeight();
+                  window.addEventListener('resize', syncAppHeight);
+                  if (window.visualViewport) {
+                      window.visualViewport.addEventListener('resize', syncAppHeight);
+                  }
+              }
+              """
+              if "__hydraHeightSync" not in ap:
+                  ap = ap.replace("function updateIsMobile() {", height_js + "\n  function updateIsMobile() {", 1)
+
+              lock_css = """
+              :global(html), :global(body) {
+                  height: var(--app-height, 100vh) !important;
+                  max-height: var(--app-height, 100vh) !important;
+                  overflow: hidden !important;
+                  overscroll-behavior: none !important;
+                  position: fixed !important;
+                  top: 0; right: 0; bottom: 0; left: 0;
+                  width: 100% !important;
+              }
+              main {
+                  height: var(--app-height, 100vh) !important;
+                  max-height: var(--app-height, 100vh) !important;
+                  overflow: hidden !important;
+              }
+              """
+              if "overscroll-behavior: none !important;" not in ap:
+                  ap = ap.replace(":global(body) {", lock_css + "\n    :global(body) {", 1)
+
+              with open(app_path, "w", encoding="utf-8") as f:
+                  f.write(ap)
+              print("[OK] 4. App.svelte: добавлена жёсткая синхронизация --app-height и блокировка скролла body")
+
+          # 5. vite.config.js: транспиляция под Chrome 61+ (Android 7-9 WebView)
+          for vc_name in ["frontend/vite.config.js", "frontend/vite.config.ts"]:
+              if os.path.exists(vc_name):
+                  with open(vc_name, "r", encoding="utf-8") as f:
+                      vc = f.read()
+                  if "target:" not in vc:
+                      if "build:" in vc:
+                          vc = vc.replace("build: {", "build: {\n    target: 'chrome61',", 1)
+                      else:
+                          vc = vc.replace("plugins:", "build: { target: 'chrome61' },\n  plugins:", 1)
+                      with open(vc_name, "w", encoding="utf-8") as f:
+                          f.write(vc)
+                      print(f"[OK] 5. {vc_name}: установлена цель сборки target: 'chrome61'")
+                  break
           PYEOF
-          python3 harden_v341.py
-          rm -f harden_v341.py
-          gofmt -w internal/
+          python3 fix_compat_v342.py
+          rm -f fix_compat_v342.py
 
       - name: Install jsQR & Build Frontend (Svelte)
         working-directory: ./frontend
@@ -197,13 +177,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Hydra v3.4.1 Hardening
+      - name: Commit Hydra v3.4.2 Android 7-15 Compatibility
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Hydra v3.4.1: anti-tamper signature check, R8 obfuscation, strip Go symbols, disable WebView debug & clean legacy URLs [skip ci]"
+            git commit -m "Hydra v3.4.2: Android 7-15 UI stability (--app-height, inset fallback, textZoom=100, chrome61 target) [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
@@ -240,5 +220,5 @@ jobs:
       - name: Upload Signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: Hydra-v3.4.1-Signed-APK
+          name: Hydra-v3.4.2-Signed-APK
           path: android/app/build/outputs/apk/release/*.apk
