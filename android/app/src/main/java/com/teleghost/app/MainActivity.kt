@@ -455,6 +455,8 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT
             )
             setBackgroundColor(android.graphics.Color.parseColor("#121212"))
+            fitsSystemWindows = true
+            overScrollMode = View.OVER_SCROLL_NEVER
         }
         setContentView(webView)
 
@@ -683,6 +685,7 @@ fun handleDirectReplyFromNotification(senderNick: String, replyText: String) {
             setSupportZoom(false)
             builtInZoomControls = false
             displayZoomControls = false
+            textZoom = 100
         }
 
         webView.addJavascriptInterface(HydraNativeBridge(), "HydraNative")

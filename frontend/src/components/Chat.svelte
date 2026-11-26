@@ -1347,7 +1347,7 @@
             <div style="position: relative;">
                 <button type="button" on:click|stopPropagation={() => showChatHeaderMenu = !showChatHeaderMenu} style="background: #22252A; color: #E5E7EB; border: 1px solid rgba(59,130,246,0.25); border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; cursor: pointer;">⋮</button>
                 {#if showChatHeaderMenu}
-                    <div on:click={() => showChatHeaderMenu = false} style="position: fixed; inset: 0; z-index: 99990; background: transparent;"></div>
+                    <div on:click={() => showChatHeaderMenu = false} style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 99990; background: transparent;"></div>
                     <div style="position: fixed; top: 62px; right: 14px; background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 16px; padding: 6px; z-index: 99995; min-width: 225px; box-shadow: 0 12px 32px rgba(0,0,0,0.7);">
                         {#if String(selectedContact?.Nickname || '').startsWith('👥') || String(selectedContact?.Nickname || '').startsWith('📢')}
             <button type="button" on:click={openGroupManagementModal} style="width: 100%; text-align: left; padding: 10px 12px; background: transparent; color: #60A5FA; border: none; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer;">👥 Добавить участников (по ID / из чатов)</button>
@@ -1393,7 +1393,7 @@
     </div>
 {/if}
 {#if activeCallModal && !callMinimized}
-    <div style="position: fixed; inset: 0; background: rgba(12,14,20,0.96); backdrop-filter: blur(16px); z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 24px;">
+    <div style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(12,14,20,0.96); backdrop-filter: blur(16px); z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 24px;">
         
         <div style="width: 96px; height: 96px; border-radius: 50%; background: #1A1C20; border: 3px solid #3B82F6; display: flex; align-items: center; justify-content: center; font-size: 36px; color: #60A5FA; font-weight: 700; box-shadow: 0 0 32px rgba(29,78,216,0.4);">
             {getInitials(selectedContact?.Nickname)}
@@ -1763,7 +1763,7 @@
         </div>
     {/if}
     {#if showCircleStudio}
-        <div style="position: fixed; inset: 0; background: rgba(8,10,16,0.95); backdrop-filter: blur(18px); z-index: 99990; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 20px;">
+        <div style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(8,10,16,0.95); backdrop-filter: blur(18px); z-index: 99990; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 20px;">
             <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 320px;">
                 <span style="font-size: 15px; font-weight: 800; color: {isRecordingMedia ? '#EF4444' : '#60A5FA'};">
                     {isRecordingMedia ? `🔴 Запись: ${recordingSeconds} сек / 120 сек` : (circleDraftDataUrl ? '✂️ Обрезка и предпросмотр' : '📹 Камера кружка (до 2 мин)')}
@@ -1895,7 +1895,7 @@
 
 
 {#if showVideoTrimModal && videoFileToTrim}
-    <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+    <div style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
         <div style="background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 24px; padding: 20px; width: 100%; max-width: 360px;">
             <h3 style="margin: 0 0 8px; color: #E5E7EB; font-size: 16px;">🎬 Параметры отправки видео</h3>
             <p style="font-size: 12px; color: #9CA3AF; margin: 0 0 12px;">Файл: <b>{videoFileToTrim.name}</b> ({(videoFileToTrim.size / 1024 / 1024).toFixed(2)} МБ)</p>
@@ -1919,7 +1919,7 @@
 {/if}
 
 {#if showRoomSettingsModal && selectedContact}
-    <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+    <div style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
         <div style="background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 24px; padding: 20px; width: 100%; max-width: 380px; max-height: 85vh; overflow-y: auto;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                 <h3 style="margin: 0; color: #E5E7EB; font-size: 16px;">👥 Участники: {selectedContact.Nickname}</h3>
@@ -1969,7 +1969,7 @@
 
 
 {#if quoteModalMsg}
-    <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+    <div style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
         <div style="background: #1A1C20; border: 1px solid rgba(59,130,246,0.35); border-radius: 24px; padding: 20px; width: 100%; max-width: 380px;">
             <h3 style="margin: 0 0 8px; color: #60A5FA; font-size: 16px;">✂️ Выделите нужный отрывок</h3>
             <p style="font-size: 12px; color: #9CA3AF; margin: 0 0 10px;">Выделите часть текста пальцем, чтобы скопировать или вставить цитатой:</p>
@@ -1991,7 +1991,7 @@
 
 
 {#if showPhotoCamModal}
-    <div style="position: fixed; inset: 0; background: #000; z-index: 99999; display: flex; flex-direction: column;">
+    <div style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: #000; z-index: 99999; display: flex; flex-direction: column;">
         <div style="display: flex; justify-content: space-between; padding: 16px; padding-top: calc(16px + env(safe-area-inset-top, 12px));">
             <button type="button" on:click={closeInAppPhotoCamera} style="width: 42px; height: 42px; border-radius: 50%; background: rgba(255,255,255,0.15); color: #fff; border: none; font-size: 18px;">✕</button>
             <button type="button" on:click={() => openInAppPhotoCamera(true)} style="width: 42px; height: 42px; border-radius: 50%; background: rgba(255,255,255,0.15); color: #fff; border: none; font-size: 18px;">🔄</button>
@@ -2005,13 +2005,13 @@
 
 
 {#if showAttachSheet}
-    <div on:click={closeAttachSheet} style="position: fixed; inset: 0; background: rgba(0,0,0,0.65); backdrop-filter: blur(4px); z-index: 99990; display: flex; flex-direction: column; justify-content: flex-end;">
+    <div on:click={closeAttachSheet} style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(0,0,0,0.65); backdrop-filter: blur(4px); z-index: 99990; display: flex; flex-direction: column; justify-content: flex-end;">
         <div on:click|stopPropagation style="background: #181A20; border-top: 1px solid rgba(59,130,246,0.3); border-radius: 24px 24px 0 0; padding: 14px 16px calc(18px + env(safe-area-inset-bottom, 10px)); box-shadow: 0 -12px 36px rgba(0,0,0,0.6);">
             <div style="width: 40px; height: 4px; background: rgba(255,255,255,0.2); border-radius: 100px; margin: 0 auto 14px;"></div>
             <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
                 <!-- Живой квадрат камеры как в Telegram -->
                 <div on:click={triggerSystemCameraForChat} style="aspect-ratio: 1; border-radius: 18px; overflow: hidden; background: #0B0D12; border: 2px solid #3B82F6; position: relative; cursor: pointer; display: flex; align-items: center; justify-content: center;">
-                    <video bind:this={attachCamVideoEl} autoplay muted playsinline style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.78;"></video>
+                    <video bind:this={attachCamVideoEl} autoplay muted playsinline style="position: absolute; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.78;"></video>
                     <div style="position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 4px; text-shadow: 0 2px 8px rgba(0,0,0,0.9);">
                         <span style="font-size: 28px;">📸</span>
                         <span style="font-size: 11px; font-weight: 800; color: #fff;">Камера</span>

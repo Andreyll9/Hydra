@@ -859,7 +859,7 @@
 
 
 {#if showCreateStoryModal}
-    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.88); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+    <div style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(0,0,0,0.88); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
         <div style="background: #1E1F22; border: 1px solid rgba(138,180,248,0.25); border-radius: 24px; padding: 18px; width: 100%; max-width: 380px; max-height: 90vh; overflow-y: auto;">
             <h3 style="margin: 0 0 4px; color: #E3E3E3;">📸 Новая история (на 24 часа)</h3>
             <p style="margin: 0 0 12px; font-size: 11px; color: #9AA0A6;">Снимите фото или видео напрямую с камеры или выберите из галереи.</p>
@@ -904,7 +904,7 @@
 {/if}
 
 {#if activeStoryModal}
-    <div style="position: fixed; inset: 0; background: #0B0D12; z-index: 99999; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
+    <div style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: #0B0D12; z-index: 99999; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden;">
         <!-- Динамический размытый атмосферный фон под цвет видео/фото -->
         {#if activeStoryModal.video}
             <video autoplay loop muted playsinline src={activeStoryModal.video} style="position: absolute; inset: -30px; width: calc(100% + 60px); height: calc(100% + 60px); object-fit: cover; filter: blur(38px) brightness(0.45) saturate(1.6); pointer-events: none; z-index: 0;"></video>
@@ -963,7 +963,7 @@
 
 
 {#if showNearbyWifiModal}
-    <div style="position: fixed; inset: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+    <div style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(10,11,16,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
         <div style="background: #1A1C20; border: 1px solid rgba(59,130,246,0.3); border-radius: 24px; padding: 20px; width: 100%; max-width: 380px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                 <h3 style="margin: 0; color: #E5E7EB; font-size: 17px;">📡 Люди рядом (только по Wi-Fi)</h3>
@@ -1001,7 +1001,7 @@
 
 
 {#if deleteChatsModalTargets.length > 0}
-    <div style="position: fixed; inset: 0; background: rgba(8,9,14,0.9); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+    <div style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(8,9,14,0.9); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
         <div style="background: #1A1C20; border: 1px solid rgba(239,68,68,0.4); border-radius: 24px; padding: 20px; width: 100%; max-width: 350px;">
             <h3 style="margin: 0 0 8px; color: #fff; font-size: 17px;">🗑️ Удалить {deleteChatsModalTargets.length === 1 ? `«${deleteChatsModalTargets[0].Nickname}»` : `выбранные (${deleteChatsModalTargets.length})`}?</h3>
             <p style="font-size: 12px; color: #9CA3AF; margin: 0 0 16px;">Выберите способ удаления переписки:</p>

@@ -815,7 +815,7 @@
 
 
 {#if showSecretDevModal}
-    <div style="position: fixed; inset: 0; background: rgba(8, 9, 14, 0.96); z-index: 99999; display: flex; flex-direction: column; padding: 16px; padding-top: calc(16px + env(safe-area-inset-top, 12px)); box-sizing: border-box; overflow-y: auto;">
+    <div style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(8, 9, 14, 0.96); z-index: 99999; display: flex; flex-direction: column; padding: 16px; padding-top: calc(16px + env(safe-area-inset-top, 12px)); box-sizing: border-box; overflow-y: auto;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
             <div>
                 <div style="font-size: 17px; font-weight: 800; color: #8AB4F8;">🛠️ Меню разработчика Hydra</div>
@@ -874,7 +874,7 @@
 
 
 {#if pinDisableStep > 0}
-    <div style="position: fixed; inset: 0; background: rgba(8,9,14,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
+    <div style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(8,9,14,0.92); z-index: 99999; display: flex; align-items: center; justify-content: center; padding: 16px;">
         <div style="background: #1A1C20; border: 1px solid rgba(239,68,68,0.5); border-radius: 24px; padding: 20px; width: 100%; max-width: 360px;">
             <h3 style="margin: 0 0 10px; color: #FCA5A5;">⚠️ Предупреждение ({pinDisableStep} из 2)</h3>
             <p style="font-size: 13px; color: #E5E7EB; line-height: 1.5; margin: 0 0 18px;">

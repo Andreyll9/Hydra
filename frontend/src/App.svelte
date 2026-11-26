@@ -126,6 +126,21 @@
   const mobileView = writable('list'); // 'list', 'chat', 'settings', 'search'
   let isMobile = true;
 
+  
+    // Фиксация реальной высоты экрана для Android 7-15 (исключает скачки и растягивание)
+    if (typeof window !== 'undefined' && !window.__hydraHeightSync) {
+        window.__hydraHeightSync = true;
+        const syncAppHeight = () => {
+            const h = (window.visualViewport && window.visualViewport.height) ? window.visualViewport.height : window.innerHeight;
+            document.documentElement.style.setProperty('--app-height', Math.round(h) + 'px');
+        };
+        syncAppHeight();
+        window.addEventListener('resize', syncAppHeight);
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', syncAppHeight);
+        }
+    }
+    
   function updateIsMobile() {
       isMobile = true; // Android-only
   }
@@ -1392,6 +1407,22 @@
         --border: rgba(255,255,255,0.05);
     }
 
+    
+    :global(html), :global(body) {
+        height: var(--app-height, 100vh) !important;
+        max-height: var(--app-height, 100vh) !important;
+        overflow: hidden !important;
+        overscroll-behavior: none !important;
+        position: fixed !important;
+        top: 0; right: 0; bottom: 0; left: 0;
+        width: 100% !important;
+    }
+    main {
+        height: var(--app-height, 100vh) !important;
+        max-height: var(--app-height, 100vh) !important;
+        overflow: hidden !important;
+    }
+    
     :global(body) {
         margin: 0;
         background: var(--bg-primary);
@@ -1399,7 +1430,7 @@
         font-family: 'Inter', -apple-system, sans-serif;
     }
 
-    .main-screen { display: flex; height: 100dvh; overflow: hidden; }
+    .main-screen { display: flex; height: var(--app-height, 100vh); overflow: hidden; }
     .content-area { flex: 1; display: flex; flex-direction: column; position: relative; }
     
     .no-chat { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; opacity: 0.7; }
@@ -1408,7 +1439,7 @@
         position: fixed; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 4px; z-index: 10000; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
     }
     .menu-backdrop {
-        position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,0.1);
+        position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 9999; background: rgba(0,0,0,0.1);
     }
     .context-item { padding: 10px 16px; cursor: pointer; border-radius: 4px; font-size: 14px; position: relative; }
     .context-item:hover { background: rgba(255,255,255,0.1); }
@@ -1446,7 +1477,7 @@
     }
 
     .fullscreen-preview {
-        position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 20000; display: flex; align-items: center; justify-content: center;
+        position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(0,0,0,0.9); z-index: 20000; display: flex; align-items: center; justify-content: center;
     }
     .fullscreen-preview img { max-width: 90%; max-height: 90%; object-fit: contain; }
 
@@ -1467,7 +1498,7 @@
     .icon-svg-xl :global(svg) { width: 100%; height: 100%; }
 
     .initializing-overlay {
-        position: fixed; inset: 0; background: var(--bg-primary); z-index: 15000;
+        position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: var(--bg-primary); z-index: 15000;
         display: flex; align-items: center; justify-content: center;
     }
     .spinner-xl {

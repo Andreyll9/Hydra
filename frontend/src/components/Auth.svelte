@@ -735,7 +735,7 @@
   }
   .avatar-preview-box img { width: 100%; height: 100%; object-fit: cover; }
   .avatar-preview-box .hover-overlay {
-    position: absolute; inset: 0; background: rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s;
+    position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s;
   }
   .avatar-preview-box:hover .hover-overlay { opacity: 1; }
 

@@ -444,7 +444,7 @@
 
 <!-- Contact Profile Modal (Redesigned like Screenshot 1 & 2) -->
 {#if showContactProfile && contact}
-<div style="position: fixed; inset: 0; background: #0B0C10; z-index: 99990; display: flex; flex-direction: column; overflow-y: auto; -webkit-overflow-scrolling: touch; color: #E5E7EB;" on:click={() => showProfileDotsMenu = false}>
+<div style="position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: #0B0C10; z-index: 99990; display: flex; flex-direction: column; overflow-y: auto; -webkit-overflow-scrolling: touch; color: #E5E7EB;" on:click={() => showProfileDotsMenu = false}>
     <!-- Верхняя панель со стрелкой назад и меню 3 точки -->
     <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; padding-top: calc(14px + env(safe-area-inset-top, 12px)); position: sticky; top: 0; z-index: 20; background: rgba(11,12,16,0.85); backdrop-filter: blur(12px);">
         <button type="button" on:click={onCloseContactProfile} style="width: 42px; height: 42px; border-radius: 50%; background: #1A1C20; border: none; color: #fff; font-size: 20px; display: flex; align-items: center; justify-content: center; cursor: pointer;">←</button>
