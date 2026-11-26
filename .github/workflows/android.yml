@@ -38,22 +38,27 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Apply Android 7-15 UI Stability & Compatibility Fixes (v3.4.2)
+      - name: Apply Hydra v3.5.0 (In-App GitHub Updater & Version Sync)
+        env:
+          GH_REPO: ${{ github.repository }}
         run: |
-          cat << 'PYEOF' > fix_compat_v342.py
+          cat << 'PYEOF' > patch_v350.py
           import os, re
 
-          # 1. Версия 3.4.2-hydra и minSdk 24 (Android 7.0+)
+          gh_repo = os.environ.get("GH_REPO", "")
+          ver_num = "3.5.0"
+          ver_full = "3.5.0-hydra"
+
+          # 1. Синхронизация версии до 3.5.0-hydra
           gr_path = "android/app/build.gradle"
           if os.path.exists(gr_path):
               with open(gr_path, "r", encoding="utf-8") as f:
                   gr = f.read()
-              gr = re.sub(r'versionName\s+"[^"]+"', 'versionName "3.4.2-hydra"', gr)
-              gr = re.sub(r'versionCode\s+\d+', 'versionCode 342', gr)
-              gr = re.sub(r'minSdk(?:Version)?\s+\d+', 'minSdk 24', gr)
+              gr = re.sub(r'versionName\s+"[^"]+"', f'versionName "{ver_full}"', gr)
+              gr = re.sub(r'versionCode\s+\d+', 'versionCode 350', gr)
               with open(gr_path, "w", encoding="utf-8") as f:
                   f.write(gr)
-              print("[OK] 1. build.gradle: minSdk 24, version 3.4.2-hydra")
+              print(f"[OK] 1. build.gradle обновлён до {ver_full}")
 
           for root, _, files in os.walk("internal/appcore"):
               for fn in files:
@@ -62,113 +67,140 @@ jobs:
                       with open(fp, "r", encoding="utf-8") as f:
                           txt = f.read()
                       if "AppVersion:" in txt:
-                          txt = re.sub(r'AppVersion:\s*"[^"]+"', 'AppVersion: "3.4.2-hydra"', txt)
+                          txt = re.sub(r'AppVersion:\s*"[^"]+"', f'AppVersion: "{ver_full}"', txt)
                           with open(fp, "w", encoding="utf-8") as f:
                               f.write(txt)
 
-          # 2. MainActivity.kt: textZoom = 100, fitsSystemWindows = true, OVER_SCROLL_NEVER
+          # 2. MainActivity.kt: метод openExternalUrl для скачивания APK через системный загрузчик
           kt_path = "android/app/src/main/java/com/teleghost/app/MainActivity.kt"
           if os.path.exists(kt_path):
               with open(kt_path, "r", encoding="utf-8") as f:
                   kt = f.read()
-              if "textZoom = 100" not in kt:
-                  kt = kt.replace(
-                      "displayZoomControls = false",
-                      "displayZoomControls = false\n            textZoom = 100",
-                      1
-                  )
-              if "fitsSystemWindows = true" not in kt:
-                  kt = kt.replace(
-                      'setBackgroundColor(android.graphics.Color.parseColor("#121212"))',
-                      'setBackgroundColor(android.graphics.Color.parseColor("#121212"))\n            fitsSystemWindows = true\n            overScrollMode = View.OVER_SCROLL_NEVER',
-                      1
-                  )
-              with open(kt_path, "w", encoding="utf-8") as f:
-                  f.write(kt)
-              print("[OK] 2. MainActivity.kt: зафиксирован textZoom=100 и fitsSystemWindows")
-
-          # 3. Замена inset: 0 на top/right/bottom/left и 100dvh на var(--app-height, 100vh) во всех .svelte
-          patched_svelte = 0
-          for root, _, files in os.walk("frontend/src"):
-              for fn in files:
-                  if not fn.endswith(".svelte"):
-                      continue
-                  fp = os.path.join(root, fn)
-                  with open(fp, "r", encoding="utf-8") as f:
-                      txt = f.read()
-                  orig = txt
-                  txt = re.sub(r'\binset:\s*0\s*;', 'top: 0; right: 0; bottom: 0; left: 0;', txt)
-                  txt = txt.replace("100dvh", "var(--app-height, 100vh)")
-                  if txt != orig:
-                      with open(fp, "w", encoding="utf-8") as f:
-                          f.write(txt)
-                      patched_svelte += 1
-          print(f"[OK] 3. Заменены inset: 0 и 100dvh в {patched_svelte} Svelte-файлах")
-
-          # 4. App.svelte: динамический расчёт --app-height + блокировка растягивания html/body
-          app_path = "frontend/src/App.svelte"
-          if os.path.exists(app_path):
-              with open(app_path, "r", encoding="utf-8") as f:
-                  ap = f.read()
-
-              height_js = """
-              // Фиксация реальной высоты экрана для Android 7-15 (исключает скачки и растягивание)
-              if (typeof window !== 'undefined' && !window.__hydraHeightSync) {
-                  window.__hydraHeightSync = true;
-                  const syncAppHeight = () => {
-                      const h = (window.visualViewport && window.visualViewport.height) ? window.visualViewport.height : window.innerHeight;
-                      document.documentElement.style.setProperty('--app-height', Math.round(h) + 'px');
-                  };
-                  syncAppHeight();
-                  window.addEventListener('resize', syncAppHeight);
-                  if (window.visualViewport) {
-                      window.visualViewport.addEventListener('resize', syncAppHeight);
+              if "fun openExternalUrl(" not in kt:
+                  ext_url_fn = """        @JavascriptInterface
+                  fun openExternalUrl(url: String) {
+                      runOnUiThread {
+                          try {
+                              isOpeningSystemPicker = true
+                              val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                              startActivity(intent)
+                          } catch (e: Exception) {
+                              pushNativeLog("UPD-ERR", "Не удалось открыть ссылку: ${e.message}")
+                          }
+                      }
                   }
-              }
+
+                  @JavascriptInterface
+                  fun setCallActive("""
+                  kt = kt.replace("@JavascriptInterface\n        fun setCallActive(", ext_url_fn, 1)
+                  with open(kt_path, "w", encoding="utf-8") as f:
+                      f.write(kt)
+                  print("[OK] 2. MainActivity.kt: добавлен openExternalUrl")
+
+          # 3. Settings.svelte: кнопка "Проверить обновления" через GitHub Releases API
+          st_path = "frontend/src/components/Settings.svelte"
+          if os.path.exists(st_path):
+              with open(st_path, "r", encoding="utf-8") as f:
+                  st = f.read()
+
+              st = re.sub(r"aboutInfo\.app_version \|\| '[^']+'", f"aboutInfo.app_version || '{ver_full}'", st)
+
+              updater_js = f"""
+              const HYDRA_GH_REPO = "{gh_repo}";
+              const HYDRA_LOCAL_VER = "{ver_num}";
+              let updateChecking = false;
+              let updateStatusText = '';
+              let updateDownloadUrl = '';
+              let updateLatestTag = '';
+
+              function compareSemver(a, b) {{
+                  const pa = String(a).replace(/^v/i, '').split('-')[0].split('.').map(Number);
+                  const pb = String(b).replace(/^v/i, '').split('-')[0].split('.').map(Number);
+                  for (let i = 0; i < 3; i++) {{
+                      const diff = (pa[i] || 0) - (pb[i] || 0);
+                      if (diff !== 0) return diff;
+                  }}
+                  return 0;
+              }}
+
+              async function checkHydraUpdates() {{
+                  if (!HYDRA_GH_REPO) {{
+                      updateStatusText = 'Репозиторий обновлений не задан';
+                      return;
+                  }}
+                  updateChecking = true;
+                  updateStatusText = 'Проверка обновлений...';
+                  updateDownloadUrl = '';
+                  try {{
+                      const resp = await fetch(`https://api.github.com/repos/${{HYDRA_GH_REPO}}/releases/latest`, {{
+                          headers: {{ 'Accept': 'application/vnd.github+json' }}
+                      }});
+                      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                      const data = await resp.json();
+                      const latestTag = data.tag_name || '';
+                      const apkAsset = (data.assets || []).find(a => String(a.name || '').toLowerCase().endsWith('.apk'));
+                      if (latestTag && compareSemver(latestTag, HYDRA_LOCAL_VER) > 0) {{
+                          updateLatestTag = latestTag;
+                          updateDownloadUrl = apkAsset ? apkAsset.browser_download_url : (data.html_url || '');
+                          updateStatusText = `Доступна новая версия ${{latestTag}}`;
+                      }} else {{
+                          updateStatusText = `✅ Установлена последняя версия (v${{HYDRA_LOCAL_VER}})`;
+                      }}
+                  }} catch (e) {{
+                      updateStatusText = '⚠️ Не удалось проверить обновления (проверьте интернет)';
+                  }} finally {{
+                      updateChecking = false;
+                  }}
+              }}
+
+              function openHydraUpdateDownload() {{
+                  if (!updateDownloadUrl) return;
+                  if (window.HydraNative && typeof window.HydraNative.openExternalUrl === 'function') {{
+                      window.HydraNative.openExternalUrl(updateDownloadUrl);
+                  }} else {{
+                      window.open(updateDownloadUrl, '_blank');
+                  }}
+              }}
               """
-              if "__hydraHeightSync" not in ap:
-                  ap = ap.replace("function updateIsMobile() {", height_js + "\n  function updateIsMobile() {", 1)
 
-              lock_css = """
-              :global(html), :global(body) {
-                  height: var(--app-height, 100vh) !important;
-                  max-height: var(--app-height, 100vh) !important;
-                  overflow: hidden !important;
-                  overscroll-behavior: none !important;
-                  position: fixed !important;
-                  top: 0; right: 0; bottom: 0; left: 0;
-                  width: 100% !important;
-              }
-              main {
-                  height: var(--app-height, 100vh) !important;
-                  max-height: var(--app-height, 100vh) !important;
-                  overflow: hidden !important;
-              }
+              if "function checkHydraUpdates()" not in st:
+                  st = st.replace("<script>", "<script>\n" + updater_js, 1)
+              else:
+                  st = re.sub(r'const HYDRA_GH_REPO = "[^"]*";', f'const HYDRA_GH_REPO = "{gh_repo}";', st)
+                  st = re.sub(r'const HYDRA_LOCAL_VER = "[^"]*";', f'const HYDRA_LOCAL_VER = "{ver_num}";', st)
+
+              updater_ui = """
+                  <div style="margin: 14px 0; display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%;">
+                      <button type="button" on:click={checkHydraUpdates} disabled={updateChecking} style="padding: 10px 20px; border-radius: 100px; background: #1D4ED8; color: #fff; border: none; font-size: 13px; font-weight: 700; cursor: pointer; opacity: {updateChecking ? 0.65 : 1};">
+                          {updateChecking ? '⏳ Проверяем...' : '🔄 Проверить обновления'}
+                      </button>
+                      {#if updateStatusText}
+                          <div style="font-size: 12px; color: {updateDownloadUrl ? '#34D399' : '#9CA3AF'}; font-weight: 600; text-align: center;">
+                              {updateStatusText}
+                          </div>
+                      {/if}
+                      {#if updateDownloadUrl}
+                          <button type="button" on:click={openHydraUpdateDownload} style="padding: 10px 22px; border-radius: 100px; background: #10B981; color: #fff; border: none; font-size: 13px; font-weight: 800; cursor: pointer;">
+                              ⬇️ Скачать {updateLatestTag} (APK)
+                          </button>
+                      {/if}
+                  </div>
               """
-              if "overscroll-behavior: none !important;" not in ap:
-                  ap = ap.replace(":global(body) {", lock_css + "\n    :global(body) {", 1)
 
-              with open(app_path, "w", encoding="utf-8") as f:
-                  f.write(ap)
-              print("[OK] 4. App.svelte: добавлена жёсткая синхронизация --app-height и блокировка скролла body")
+              if "checkHydraUpdates" in st and "Проверить обновления" not in st:
+                  st = re.sub(
+                      r'(Version\s*\{aboutInfo\.app_version[^}]*\}\s*</p>)',
+                      r'\1\n' + updater_ui,
+                      st,
+                      count=1
+                  )
 
-          # 5. vite.config.js: транспиляция под Chrome 61+ (Android 7-9 WebView)
-          for vc_name in ["frontend/vite.config.js", "frontend/vite.config.ts"]:
-              if os.path.exists(vc_name):
-                  with open(vc_name, "r", encoding="utf-8") as f:
-                      vc = f.read()
-                  if "target:" not in vc:
-                      if "build:" in vc:
-                          vc = vc.replace("build: {", "build: {\n    target: 'chrome61',", 1)
-                      else:
-                          vc = vc.replace("plugins:", "build: { target: 'chrome61' },\n  plugins:", 1)
-                      with open(vc_name, "w", encoding="utf-8") as f:
-                          f.write(vc)
-                      print(f"[OK] 5. {vc_name}: установлена цель сборки target: 'chrome61'")
-                  break
+              with open(st_path, "w", encoding="utf-8") as f:
+                  f.write(st)
+              print(f"[OK] 3. Settings.svelte: добавлена кнопка обновления для {gh_repo}")
           PYEOF
-          python3 fix_compat_v342.py
-          rm -f fix_compat_v342.py
+          python3 patch_v350.py
+          rm -f patch_v350.py
 
       - name: Install jsQR & Build Frontend (Svelte)
         working-directory: ./frontend
@@ -177,13 +209,13 @@ jobs:
           npm install jsqr --save
           npm run build
 
-      - name: Commit Hydra v3.4.2 Android 7-15 Compatibility
+      - name: Commit Hydra v3.5.0 Update
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain)" ]; then
             git add .
-            git commit -m "Hydra v3.4.2: Android 7-15 UI stability (--app-height, inset fallback, textZoom=100, chrome61 target) [skip ci]"
+            git commit -m "Hydra v3.5.0: GitHub Releases auto-publish & in-app update checker [skip ci]"
             git pull --rebase origin main || true
             git push || true
           fi
@@ -217,8 +249,22 @@ jobs:
           cp -f app/hydra-release-key.jks app/release-key.jks
           gradle assembleRelease --no-daemon
 
-      - name: Upload Signed APK
+      - name: Publish GitHub Release v3.5.0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APK_FILE=$(ls android/app/build/outputs/apk/release/*.apk | head -n 1)
+          cp "$APK_FILE" Hydra-v3.5.0.apk
+          if gh release view v3.5.0 >/dev/null 2>&1; then
+            gh release upload v3.5.0 Hydra-v3.5.0.apk --clobber
+          else
+            gh release create v3.5.0 Hydra-v3.5.0.apk \
+              --title "Hydra v3.5.0" \
+              --notes "Hydra v3.5.0: автоматические обновления через GitHub Releases, стабильность UI для Android 7–15, защита подписи и R8."
+          fi
+
+      - name: Upload Signed APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Hydra-v3.4.2-Signed-APK
-          path: android/app/build/outputs/apk/release/*.apk
+          name: Hydra-v3.5.0-Signed-APK
+          path: Hydra-v3.5.0.apk
